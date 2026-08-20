@@ -212,3 +212,27 @@ reopen DEC-PRISM-015 only if shadow accounts materially strengthen the decisive 
 - `.agents/skills/strk20-privacy-integration/scripts/check_freshness.py --quick`
 
 **Status:** Open
+
+---
+
+## CON-PRISM-012 — Mainnet-first sprint evidence vs testnet-first product development
+
+**A — Existing sprint decision**
+
+DEC-PRISM-012 and CON-PRISM-007 prioritize an early SN_MAIN pool-reachability smoke path because final sprint evidence must be earned on mainnet.
+
+**B — Current product direction**
+
+The application should begin on Starknet Sepolia and move to mainnet only after the frontend, wallet boundary, contracts, failure states, and security checks have been exercised without production-value risk.
+
+**Smallest valid resolution**
+
+```text
+default development/runtime environment = SN_SEPOLIA
+mainnet configuration = explicit release gate
+qualifying sprint evidence = still earned on SN_MAIN after testnet acceptance
+```
+
+Testnet reduces financial exposure but does not prove mainnet STRK20 pool behavior, fees, wallet support, proving behavior, or final validator eligibility. A later, explicitly approved mainnet smoke phase remains required.
+
+**Status:** Resolved at environment boundary; mainnet evidence pending

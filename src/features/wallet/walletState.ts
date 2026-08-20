@@ -44,5 +44,5 @@ export function classifyWalletEnvironment(
 }
 
 export function getExpectedWalletEnvironment(configuredValue?: string): ExpectedWalletEnvironment {
-  return configuredValue?.trim().toUpperCase() === "SN_SEPOLIA" ? "SN_SEPOLIA" : "SN_MAIN";
+  return configuredValue?.trim().toUpperCase() === "SN_MAIN" ? "SN_MAIN" : "SN_SEPOLIA";
 }
