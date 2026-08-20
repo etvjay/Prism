@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@starknet-io/get-starknet-discovery": "6.0.2",
-    "@starknet-io/get-starknet-wallet-standard": "6.0.2",
+    "@starknet-io/get-starknet-discovery": "6.0.3",
+    "@starknet-io/get-starknet-wallet-standard": "6.0.3",
     "next": "^16.0.8",
     "react": "19.2.1",
     "react-dom": "19.2.1",
