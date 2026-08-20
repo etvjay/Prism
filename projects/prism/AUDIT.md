@@ -132,9 +132,11 @@ get-starknet 6.0.3
 Rules:
 
 - Prism never receives the user's viewing key.
-- Capability detection uses Wallet API/spec version checks, not a private-balance read.
+- Capability detection uses Wallet API/spec version checks at or above the current stable v0.10.3 threshold, not a private-balance read.
 - Private-balance reads are requested only because Private Balance is an intentional product feature.
 - Direct Privacy SDK is reserved for controlled-key/advanced routes, not the ordinary consumer dapp.
+- The browser UI must show the observed Starknet environment and block private-action readiness when it does not match the configured target.
+- Wallet account/network changes are re-read through the current Wallet Standard event surface; stale authority state must not remain visible.
 
 ---
 
@@ -453,6 +455,30 @@ Do not add a hash to `strk20.json` until hub-equivalent verification passes.
 ```
 
 The current root `STRK20_INTEGRATION_PLAN.md` governs the implementation phases.
+
+---
+
+# 16A. Phase 1 Implementation Checkpoint
+
+The wallet/capability code path is implemented and headlessly verified. This changes implementation state, not runtime evidence maturity.
+
+```text
+capability threshold corrected to >= 0.10.3
+explicit SN_MAIN / SN_SEPOLIA / UNKNOWN state
+wrong-network state
+account/network change re-read
+wallet-standard disconnect
+```
+
+```text
+TypeScript check        PASS
+Next production build   PASS
+diff check              PASS
+manual Ready observation PENDING
+G0 mainnet evidence      NOT_IMPLEMENTED
+```
+
+The exact commit and manual result belong in the phase record and evidence ledger after observation.
 
 ---
 

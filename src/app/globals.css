@@ -130,6 +130,7 @@ h1 {
 .wallet-card--privacy-unsupported,
 .wallet-card--capability-unknown,
 .wallet-card--consent-required,
+.wallet-card--network-mismatch,
 .wallet-card--unavailable {
   border-color: #4d473b;
 }
@@ -166,7 +167,8 @@ h1 {
 .wallet-card--privacy-capable .state-dot { background: #8dd9a4; }
 .wallet-card--privacy-unsupported .state-dot,
 .wallet-card--capability-unknown .state-dot,
-.wallet-card--consent-required .state-dot { background: #d6b16a; }
+.wallet-card--consent-required .state-dot,
+.wallet-card--network-mismatch .state-dot { background: #d6b16a; }
 .wallet-card--connecting .state-dot { background: #9ab7e9; }
 
 .text-button {
