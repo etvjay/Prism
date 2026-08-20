@@ -1,8 +1,10 @@
 # Prism — STRK20 Integration Plan
 ## v0.1 · 2026-08-20
 
-**Status:** Approved architecture baseline; implementation evidence pending  
+**Status:** Ready for explicit implementation approval; implementation evidence pending  
 **Route:** Privacy Wallet API for user flows + Prism-owned pool-integrated application contract for meaningful private action and final sprint evidence
+
+> This file is the plan boundary required by the current `starkience/strk20-agent-skills` integration skill. STRK20 app-code execution starts only after explicit approval of this plan. Prism's broader non-STRK20 work remains governed by the Foundry control plane.
 
 ---
 
@@ -508,7 +510,7 @@ No private key or viewing key should ever be pasted into the repository or chat 
 
 ---
 
-# 9. Current next build step
+# 9. Next step after approval
 
 ```text
 Phase 1 wallet/capability vertical slice
