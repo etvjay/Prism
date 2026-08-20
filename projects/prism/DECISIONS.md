@@ -1,5 +1,5 @@
 # Prism — Decision Ledger
-## v0.1
+## v0.2
 
 Decisions are append-only records. Superseding a decision creates a new record; history is not rewritten.
 
@@ -118,9 +118,9 @@ Do not count a starter echo/no-op helper as sufficient integration depth. Prism 
 ## DEC-PRISM-009 — No private sub-account dependency in MVP
 
 **Layer:** System/Scope  
-**Status:** Canonical for v0
+**Status:** Superseded by DEC-PRISM-015
 
-Current STRK20 materials describe private subaccounts as not yet shipped / coming soon. Use public verified bindings in v0; private binding/selective-linkage belongs to PrismZK roadmap.
+At the time of this decision, current sprint-facing material described private subaccounts as not yet shipped / coming soon. The scope conclusion remains correct, but later SDK evidence makes the mechanism status more precise.
 
 ---
 
@@ -176,3 +176,75 @@ Project = Prism-specific truth and implementation
 ```
 
 Profiles constrain but do not redefine upstream Product truth.
+
+---
+
+## DEC-PRISM-015 — Shadow accounts exist SDK-side but remain outside sprint MVP
+
+**Layer:** System/Scope  
+**Status:** Canonical for v0  
+**Supersedes:** DEC-PRISM-009 mechanism-status wording
+
+**Decision**  
+Do not depend on STRK20 shadow accounts for the Prism sprint MVP.
+
+**Current evidence**
+- Sprint-facing Build/Ideas material still presents the normal builder-facing sub-account concept as coming soon.
+- The Privacy SDK changelog shows the SDK-side API shipped in release-candidate form and was renamed from sub-accounts to **shadow accounts** in `0.14.3-RC.5`.
+- The currently referenced Wallet API route for a normal user-controlled dapp does not expose the same capability.
+
+**Reason**  
+Prism's default route is wallet-mediated. A lower-level SDK capability that requires a different authority/key model is not sufficient reason to make the feature sprint-critical.
+
+**Consequence**  
+Use explicit verified bindings for the decisive MVP. Revisit shadow accounts after the core identity/binding/resolution proof is complete or when the wallet-facing route ships.
+
+---
+
+## DEC-PRISM-016 — Final sprint hashes must satisfy the hub's own-contract rule
+
+**Layer:** Evidence/Hackathon  
+**Status:** Canonical for sprint
+
+**Decision**  
+If Prism lists any deployed addresses in `strk20.json.contracts`, every transaction selected for `strk20.json.transactions` must both:
+
+```text
+1. succeed and touch the STRK20 pool
+2. involve at least one declared Prism contract
+```
+
+Current upstream validation detects project involvement through a declared contract's receipt event or the declared address appearing in transaction calldata.
+
+**Consequence**  
+A plain preparatory shield/private transfer that never references Prism code is valid engineering evidence but is not a final submission candidate after contracts are declared.
+
+**Implementation effect**  
+Design a meaningful Prism-owned pool-integrated helper/anonymizer early enough to generate at least three genuine qualifying transactions through it.
+
+---
+
+## DEC-PRISM-017 — Check first-party private routes before writing an anonymizer
+
+**Layer:** System/Delivery  
+**Status:** Accepted
+
+**Decision**  
+Before implementing custom Cairo for an existing protocol action, verify whether the protocol already ships a maintained STRK20/private route.
+
+**Reason**  
+A first-party route can remove unnecessary contract, audit, deployment, and maintenance surface.
+
+**Constraint**  
+The sprint's own-contract evidence requirement is evaluated separately. A first-party integration is not automatically a valid final evidence strategy if Prism also declares project contracts.
+
+---
+
+## DEC-PRISM-018 — STRK20 capability detection follows least privilege
+
+**Layer:** Interface/Privacy  
+**Status:** Canonical
+
+Use Wallet API/spec capability-version checks for feature detection. Do not invoke balance-reading methods merely to discover whether a wallet supports STRK20.
+
+Balance reads are requested only when Prism intentionally presents the user's private balance and the resulting wallet consent is part of the designed flow.
