@@ -11,9 +11,7 @@
 
 # 1. Audit Purpose
 
-This document governs whether Prism's product, architecture, integration, privacy claims, and sprint evidence remain aligned with verified reality.
-
-The audit distinguishes:
+This document governs whether Prism's product, architecture, STRK20 integration, privacy claims, and sprint evidence remain aligned with verified reality.
 
 ```text
 FACT
@@ -26,234 +24,78 @@ DEPLOYMENT
 EVIDENCE
 ```
 
-Implementation is never treated as proof merely because it exists.
+Implementation is not proof merely because it exists.
 
 ---
 
 # 2. Research Foundry Loop
 
 ```text
-RESEARCH
-→ EXPERIMENT
-→ BUILD
-→ EVIDENCE
+RESEARCH → EXPERIMENT → BUILD → EVIDENCE
 ```
 
-Extended lifecycle:
+Evidence may reopen a mechanism or decision; downstream convenience may not silently redefine Product truth.
+
+---
+
+# 3. Evidence Maturity
 
 ```text
-INTAKE
-→ FRAME
-→ DECOMPOSE
-→ PLAN
-→ ACQUIRE
-→ EXTRACT
-→ VERIFY
-→ MAP
-→ BENCHMARK
-→ OPPOSE
-→ TEST
-→ SYNTHESIZE
-→ REPRESENT
-→ AUDIT
-→ DELIVER
-→ ARCHIVE
+X0 hypothesis
+X1 fixture/mock
+X2 local controlled
+X3 realistic/testnet
+X4 repeated/reproduced
+X5 mainnet/production independently verifiable
 ```
 
----
-
-# 3. Status Vocabulary
-
-Item status is one of:
-
-```text
-PASS
-FAIL
-NOT_IMPLEMENTED
-BLOCKED
-```
-
-Overall outcome is one of:
-
-```text
-PASS
-PASS_WITH_LIMITATIONS
-INSUFFICIENT_EVIDENCE
-RESEARCH_REQUIRES_REFRAMING
-```
-
-Only `PASS` is treated as proven.
+A transaction hash proves execution facts only. It does not automatically prove a privacy claim.
 
 ---
 
-# 4. Evidence Maturity
+# 4. Canonical Prism Claims
 
-```text
-X0 = hypothesis
-X1 = fixture/mock
-X2 = local controlled
-X3 = realistic/testnet
-X4 = repeated/reproduced
-X5 = mainnet/production independently verifiable
-```
-
-A higher level is not inferred from a lower one.
-
-A transaction receipt can prove execution occurred without proving every privacy property of that execution.
+| Claim | Target | Current |
+|---|---:|---|
+| Persistent Prism ID survives venue-account replacement/revocation | X5 | X0 / NOT_IMPLEMENTED |
+| External account cannot bind without proof of control | X4+ | X0 / NOT_IMPLEMENTED |
+| Active venue destination resolves; revoked destination does not | X4 | X0 / NOT_IMPLEMENTED |
+| Real Starknet + Base financial state appears coherently | X4 | X0 / NOT_IMPLEMENTED |
+| Real STRK20 private balance is surfaced through supported wallet route | X5 | X0 / NOT_IMPLEMENTED |
+| Real private transfer executes on SN_MAIN | X5 | X0 / NOT_IMPLEMENTED |
+| Meaningful Prism-owned pool-integrated private action executes on SN_MAIN | X5 | X0 / NOT_IMPLEMENTED |
+| ≥3 final hashes satisfy current hub validation | X5 | X0 / NOT_IMPLEMENTED |
 
 ---
 
-# 5. Canonical Prism Claims
-
-## CLM-PRISM-001 — Persistent identity
-
-**Claim**  
-A Prism ID persists independently of replaceable venue execution identities.
-
-**Target evidence:** `X5`
-
-**Decisive falsification test:**
-
-```text
-create P
-bind B
-revoke B
-resolve(P, BASE) fails
-P still exists
-```
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-PRISM-002 — Verified execution-identity binding
-
-**Claim**  
-An external execution identity cannot be canonically bound without evidence of control.
-
-**Target:** `X4` minimum, `X5` desirable.
-
-**Negative test:** unrelated Base signer attempts to bind another account.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-PRISM-003 — Resolution
-
-**Claim**  
-A Prism ID resolves to the currently active venue destination and never returns a revoked binding as active.
-
-**Target:** `X4`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-PRISM-004 — Unified financial home
-
-**Claim**  
-Prism can display real Starknet and Base financial state as one coherent user-facing portfolio without pretending the underlying chains share one ledger.
-
-**Target:** `X4`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-STRK20-001 — Private balance
-
-**Claim**  
-Prism can surface a real STRK20 shielded/private balance through a supported integration route.
-
-**Target:** `X5`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-STRK20-002 — Private transfer
-
-**Claim**  
-Prism can execute a real STRK20 private transfer on Starknet mainnet.
-
-**Target:** `X5`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-STRK20-003 — Private application action
-
-**Claim**  
-Prism can perform a meaningful application-specific private action using the supported STRK20 anonymizer / `privacy_invoke` mechanism.
-
-**Target:** `X5`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-PRISM-005 — Identity-addressed receive
-
-**Claim**  
-A sender can use Prism identity resolution to obtain the correct active destination for a supported venue.
-
-**Target:** `X4`.
-
-**Current:** `NOT_IMPLEMENTED / X0`
-
----
-
-## CLM-PRISM-006 — Dust Recovery
-
-**Claim**  
-Prism can identify economically recoverable fragmented balances and prepare a valid recovery route.
-
-**Target:** `X3+` if included.
-
-**Current:** `NOT_IMPLEMENTED / optional`
-
----
-
-# 6. Hackathon Compliance Audit
+# 5. Hackathon Compliance
 
 ## Registration
 
-- Public Prism repository exists: `PASS`
-- Repository contains code: `PASS`
-- Registration fork exists: `PASS`
-- Registry entry added without modifying another entry: `PASS`
-- Upstream registration PR opened: `PASS`
-
-## Submission manifest
-
-Root `strk20.json`: `PASS`
-
-Current fields:
-
-```json
-{
-  "transactions": [],
-  "contracts": [],
-  "demo_video": "",
-  "demo_url": ""
-}
+```text
+Public Prism repo                      PASS
+Repository has code                   PASS
+Open-source license                   PASS
+Root strk20.json                      PASS
+Prism present in upstream registry    PASS
 ```
 
-Mainnet receipts: `NOT_IMPLEMENTED`
+The upstream sprint `registry.json` currently contains `https://github.com/etvjay/Prism` with Telegram `JayDeculein`.
 
-Deployed contracts: `NOT_IMPLEMENTED`
+## Still required
 
-Demo video: `NOT_IMPLEMENTED`
+```text
+public live demo              NOT_IMPLEMENTED
+3-minute demo video           NOT_IMPLEMENTED
+≥3 final qualifying hashes   NOT_IMPLEMENTED
+deployed contract evidence   NOT_IMPLEMENTED
+```
 
-Public demo: `NOT_IMPLEMENTED`
+Deadline: **2026-08-31 23:59 UTC**.
 
 ---
 
-# 7. Mainnet Gate G0
-
-**Requirement:** prove real STRK20 mainnet reachability before deep private-feature implementation.
+# 6. G0 — Mainnet Reachability
 
 Network:
 
@@ -261,367 +103,396 @@ Network:
 SN_MAIN
 ```
 
-Canonical STRK20 pool:
+Canonical pool:
 
 ```text
 0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a
 ```
 
-Success condition:
-
-- successful mainnet transaction;
-- touches the STRK20 pool;
-- receipt can be independently verified;
-- build commit recorded;
-- evidence ledger updated.
+G0 closes when a user-controlled supported wallet performs a small real mainnet pool interaction and the successful pool receipt is recorded.
 
 **Status:** `NOT_IMPLEMENTED`
 
-**Priority:** Critical / immediate.
+G0 is preparatory engineering evidence. It does **not** have to be one of the final three scoring hashes.
 
 ---
 
-# 8. Privacy Truth Table
+# 7. Current Integration Route
 
-Privacy claims are constrained by `profiles/STRK20_PRIVACY_PROFILE.md`.
+Normal Prism user flow:
+
+```text
+get-starknet 6.0.3
+→ starknet.js 10.4.0 / WalletAccountV6
+→ Privacy Wallet API 0.10.3
+→ privacy-enabled wallet
+→ STRK20 pool
+```
+
+Rules:
+
+- Prism never receives the user's viewing key.
+- Capability detection uses Wallet API/spec version checks, not a private-balance read.
+- Private-balance reads are requested only because Private Balance is an intentional product feature.
+- Direct Privacy SDK is reserved for controlled-key/advanced routes, not the ordinary consumer dapp.
+
+---
+
+# 8. Current STRK20 Runtime Truth
 
 ## Shield
 
-Publicly observable includes, at minimum for the public deposit leg:
+Public:
 
 ```text
 depositor
-asset/token
+token
 amount
+timing
 ```
 
-Do not describe shielding itself as hiding the deposit amount or depositor.
+Deposit screening is protocol-enforced.
 
-## Private note transfer
+UX must account for:
 
-The intended protected relationship includes:
+```text
+ERC-20 approve
+→ pool deposit
+```
+
+and explain the two wallet prompts.
+
+## Note maturity
+
+Fresh notes generally mature for roughly ten blocks before ordinary later spending.
+
+Prism must present a truthful maturing/pending state.
+
+## Private transfer
+
+Protected within the supported note-to-note path:
 
 ```text
 sender
 recipient
 amount
+token type
+spent-note relation
 ```
 
-subject to protocol metadata and observer assumptions documented by STRK20.
+## Open notes
 
-## Anonymized private DeFi / application execution
+Open-note ownership can be hidden while the note amount is public.
 
-Do not promise full invisibility.
+## Private DeFi / application execution
 
-Potentially observable/correlatable information may include:
+Potentially public:
 
 ```text
 amount
 timing
-destination protocol action
+protocol/action
+open-note amount
 ```
 
-The useful property is unlinking the public execution identity from the originating private note/user under the supported threat model.
+Useful privacy property:
+
+```text
+direct user identity ↔ public action linkage hidden under supported threat model
+```
+
+## Composition leakage
+
+Bundling a public deposit with the transfer it funds makes depositor + amount + timing directly correlatable. Prior shielding provides a stronger unlinkability story at the cost of another pool operation, fee, and maturity wait.
+
+## Fees
+
+Read current pool fee from `get_fee_amount`; never hard-code a historical fee. `MAX` and minimum useful transaction sizes must reserve the fee.
+
+## Relayers
+
+Private transaction sender may be a rotating/shared relayer. Do not attribute activity using transaction sender.
 
 ## Base
 
-Ordinary Base execution remains public.
-
-**Forbidden claim:** "Prism makes every chain private."
+Ordinary Base execution is public.
 
 ---
 
-# 9. Architecture Decision Audit
+# 9. Shadow-Account Status Audit
 
-## D1 — Starknet canonical identity root
+Earlier sprint-facing material described sub-accounts as coming soon.
 
-**Status:** `PASS` as product/system decision; implementation evidence pending.
-
-## D2 — Other chains remain native execution venues
-
-**Status:** `PASS`.
-
-## D3 — Wallet API first for normal STRK20 dapp flow
-
-**Status:** `PASS` as current integration decision; mainnet compatibility still needs evidence.
-
-## D4 — No dependency on unshipped private subaccounts
-
-**Status:** `PASS`.
-
-## D5 — Frontend/backend co-equal
-
-**Status:** `PASS` as delivery rule.
-
-## D6 — Base is the only external venue required for decisive MVP proof
-
-**Status:** `PASS`.
-
-## D7 — Prism is not an intent network or solver network
-
-**Status:** `PASS`.
-
----
-
-# 10. Novelty / Overlap Audit
-
-Prism must not collapse into any of the following:
+Current SDK evidence is more specific:
 
 ```text
-ENS-style naming only
-cross-chain privacy bridge only
-universal balance abstraction
-privacy wallet clone
-intent solver network
-MPC signer controlling every chain
-portfolio aggregator only
+SDK route:
+  release-candidate implementation exists
+  renamed SubAccount → ShadowAccount in 0.14.3-RC.5
+
+Wallet API route:
+  equivalent normal-dapp capability not currently exposed
 ```
 
-Closest overlap risks:
-
-- identifier-addressed payments;
-- private account/portfolio concepts;
-- cross-chain privacy hub;
-- privacy wallets.
-
-Prism's distinguishing product primitive must remain:
-
-> **Persistent identity above replaceable native execution identities, with receiver/owner-controlled resolution and venue-specific privacy/execution truth.**
+**Decision:** exclude shadow accounts from sprint-critical MVP. This is a route/scope decision, not a claim that the SDK feature is absent.
 
 ---
 
-# 11. Falsification Tests
+# 10. Hub Validator Audit — Critical
 
-## FT-001 — Identity survives venue revocation
+The current upstream `scripts/build-projects.mjs` validates each hash in `strk20.json.transactions`.
+
+Each hash must:
+
+```text
+exist on Starknet mainnet
+have execution_status == SUCCEEDED
+contain an event from the canonical STRK20 pool
+```
+
+If `strk20.json.contracts` contains any project contracts, **every selected hash** must additionally involve at least one declared project contract.
+
+Current project-involvement check accepts:
+
+```text
+receipt event from a declared project contract
+OR
+declared project address present in transaction calldata
+```
+
+This corrects the earlier weaker interpretation that only one transaction needed to use Prism code.
+
+### Consequence
+
+After Prism declares contracts:
+
+```text
+ordinary shield                may fail final evidence eligibility
+ordinary private transfer      may fail final evidence eligibility
+Prism helper-mediated action   can satisfy pool + mine checks
+```
+
+The final evidence path must therefore be designed around a meaningful Prism-owned pool-integrated contract.
+
+---
+
+# 11. Application-Contract Strategy
+
+Do not build an anonymizer merely for a scoring checkbox.
+
+Before custom Cairo:
+
+1. check the target protocol for a current first-party private path;
+2. inspect the closest public StarkWare anonymizer reference;
+3. choose the smallest action that strengthens Prism's financial-home product;
+4. verify it can generate genuine pool transactions involving Prism code.
+
+Current candidate spike:
+
+> **Private capital allocation from the Prism Home**, potentially adapting the current public Vesu lending anonymizer reference.
+
+Possible lifecycle:
+
+```text
+private allocation/deposit through Prism helper
+→ unwind/withdraw through Prism helper
+→ second distinct allocation/action through Prism helper
+```
+
+**Status:** implementation proposal, not yet canonical mechanism.
+
+A generic AVNU private swap is not sufficient reason to build a Prism swap helper because AVNU currently has a first-party private route. First-party convenience and hackathon own-contract evidence must be evaluated separately.
+
+---
+
+# 12. Falsification Tests
+
+## FT-001 — Identity persistence
 
 ```text
 Create P
 Bind B
 Resolve P→B
 Revoke B
-Resolve must fail
-Read P must succeed
+Resolve fails
+Read P succeeds
 ```
 
 ## FT-002 — Unauthorized binding
 
-An unrelated Base account attempts to prove/bind control of another address.
+Unrelated Base signer cannot bind another account.
 
-Expected: reject.
+## FT-003 — Replay
 
-## FT-003 — Replay ownership proof
+Expired/consumed Base control proof fails.
 
-Reuse an expired or consumed ownership challenge.
+## FT-004 — Revoked resolution
 
-Expected: reject.
+Resolver never returns revoked binding as active.
 
-## FT-004 — Revoked resolver state
-
-Resolver is queried after revocation.
-
-Expected: never return revoked destination as active.
-
-## FT-005 — Private-balance reconstruction
+## FT-005 — Private balance lifecycle
 
 ```text
 shield
-→ private balance changes
+→ confirmed
+→ maturing
+→ available
 → refresh/reconnect
-→ same canonical private balance reconstructed
+→ correct private balance
 ```
 
-## FT-006 — Private action revert safety
+## FT-006 — Helper atomicity
 
-Cause the Prism anonymizer/helper action to revert.
+Force Prism helper action to revert. Expected: supported atomic rollback, no stranded value.
 
-Expected: operation rolls back according to STRK20 semantics; no stranded value.
+## FT-007 — Privacy copy
 
-## FT-007 — Product privacy copy
+Every private label is checked against actual observer visibility.
 
-Compare every private-state/action label against actual observer visibility.
+## FT-008 — Hub-equivalent final-hash validation
 
-Expected: no stronger claim than evidence supports.
+For every hash selected for `strk20.json`:
 
----
-
-# 12. Risk Register
-
-| Risk | Severity | Current mitigation |
-|---|---:|---|
-| Wallet/API path fails on mainnet | Critical | G0 immediately |
-| Meaningful anonymizer too large for sprint | Critical | build smallest real helper early |
-| Prism degrades into address book | High | decisive bind/revoke/persist proof |
-| External ownership proof replay | High | nonce/expiry/domain binding |
-| UI presents submitted as completed | High | System/Experience lifecycle contract |
-| Privacy marketing overclaims | High | STRK20 privacy profile + Evidence audit |
-| Too many chains dilute MVP | High | Starknet + Base only |
-| Portfolio indexing consumes sprint | Medium | simple real reads first |
-| Dust recovery becomes bridge project | Medium | keep optional; execution via external route |
+```text
+ok == true
+pool == true
+mine == true   # once contracts declared
+```
 
 ---
 
 # 13. Build Gates
 
-## G0 — Mainnet STRK20 reachability
+## G0 — Mainnet pool reachability
+`NOT_IMPLEMENTED`
 
-Status: `NOT_IMPLEMENTED`
-
-## G1 — Prism identity contract
-
-Pass when:
-
-```text
-create identity
-read identity
-unique identifier invariant
-controller authority enforced
-```
-
-Status: `NOT_IMPLEMENTED`
+## G1 — PrismIdentityRegistry
+Pass on create/read + identity invariants.
+`NOT_IMPLEMENTED`
 
 ## G2 — Base ownership proof + binding
-
-Pass when owner succeeds and unrelated signer/replay fails.
-
-Status: `NOT_IMPLEMENTED`
+Pass valid owner + invalid owner + replay/expiry tests.
+`NOT_IMPLEMENTED`
 
 ## G3 — Resolution + revocation
-
-Pass when decisive product proof passes.
-
-Status: `NOT_IMPLEMENTED`
+Pass decisive Prism proof.
+`NOT_IMPLEMENTED`
 
 ## G4 — Unified Home
+Real Starknet/Base data with truthful states.
+`NOT_IMPLEMENTED`
 
-Pass when real Starknet/Base state is shown truthfully in one product surface.
+## G5 — STRK20 wallet product path
+Wallet capability + intentional balance + shield + private transfer.
+`NOT_IMPLEMENTED`
 
-Status: `NOT_IMPLEMENTED`
+## G6 — Prism-owned private application action
+Meaningful helper deployed/tested and used through the pool.
+`NOT_IMPLEMENTED`
 
-## G5 — STRK20 product integration
+## G7 — Final evidence set
+At least three hashes satisfying the current pool + own-contract validator logic.
+`NOT_IMPLEMENTED`
 
-Pass when private balance + real private action are working through the supported path.
-
-Status: `NOT_IMPLEMENTED`
-
-## G6 — Mainnet evidence set
-
-Pass when at least three qualifying STRK20-pool mainnet receipts are recorded and at least one uses Prism's deployed contract where applicable.
-
-Status: `NOT_IMPLEMENTED`
-
-## G7 — Demo/release
-
-Pass when:
-
-```text
-public demo works
-3-minute video exists
-README accurately explains architecture/privacy
-strk20.json complete
-no secrets committed
-```
-
-Status: `NOT_IMPLEMENTED`
+## G8 — Release
+Public demo + 3-minute video + complete `strk20.json` + README + no secrets.
+`NOT_IMPLEMENTED`
 
 ---
 
-# 14. Recommended Evidence Set
+# 14. Evidence Strategy
 
-Strong sprint evidence target:
+Preparatory evidence:
 
 ```text
-Tx 1 — shield / pool entry
-Tx 2 — real private transfer or second meaningful pool action
-Tx 3 — Prism application-specific privacy_invoke action through Prism contract
+G0 small shield / pool reachability
 ```
 
-If Prism deploys contracts, submitted evidence should demonstrate real use of those contracts where applicable.
+Final submission evidence after contracts are declared:
+
+```text
+Tx A — meaningful pool action through Prism helper
+Tx B — reverse/second lifecycle action through Prism helper
+Tx C — another real supported pool action through Prism helper
+```
+
+Do not add a hash to `strk20.json` until hub-equivalent verification passes.
 
 ---
 
-# 15. Scoring Strategy
+# 15. Primary Risks
 
-## STRK20 integration depth
-
-Maximize through meaningful supported private functionality, not merely wallet connection.
-
-## Working mainnet product
-
-Prioritize reproducible mainnet flows and receipts before secondary features.
-
-## Innovation
-
-Demonstrate persistent Prism identity + revocable venue resolution as the product primitive, with STRK20 as private financial execution rather than the entire identity.
-
-## Docs / open source
-
-Keep Foundry → Profile → Project structure current and make privacy/evidence limitations explicit.
+| Risk | Severity | Mitigation |
+|---|---:|---|
+| Supported wallet/mainnet path fails | Critical | G0 immediately |
+| Custom helper becomes too large | Critical | spike smallest meaningful action early |
+| Final hashes touch pool but not declared Prism code | Critical | hub-equivalent validator before inclusion |
+| Prism degrades into address book | High | bind/resolve/revoke/persist decisive proof |
+| UI shows submission as completion | High | explicit operation lifecycle |
+| Deposit UX looks like duplicate tx | High | explain approve + deposit substates |
+| Fresh notes treated as immediately spendable | High | maturity state |
+| Privacy copy overclaims amounts/timing | High | privacy profile + runtime audit |
+| Shadow-account scope creep | Medium | excluded from MVP |
+| Too many venues/features | High | Starknet + Base only |
 
 ---
 
-# 16. Immediate Build Order
+# 16. Current Build Order
 
 ```text
-1. G0 mainnet pool reachability
-2. Prism identity contract
-3. Base control proof + binding
-4. resolver + revoke
-5. unified Home with real balances
-6. STRK20 private balance/action path
-7. meaningful privacy_invoke helper
-8. collect mainnet evidence continuously
-9. demo + submission hardening
+1. G0 mainnet pool smoke test as soon as user wallet is ready
+2. wallet connection + capability vertical slice
+3. PrismIdentityRegistry scaffold in parallel
+4. shield/private balance lifecycle
+5. Base proof + binding + resolver/revoke
+6. private transfer
+7. Prism-owned helper spike + tests
+8. deploy helper and earn three qualifying mainnet receipts
+9. unify Home / Activity / receipts
+10. demo + release hardening
 ```
 
-Frontend and backend proceed as vertical slices rather than isolated phases.
+The current root `STRK20_INTEGRATION_PLAN.md` governs the implementation phases.
 
 ---
 
 # 17. Evidence Maintenance Rule
 
-Every meaningful implementation milestone must update:
+Every meaningful runtime milestone updates:
 
 ```text
 projects/prism/EVIDENCE_LEDGER.md
 projects/prism/AUDIT.md
-strk20.json   # only when submission evidence exists
 ```
 
-A successful runtime result should record:
-
-```text
-claim
-build commit
-environment
-input/action
-result
-transaction/deployment if applicable
-limitations
-maturity change
-```
+Update root `strk20.json` only when the evidence actually exists and has passed final eligibility checks.
 
 ---
 
 # 18. Current Verdict
 
 ```text
-Research grounding      PASS
-Product coherence       PASS
-Methodology structure   PASS
-Starknet profiles       PASS
-Sprint registration     PASS
-Repository setup        PASS
-Identity implementation NOT_IMPLEMENTED
-Base binding             NOT_IMPLEMENTED
-STRK20 mainnet evidence  NOT_IMPLEMENTED
-Public demo              NOT_IMPLEMENTED
+Research grounding                 PASS
+Product coherence                  PASS
+Foundry/Profile structure          PASS
+Current STRK20 source refresh      PASS
+Registration upstream              PASS
+Repository setup                   PASS
+Current integration plan           PASS
+Wallet implementation              NOT_IMPLEMENTED
+Prism identity implementation      NOT_IMPLEMENTED
+Base binding                       NOT_IMPLEMENTED
+G0 mainnet evidence                NOT_IMPLEMENTED
+Project helper                     NOT_IMPLEMENTED
+Final three mainnet receipts       NOT_IMPLEMENTED
+Public demo                        NOT_IMPLEMENTED
 ```
 
 Overall:
 
 > **PASS_WITH_LIMITATIONS — BUILD APPROVED, EVIDENCE NOT YET EARNED**
 
-The project should now spend effort on execution and evidence rather than further Foundry design unless runtime evidence exposes a contradiction.
+The methodology is no longer the bottleneck. Execution and evidence are.
 
 ---
 
