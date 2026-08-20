@@ -497,11 +497,11 @@ default wallet environment                SN_SEPOLIA
 TypeScript check                          PASS
 Next production build                     PASS
 localhost server-render assertions        PASS
-desktop/mobile browser screenshots        BLOCKED_BY_ENVIRONMENT
+desktop/mobile browser screenshots        PASS
 public deployment                         NOT_IMPLEMENTED
 ```
 
-The remote browser runner rejected the sandbox-local preview with `ERR_BLOCKED_BY_CLIENT`. Therefore this checkpoint earns X2 local-controlled evidence only; it does not close visual acceptance, public-demo, wallet-observation, or mainnet gates.
+The responsive review passed at 1363×936 and 390×844 with no horizontal overflow, application-origin console errors, framework overlay, or missing primary content. Enter Prism reached the Home state, and unavailable action copy remained truthful. This checkpoint remains X2 local-controlled evidence; it does not close public-demo, real-wallet observation, or mainnet gates.
 
 ---
 
@@ -528,7 +528,7 @@ Current STRK20 source refresh      PASS
 Registration upstream              PASS
 Repository setup                   PASS
 Current integration plan           PASS
-Landing implementation             PASS / VISUAL QA PENDING
+Landing implementation             PASS
 Wallet implementation              IMPLEMENTED / RUNTIME OBSERVATION PENDING
 Prism identity implementation      NOT_IMPLEMENTED
 Base binding                       NOT_IMPLEMENTED

@@ -372,7 +372,7 @@ The living object must not be directly shrunk into the app-rail mark. They are t
 - [x] Motion yields to user input and follows the shared primitive language.
 - [x] Landing and Home feel like one continuous system.
 - [x] Testnet/mainnet status is visible where applicable.
-- [ ] Desktop and mobile browser screenshots have passed visual review.
+- [x] Desktop and mobile browser screenshots have passed visual review.
 
 ## Implementation resolution
 
@@ -388,8 +388,8 @@ TypeScript check                 PASS
 Next production build           PASS
 diff/whitespace check           PASS
 localhost server render         PASS
-desktop browser screenshot      BLOCKED_BY_ENVIRONMENT
-mobile browser screenshot       BLOCKED_BY_ENVIRONMENT
+desktop browser screenshot      PASS · 1363×936
+mobile browser screenshot       PASS · 390×844
 ```
 
-The browser runner is remote and rejects the isolated local preview with `ERR_BLOCKED_BY_CLIENT`. This is an acceptance limitation, not evidence of an application failure.
+Browser review found no horizontal overflow, application-origin console errors, framework overlay, or missing primary content. Enter Prism reached the Home state and the unavailable Send state rendered truthfully. The mobile review used a 390×844 isolated viewport inside the review surface so responsive media queries executed at handset width.

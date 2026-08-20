@@ -36,7 +36,7 @@ Only evidence matching the current implementation/spec version counts as current
 | EVD-PRISM-010 | Public product demo works end-to-end | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-011 | 3-minute demo video published | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-012 | Wallet capability phase is locally buildable without private-state access | X2 | X2 | PASS | commit `6f6a138`; local TypeScript check, production build, and diff check pass | Ready-wallet observation, reconnect observation, and G0 remain open |
-| EVD-PRISM-013 | Canonical landing and truthful testnet Home shell compile and server-render without fabricated user state | X3 | X2 | PASS_WITH_LIMITATION | implementation commit `d0c27ed`; TypeScript, Next production build, localhost server-render text assertions, and diff check pass | remote browser cannot access isolated localhost; desktop/mobile visual screenshots and public deployment remain open |
+| EVD-PRISM-013 | Canonical landing and truthful testnet Home shell compile, render, and pass responsive visual review without fabricated user state | X3 | X2 | PASS | implementation commit `d0c27ed`; TypeScript, Next production build, server-render assertions, desktop 1363×936 review, mobile 390×844 review, CTA/Home-state interaction, console/overlay and overflow checks pass | public deployment and real-wallet observation remain open |
 
 ---
 
