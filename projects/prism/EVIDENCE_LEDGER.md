@@ -1,5 +1,5 @@
 # Prism — Evidence Ledger
-## v0.1
+## v0.2
 
 Evidence maturity:
 
@@ -19,21 +19,61 @@ Only evidence matching the current implementation/spec version counts as current
 | Evidence ID | Claim | Target | Current | Status | Evidence / receipt | Limitation |
 |---|---|---:|---:|---|---|---|
 | EVD-PRISM-001 | Public Prism sprint repository exists with code | X5 | X5 | PASS | `https://github.com/etvjay/Prism` | proves repository/setup only |
-| EVD-PRISM-002 | STRK20 sprint registration PR opened | X5 | X5 | PASS | `starkience/strk20-hackathon#136` | merge/acceptance is upstream-controlled |
-| EVD-PRISM-003 | Root `strk20.json` exists with required shape | X5 | X5 | PASS | repository root | fields still intentionally empty |
+| EVD-PRISM-002 | Prism registration is present in upstream sprint registry | X5 | X5 | PASS | upstream `starkience/strk20-hackathon/registry.json` contains `etvjay/Prism` | does not prove product implementation |
+| EVD-PRISM-003 | Root `strk20.json` exists with required shape | X5 | X5 | PASS | repository root | evidence fields still intentionally empty |
 | EVD-PRISM-004 | Prism ID can be created/read on Starknet | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-005 | Base control proof prevents unauthorized binding | X4 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-006 | Active Base binding resolves from Prism ID | X4 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-007 | Revoked Base binding no longer resolves while Prism ID persists | X4 | X0 | NOT_IMPLEMENTED | — | decisive identity proof |
 | EVD-PRISM-008 | Real Starknet balance displayed accurately | X4 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-009 | Real Base balance displayed accurately | X4 | X0 | NOT_IMPLEMENTED | — | — |
-| EVD-STRK20-001 | Prism can reach STRK20 pool on SN_MAIN | X5 | X0 | NOT_IMPLEMENTED | — | first technical gate |
-| EVD-STRK20-002 | Real shield/private balance can be reconstructed in product | X5 | X0 | NOT_IMPLEMENTED | — | — |
-| EVD-STRK20-003 | Real private transfer succeeds on mainnet | X5 | X0 | NOT_IMPLEMENTED | — | qualifying sprint receipt candidate |
-| EVD-STRK20-004 | Meaningful Prism `privacy_invoke` action succeeds on mainnet | X5 | X0 | NOT_IMPLEMENTED | — | strongest integration-depth receipt |
-| EVD-STRK20-005 | At least three qualifying pool-touching mainnet tx hashes recorded | X5 | X0 | NOT_IMPLEMENTED | `strk20.json` empty | submission requirement |
+| EVD-STRK20-001 | Prism can reach STRK20 pool on SN_MAIN from a supported wallet | X5 | X0 | NOT_IMPLEMENTED | — | G0 smoke; need not be final submission hash |
+| EVD-STRK20-002 | Real shielded/private balance can be read intentionally through wallet-mediated consent and shown correctly | X5 | X0 | NOT_IMPLEMENTED | — | do not use balance reads for feature detection |
+| EVD-STRK20-003 | Real private transfer succeeds on mainnet with privacy claims matched to observed metadata | X5 | X0 | NOT_IMPLEMENTED | — | may not qualify for final sprint list if it bypasses declared Prism contracts |
+| EVD-STRK20-004 | Meaningful Prism-owned pool-integrated helper action succeeds on mainnet | X5 | X0 | NOT_IMPLEMENTED | — | strongest integration-depth candidate |
+| EVD-STRK20-005 | At least three final mainnet hashes satisfy pool + own-contract validation | X5 | X0 | NOT_IMPLEMENTED | `strk20.json` empty | required once Prism declares contracts |
+| EVD-STRK20-006 | Current hub validator logic independently rechecked against each selected final hash | X5 | X0 | NOT_IMPLEMENTED | upstream `scripts/build-projects.mjs` logic documented | runtime receipts not yet available |
 | EVD-PRISM-010 | Public product demo works end-to-end | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-011 | 3-minute demo video published | X5 | X0 | NOT_IMPLEMENTED | — | — |
+
+---
+
+# Current Research Evidence
+
+## EVD-RSCH-STRK20-001 — Current normal-dapp route
+
+**Status:** PASS / source-level evidence
+
+```text
+get-starknet 6.0.3
+starknet.js 10.4.0 / WalletAccountV6
+Wallet API 0.10.3
+privacy-enabled wallet
+```
+
+This establishes the planned route; it does not prove Prism's implementation works.
+
+## EVD-RSCH-STRK20-002 — Hub own-contract validation
+
+**Status:** PASS / source-level evidence
+
+Current upstream `scripts/build-projects.mjs` verifies each submitted hash for:
+
+```text
+mainnet existence
+successful execution
+STRK20 pool event
+and, when project contracts are declared,
+project-contract involvement by event or calldata
+```
+
+This evidence governs selection of final `strk20.json.transactions`.
+
+## EVD-RSCH-STRK20-003 — Shadow-account route split
+
+**Status:** PASS / source-level evidence
+
+SDK release-candidate changelog shows SDK-side shadow-account functionality, while the referenced consumer Wallet API route remains unavailable. This supports exclusion from the sprint-critical MVP without claiming the SDK mechanism is absent.
 
 ---
 
@@ -56,6 +96,10 @@ transaction:
   block:
   status:
 contracts: []
+hub_validator:
+  ok:
+  pool:
+  mine:
 claim_scope:
 limitations:
 independent_verification:
@@ -66,22 +110,46 @@ maturity:
 
 # Mainnet Receipt Rule
 
-For each STRK20 submission transaction, record at minimum:
+For every final STRK20 submission transaction record:
 
 ```text
 network = SN_MAIN
 transaction hash
 success status
 block
-STRK20 pool involvement
-Prism contract involvement where applicable
+STRK20 pool event
+Prism contract involvement if contracts are declared
 build commit
 user/demo flow
 privacy property actually evidenced
 strk20.json inclusion
 ```
 
+If `strk20.json.contracts` is non-empty, a final candidate does **not** pass until current hub-equivalent checks produce:
+
+```text
+ok   = true
+pool = true
+mine = true
+```
+
 A transaction hash is evidence that an action occurred. It is not by itself proof of every privacy property claimed about that action.
+
+---
+
+# Preparatory vs Submission Evidence
+
+Keep separate:
+
+```text
+Preparatory mainnet evidence
+  e.g. ordinary shield proving wallet/pool reachability
+
+Final sprint evidence
+  ≥3 transactions satisfying all hub checks
+```
+
+The preparatory hash remains useful even when it is not eligible for the final list.
 
 ---
 
@@ -89,4 +157,4 @@ A transaction hash is evidence that an action occurred. It is not by itself proo
 
 **EVD-STRK20-001 — mainnet pool reachability.**
 
-This should be closed before substantial private-feature expansion.
+Close G0 with the smallest safe real mainnet interaction, then immediately begin the project-owned helper path needed for final qualifying receipts.
