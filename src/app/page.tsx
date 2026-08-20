@@ -1,3 +1,5 @@
+import WalletConnectionPanel from "../features/wallet/WalletConnectionPanel";
+
 export default function HomePage() {
   return (
     <main className="shell">
@@ -25,6 +27,8 @@ export default function HomePage() {
           <strong>STRK20 on Starknet mainnet</strong>
         </div>
       </section>
+
+      <WalletConnectionPanel />
     </main>
   );
 }
