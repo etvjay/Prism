@@ -7,7 +7,7 @@ Contradictions are surfaced rather than silently patched. Resolved contradiction
 
 ## CON-PRISM-001 — “One account” vs venue-native authorization
 
-**A**  
+**A**
 Product experience should feel like one Prism Account.
 
 **B**  
@@ -30,7 +30,7 @@ venue-native signatures underneath
 
 ## CON-PRISM-002 — Broad private-across-chains vision vs public Base execution
 
-**A**  
+**A**
 Prism's long-term research direction includes private identity/authority relationships across venues.
 
 **B**  
@@ -182,3 +182,33 @@ Preparing allowance
 Do not collapse the protocol lifecycle into false immediate completion.
 
 **Status:** Resolved at Experience boundary; implementation pending
+
+---
+
+## CON-PRISM-011 — Shadow-account MVP exclusion vs current WalletAccountV6 documentation
+
+**A — Existing canonical constraint**
+
+The repository's canonical decisions and STRK20 profile exclude shadow accounts from the sprint MVP because the referenced normal-dapp Wallet API route was not exposed.
+
+**B (new upstream evidence)**
+The current Starknet.js Next WalletAccount guide now documents a `shadow_account_invoke` STRK20 action and lists `WalletAccountV6` shadow-account methods. The local STRK20 freshness check also reports that the old `packages/sub_account_anonymizer` path is gone and a `packages/shadow_account_anonymizer` path is present.
+
+**Temporary resolution**
+Do not expand Prism's MVP during the wallet-capability slice. Continue with the canonical ordinary Wallet API route, re-verify the exact pinned `starknet@10.4.0` and wallet-standard package behavior, and treat shadow accounts as a separately scoped option until the current upstream API is tested against the repository pins and the product need is demonstrated.
+
+**Required evidence**
+
+```text
+verify pinned-package type/runtime support;
+verify Ready-wallet behavior;
+compare the current WalletAccountV6 API with the repository's pinned versions;
+reopen DEC-PRISM-015 only if shadow accounts materially strengthen the decisive Prism proof.
+```
+
+**Sources**
+
+- https://starknet-js.com/docs/next/guides/account/walletAccount
+- `.agents/skills/strk20-privacy-integration/scripts/check_freshness.py --quick`
+
+**Status:** Open
