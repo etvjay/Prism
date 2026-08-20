@@ -2,7 +2,7 @@
 
 **Status:** Code complete; manual wallet gate pending  
 **Date:** 2026-08-20  
-**Build commit:** `4dde190`  
+**Build commit:** `6f6a138`  
 **Linear:** [PRISM-5](https://linear.app/arcisdid/issue/PRISM-5/strk20-wallet-connection-and-capability-detection)
 
 ## Patch boundary
