@@ -1,5 +1,5 @@
 # Prism — Contradiction Register
-## v0.1
+## v0.2
 
 Contradictions are surfaced rather than silently patched. Resolved contradictions remain recorded.
 
@@ -43,18 +43,21 @@ Claim only private Starknet financial state/actions through STRK20. Do not claim
 
 ---
 
-## CON-PRISM-003 — Private account layer vision vs unshipped private subaccounts
+## CON-PRISM-003 — Private account layer vision vs earlier “subaccounts unshipped” status
 
 **A**  
 A future PrismZK design may privately bind multiple execution identities.
 
-**B**  
-Current STRK20 material states private subaccounts are not yet shipped / are coming soon.
+**B (original evidence)**  
+Sprint-facing STRK20 material described sub-accounts as coming soon.
+
+**Later evidence**  
+The Privacy SDK release candidates shipped the SDK-side mechanism and renamed it to **shadow accounts** in `0.14.3-RC.5`, while the currently referenced normal-dapp Wallet API route still does not expose it.
 
 **Resolution**  
-Use public verified bindings in v0. Treat private binding as future research.
+The original MVP scope remains correct for a different reason: Prism's consumer route is wallet-mediated, so the SDK-only mechanism is not a safe sprint dependency. Use public verified bindings in v0.
 
-**Status:** Resolved
+**Status:** Resolved / evidence updated
 
 ---
 
@@ -118,3 +121,64 @@ The sprint explicitly requires qualifying SN_MAIN evidence and recommends provin
 Run a minimal real STRK20 mainnet smoke path early; product polish proceeds in parallel.
 
 **Status:** Resolved
+
+---
+
+## CON-PRISM-008 — First-party private routes vs project-owned-contract evidence
+
+**A**  
+Current STRK20 guidance correctly recommends checking for a first-party private protocol path before writing a custom anonymizer. A maintained first-party route reduces implementation and audit surface.
+
+**B**  
+The current sprint hub validator requires every final transaction hash to involve one of the project's own declared contracts whenever `strk20.json.contracts` is non-empty.
+
+**Resolution**
+
+```text
+Use first-party private routes when they best serve the product.
+Treat hackathon evidence eligibility as a separate constraint.
+Do not assume a first-party executor can satisfy Prism's own-contract evidence requirement.
+```
+
+For the sprint evidence path, Prism should own at least one meaningful pool-integrated helper if it declares contracts and wants contract-backed qualifying receipts.
+
+**Status:** Resolved for sprint architecture
+
+---
+
+## CON-PRISM-009 — G0 shield transaction vs final evidence eligibility
+
+**A**  
+The safest Day-0 test is a small ordinary shield/deposit through the wallet.
+
+**B**  
+After Prism declares project contracts, an ordinary shield that never references Prism code will fail the hub's `mine` check for a final submission transaction.
+
+**Resolution**  
+Keep the initial shield as engineering/mainnet reachability evidence, but do not automatically put it in final `strk20.json.transactions`. Generate final hashes through the Prism-owned pool-integrated helper.
+
+**Status:** Resolved
+
+---
+
+## CON-PRISM-010 — Privacy UX simplicity vs two-step deposits and note maturity
+
+**A**  
+Shielding should feel like one understandable product action.
+
+**B**  
+The underlying flow requires ERC-20 approval plus the pool deposit, and freshly created notes generally require ~10 blocks before later spending.
+
+**Resolution**  
+Present one user goal with truthful sub-states:
+
+```text
+Preparing allowance
+→ Shielding
+→ Private balance pending/maturing
+→ Available privately
+```
+
+Do not collapse the protocol lifecycle into false immediate completion.
+
+**Status:** Resolved at Experience boundary; implementation pending
