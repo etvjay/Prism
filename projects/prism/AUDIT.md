@@ -5,7 +5,7 @@
 **Project:** Prism  
 **Repository:** `etvjay/Prism`  
 **Sprint:** STRK20 Private Sprint  
-**Current outcome:** `PASS_WITH_LIMITATIONS — BUILD APPROVED, EVIDENCE NOT YET EARNED`
+**Current outcome:** `PASS_WITH_LIMITATIONS — LOCAL BUILD EVIDENCE EARNED, RUNTIME/MAINNET EVIDENCE OPEN`
 
 ---
 
@@ -482,6 +482,29 @@ The exact commit and manual result belong in the phase record and evidence ledge
 
 ---
 
+# 16B. Landing Experience Checkpoint
+
+The canonical public landing and truthful testnet Home preview are implemented in commit `d0c27ed`.
+
+```text
+reference-led warm instrument shell       IMPLEMENTED
+flat + living Refracted Core system       IMPLEMENTED
+canonical hero copy                       IMPLEMENTED
+scroll-led identity/Home narrative        IMPLEMENTED
+truthful endpoint state labels            IMPLEMENTED
+fabricated balances/activity              ABSENT
+default wallet environment                SN_SEPOLIA
+TypeScript check                          PASS
+Next production build                     PASS
+localhost server-render assertions        PASS
+desktop/mobile browser screenshots        BLOCKED_BY_ENVIRONMENT
+public deployment                         NOT_IMPLEMENTED
+```
+
+The remote browser runner rejected the sandbox-local preview with `ERR_BLOCKED_BY_CLIENT`. Therefore this checkpoint earns X2 local-controlled evidence only; it does not close visual acceptance, public-demo, wallet-observation, or mainnet gates.
+
+---
+
 # 17. Evidence Maintenance Rule
 
 Every meaningful runtime milestone updates:
@@ -505,7 +528,8 @@ Current STRK20 source refresh      PASS
 Registration upstream              PASS
 Repository setup                   PASS
 Current integration plan           PASS
-Wallet implementation              NOT_IMPLEMENTED
+Landing implementation             PASS / VISUAL QA PENDING
+Wallet implementation              IMPLEMENTED / RUNTIME OBSERVATION PENDING
 Prism identity implementation      NOT_IMPLEMENTED
 Base binding                       NOT_IMPLEMENTED
 G0 mainnet evidence                NOT_IMPLEMENTED
@@ -516,7 +540,7 @@ Public demo                        NOT_IMPLEMENTED
 
 Overall:
 
-> **PASS_WITH_LIMITATIONS — BUILD APPROVED, EVIDENCE NOT YET EARNED**
+> **PASS_WITH_LIMITATIONS — LOCAL BUILD EVIDENCE EARNED, RUNTIME/MAINNET EVIDENCE OPEN**
 
 The methodology is no longer the bottleneck. Execution and evidence are.
 

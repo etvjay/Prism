@@ -1,7 +1,7 @@
 # Prism Landing Visual Specification
 
-**Status:** Implemented design source of truth; browser visual acceptance pending  
-**Date:** 2026-08-20  
+**Status:** Implemented design source of truth; browser visual acceptance pending
+**Date:** 2026-08-20
 **Product:** Prism — One Prism ID. One home across chains.
 
 This document translates the supplied Prism skill system and reference images into a precise landing-page target. It governs visual composition and motion only; canonical product, Starknet, STRK20, privacy, and evidence rules remain governed by the project documentation and profiles.
