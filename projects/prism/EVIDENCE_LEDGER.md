@@ -35,6 +35,7 @@ Only evidence matching the current implementation/spec version counts as current
 | EVD-STRK20-006 | Current hub validator logic independently rechecked against each selected final hash | X5 | X0 | NOT_IMPLEMENTED | upstream `scripts/build-projects.mjs` logic documented | runtime receipts not yet available |
 | EVD-PRISM-010 | Public product demo works end-to-end | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-011 | 3-minute demo video published | X5 | X0 | NOT_IMPLEMENTED | — | — |
+| EVD-PRISM-012 | Wallet capability phase is locally buildable without private-state access | X2 | X2 | PASS | commit `6f6a138`; local TypeScript check, production build, and diff check pass | Ready-wallet observation, reconnect observation, and G0 remain open |
 
 ---
 
@@ -52,6 +53,8 @@ privacy-enabled wallet
 ```
 
 This establishes the planned route; it does not prove Prism's implementation works.
+
+The current implementation treats Wallet API/spec version `0.10.3` as the minimum supported STRK20 capability threshold and records the observed network separately from the configured target.
 
 ## EVD-RSCH-STRK20-002 — Hub own-contract validation
 
