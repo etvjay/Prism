@@ -15,7 +15,7 @@ function StatusPill({ children, tone = "planned" }: { children: React.ReactNode;
 
 function BrandLockup({ compact = false }: { compact?: boolean }) {
   return (
-    <a className={`${styles.brandLockup} ${compact ? styles.brandCompact : ""}`} href="#top" aria-label="Prism home">
+    <a className={`${styles.brandLockup} ${compact ? styles.brandCompact : ""}`} href="#top" aria-label="Prism">
       <RefractedCore label="Prism" state="PRISM" variant="flat" />
       <span>Prism</span>
     </a>
@@ -123,7 +123,6 @@ export default function PrismLanding() {
 
         <div className={styles.heroContent}>
           <div className={styles.heroCopy}>
-            <p className={styles.heroKicker}>One persistent identity</p>
             <h1 id="hero-title">
               Your Home
               <br />
@@ -144,7 +143,6 @@ export default function PrismLanding() {
             <div className={styles.plinth} aria-hidden="true">
               <span />
             </div>
-            <span className={styles.stateReadout}>{coreState}</span>
           </div>
         </div>
       </section>
