@@ -229,7 +229,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-height: calc(100svh - 182px);
+  min-height: calc(100svh - 184px);
   padding: clamp(58px, 7.2vh, 82px) 28px 18px;
   text-align: center;
 }
@@ -1173,7 +1173,7 @@
   }
 
   .heroContent {
-    min-height: calc(100svh - 160px);
+    min-height: calc(100svh - 162px);
     padding: 48px 28px 10px;
   }
 
@@ -1259,7 +1259,7 @@
   }
 
   .heroContent {
-    min-height: calc(100svh - 92px);
+    min-height: calc(100svh - 94px);
     padding: 46px 18px 10px;
   }
 
