@@ -1173,16 +1173,16 @@
 
   .heroContent {
     min-height: calc(100svh - 160px);
-    padding: 34px 28px 10px;
+    padding: 48px 28px 10px;
   }
 
   .heroCopy h1 {
-    font-size: clamp(58px, 5.65vw, 78px);
+    font-size: clamp(64px, 6.45vw, 88px);
   }
 
   .heroCopy > p {
     margin-top: 20px;
-    font-size: 18px;
+    font-size: 19px;
     line-height: 1.45;
   }
 
@@ -1200,14 +1200,14 @@
   }
 
   .heroCore {
-    width: clamp(250px, 30vh, 300px);
-    height: clamp(250px, 30vh, 300px);
+    width: clamp(310px, 37vh, 360px);
+    height: clamp(310px, 37vh, 360px);
   }
 
   .plinth {
     bottom: 3px;
-    width: min(450px, 76vw);
-    height: 84px;
+    width: min(520px, 80vw);
+    height: 92px;
   }
 }
 

@@ -5,8 +5,6 @@ import WalletConnectionPanel from "../wallet/WalletConnectionPanel";
 import RefractedCore, { type RefractedCoreState } from "./RefractedCore";
 import styles from "./PrismLanding.module.css";
 
-const idleStates: RefractedCoreState[] = ["PRISM", "HOME", "ID", "CONTINUITY"];
-
 type HomeNotice = "idle" | "send" | "receive";
 
 function StatusPill({ children, tone = "planned" }: { children: React.ReactNode; tone?: "testnet" | "planned" | "abstract" }) {
@@ -31,21 +29,6 @@ export default function PrismLanding() {
   const [activeStory, setActiveStory] = useState<string | null>(null);
   const [entering, setEntering] = useState(false);
   const [homeNotice, setHomeNotice] = useState<HomeNotice>("idle");
-
-  useEffect(() => {
-    if (activeStory || entering) return;
-
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (mediaQuery.matches) return;
-
-    let index = 0;
-    const interval = window.setInterval(() => {
-      index = (index + 1) % idleStates.length;
-      setCoreState(idleStates[index]);
-    }, 4600);
-
-    return () => window.clearInterval(interval);
-  }, [activeStory, entering]);
 
   useEffect(() => {
     const root = storyRef.current;
