@@ -11,6 +11,7 @@
   --blue: #446a9c;
   --green: #42725c;
   min-height: 100vh;
+  padding: 32px 0;
   overflow: clip;
   color: var(--ink);
   background:
@@ -22,7 +23,7 @@
   position: relative;
   width: min(1480px, calc(100% - 64px));
   min-height: calc(100svh - 64px);
-  margin: 32px auto 0;
+  margin: 0 auto;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 34px;
@@ -1212,6 +1213,10 @@
 }
 
 @media (max-width: 760px) {
+  .page {
+    padding: 10px 0;
+  }
+
   .heroShell,
   .homeEntry,
   .footer {
@@ -1220,7 +1225,7 @@
 
   .heroShell {
     min-height: calc(100svh - 20px);
-    margin-top: 10px;
+    margin-top: 0;
     border-radius: 24px;
   }
 
