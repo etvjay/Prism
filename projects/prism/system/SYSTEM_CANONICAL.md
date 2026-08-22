@@ -16,7 +16,7 @@ depends_on:
   - projects/prism/ASSUMPTIONS.md@v0.1
   - projects/prism/CONTRADICTIONS.md@v0.2
   - projects/prism/EVIDENCE_LEDGER.md@v0.2
-  - projects/prism/system-inputs/PROJECT_BACKEND_GATE.md@2026-08-22
+  - projects/prism/system-inputs/PRODUCT_BACKEND_GATE.md@2026-08-22
   - projects/prism/system-inputs/RESEARCH_BACKEND_GATE.md@2026-08-22
 decision_refs:
   - DEC-PRISM-001..018 (all acknowledged, none mutated)
