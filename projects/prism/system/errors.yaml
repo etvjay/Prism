@@ -1,0 +1,48 @@
+# Prism errors v0.1 (proposed) — authority: ERROR_CATALOGUE.md
+errors:
+  - {error_code: ERR-001, name: invalid_venue, category: validation, trigger: venue_enum_lacks_value,
+     retryable: false, user_action: use_supported_venue, contract_mapping: revert, http_mapping: 422}
+  - {error_code: ERR-002, name: identity_not_found, category: not_found, trigger: prism_id_unknown_to_registry,
+     retryable: false, user_action: check_identifier, contract_mapping: revert, http_mapping: 404}
+  - {error_code: ERR-003, name: invalid_signer, category: authentication, trigger: ladder_invalid_or_account_mismatch_FT-002,
+     retryable: false_new_challenge, user_action: reconnect_wallet_restart_flow,
+     contract_mapping: offchain_verify_result, http_mapping: 401}
+  - {error_code: ERR-004, name: not_controller, category: authorization, trigger: registry_caller_neq_identity_controller,
+     retryable: false, user_action: sign_with_controller_account, contract_mapping: revert, http_mapping: 403}
+  - {error_code: ERR-005, name: invalid_execution_account, category: validation, trigger: zero_or_malformed_base_address,
+     retryable: false, user_action: correct_input, contract_mapping: revert, http_mapping: 422}
+  - {error_code: ERR-006, name: nonce_already_used, category: replay, trigger: challenge_nonce_consumed_INV-SYS-010_FT-003_service_layer,
+     retryable: false_new_challenge, user_action: restart_binding_flow, contract_mapping: verify_layer, http_mapping: 409}
+  - {error_code: ERR-007, name: proof_digest_already_consumed, category: replay, trigger: digest_map_hit_onchain_INV-SYS-004,
+     retryable: false_new_proof, user_action: restart_binding_flow, contract_mapping: revert, http_mapping: 409}
+  - {error_code: ERR-008, name: binding_already_active, category: conflict, trigger: duplicate_ACTIVE_bind_same_key,
+     retryable: false, user_action: resolve_current_binding_first, contract_mapping: revert, http_mapping: 409}
+  - {error_code: ERR-009, name: binding_not_found, category: not_found, trigger: revoke_target_missing,
+     retryable: false, user_action: check_binding_exists, contract_mapping: revert, http_mapping: 404}
+  - {error_code: ERR-010, name: identity_not_found_read, category: not_found, trigger: read_or_resolve_unknown_id,
+     retryable: false, user_action: n_a, contract_mapping: view_return_flag, http_mapping: 404}
+  - {error_code: ERR-011, name: binding_already_revoked, category: stale_state, trigger: revoke_on_REVOKED_binding,
+     retryable: benign_returns_existing_fact, user_action: none_needed,
+     contract_mapping: non_failing_success_path, http_mapping: "200_with_state"}
+  - {error_code: ERR-012, name: altered_message, category: validation, trigger: recomputed_digest_neq_signed_digest_INV-SYS-011_A8-3_matrix,
+     retryable: false_new_challenge, user_action: restart_flow, contract_mapping: verify_layer, http_mapping: 400}
+  - {error_code: ERR-013, name: proof_expired, category: stale_state, trigger: ttl_exceeded_pre_verify,
+     retryable: new_challenge, user_action: restart_flow, contract_mapping: verify_layer, http_mapping: 410}
+  - {error_code: ERR-014, name: unsupported_signature_class, category: unsupported, trigger: ladder_cannot_classify_signature,
+     retryable: false, user_action: use_supported_wallet_type, contract_mapping: verify_layer, http_mapping: 422}
+  - {error_code: ERR-020, name: wallet_rejected, category: authentication, trigger: user_denied_wallet_prompt,
+     retryable: true, user_action: retry, contract_mapping: client_state, http_mapping: ux_state}
+  - {error_code: ERR-021, name: rpc_unavailable, category: dependency, trigger: rpc_provider_failure,
+     retryable: true_backoff, user_action: wait_retry, contract_mapping: n_a, http_mapping: 503}
+  - {error_code: ERR-022, name: timeout_unknown_status, category: stale_state, trigger: submitted_unconfirmed_past_window,
+     retryable: poll_only, user_action: honest_still_processing,
+     contract_mapping: n_a, http_mapping: "202_with_op_state",
+     note: timeout_after_submission_does_not_prove_failure_docs_v0.3_s35}
+  - {error_code: ERR-023, name: stale_state_conflict, category: stale_state, trigger: cache_below_watermark_or_op_version_conflict,
+     retryable: re_read, user_action: refresh, contract_mapping: n_a, http_mapping: 409}
+
+rules:
+  - stable_codes_across_api_and_contract_mapping
+  - raw_stack_traces_are_never_external_errors
+  - distinct_causes_get_distinct_codes_A8-9
+  - every_error_names_retryability_and_user_action

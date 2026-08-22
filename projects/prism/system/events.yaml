@@ -1,0 +1,59 @@
+# Prism events v0.1 (proposed) — authority: EVENT_CATALOGUE.md
+events:
+  - event_id: EVT-PRISM-IDENTITY-CREATED
+    type: onchain_starknet
+    past_tense_name: PrismIdentityCreated
+    source_authority: PrismIdentityRegistry_OP-7-01
+    object_ref: OBJ-PRISM-001
+    schema_version: 1
+    event_key: prism_id
+    object_version: 0
+    payload: [prism_id, controller]
+    privacy_class: pseudonymous_no_metadata_beyond_fields
+    ordering: block_number_tx_hash_event_index
+    uniqueness: prism_id_once_ever
+    replay: idempotent_by_event_key
+    retention: permanent_chain
+    consumer_responsibilities: indexer_creates_projection_must_not_enrich_with_social_data
+    slice: PRISM-7
+
+  - event_id: EVT-EXECUTION-IDENTITY-BOUND
+    type: onchain_starknet
+    past_tense_name: ExecutionIdentityBound
+    source_authority: PrismIdentityRegistry_OP-8-01
+    object_ref: OBJ-PRISM-003
+    schema_version: 1
+    event_key: prism_id+venue+execution_account+bound_at_block
+    object_version: binding_sequence_per_key
+    payload: [prism_id, venue, execution_account, proof_digest]
+    privacy_class: public_by_v0_design_CON-PRISM-002_acknowledged
+    ordering: chain_order
+    uniqueness: digest_once_ever_INV-SYS-004
+    replay: idempotent_by_event_key_plus_digest_check
+    retention: permanent_chain
+    consumer_responsibilities: invalidate_resolution_caches_update_op_state
+    slice: PRISM-8
+
+  - event_id: EVT-BINDING-REVOKED
+    type: onchain_starknet
+    past_tense_name: BindingRevoked
+    source_authority: PrismIdentityRegistry_OP-8-03
+    object_ref: OBJ-PRISM-003
+    schema_version: 1
+    event_key: prism_id+venue+execution_account+revoked_at_block
+    object_version: increments_binding_version
+    payload: [prism_id, venue, execution_account]
+    privacy_class: public
+    ordering: chain_order
+    uniqueness: once_per_binding_instance
+    replay: idempotent
+    retention: permanent_chain
+    consumer_responsibilities: resolution_flips_to_NO_ACTIVE_DESTINATION_identity_projection_MUST_NOT_be_deleted_or_mutated_INV-SYS-006
+    slice: PRISM-8
+
+reconstruction_guarantee:
+  statement: replaying the three canonical events alone reconstructs complete canonical identity and binding state
+  test_ref: TEST-7-3-1
+  gate: A7-4
+
+offchain_events_note: backend operation logs are audit trails never canonical and excluded from this catalogue

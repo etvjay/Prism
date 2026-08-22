@@ -1,0 +1,113 @@
+# Prism System Foundry — machine-readable companions v0.1
+# Status: proposed. Authority: markdown files in this directory.
+domain_model:
+  artifact_id: SYS-PRISM-78-DOM
+  version: "0.1"
+  status: proposed
+  objects:
+    - object_id: OBJ-PRISM-001
+      name: PrismIdentity
+      purpose: persistent cross-venue identity root owned by the user
+      canonical_identifier: prism_id
+      authority: StarknetPrismIdentityRegistry
+      participants: [controller]
+      visibility_class: public_onchain
+      privacy_class: pseudonymous
+      persisted_fields: [prism_id, controller, created_at_block, identity_version]
+      derived_fields: []
+      relationships: ["has_many OBJ-PRISM-003"]
+      states: [ACTIVE]
+      commands: [CMD-7-01]
+      queries: [QRY-7-01]
+      events: [EVT-PRISM-IDENTITY-CREATED]
+      invariants: [INV-SYS-001, INV-SYS-002, INV-SYS-005]
+      terminal_states: []
+      failure_states: []
+      versioning: identity_version increments only on controller change; binding mutations never touch it
+    - object_id: OBJ-PRISM-002
+      name: Controller
+      purpose: current mutation authority over one PrismIdentity
+      canonical_identifier: starknet_account_address
+      authority: self_via_starknet_signature
+      participants: []
+      visibility_class: public_onchain
+      privacy_class: pseudonymous
+      persisted_fields: [address_in_OBJ-PRISM-001]
+      derived_fields: []
+      relationships: [authorizes_OBJ-PRISM-001, authorizes_binding_transitions]
+      states: [AUTHORIZED]
+      commands: []
+      queries: []
+      events: []
+      invariants: [INV-SYS-002]
+      terminal_states: []
+      failure_states: []
+      versioning: n/a_rotation_out_of_scope
+    - object_id: OBJ-PRISM-003
+      name: Binding
+      purpose: canonical link from a Prism ID to a venue-native execution identity
+      canonical_identifier: prism_id+venue+execution_account
+      authority: StarknetPrismIdentityRegistry
+      participants: [controller, challenge_service]
+      visibility_class: public_onchain
+      privacy_class: linkage_sensitive_minimal_fields
+      persisted_fields:
+        [prism_id, venue, execution_account, status, bound_at_block,
+         revoked_at_block_nullable, proof_digest]
+      derived_fields: [resolution_result_at_read_time]
+      relationships: ["belongs_to OBJ-PRISM-001", "references OBJ-PRISM-004"]
+      states: [ACTIVE, REVOKED]
+      commands: [CMD-8-01, CMD-8-02]
+      queries: [QRY-8-01]
+      events: [EVT-EXECUTION-IDENTITY-BOUND, EVT-BINDING-REVOKED]
+      invariants: [INV-SYS-003, INV-SYS-004, INV-SYS-006, INV-SYS-007, INV-SYS-008]
+      terminal_states: [REVOKED]
+      failure_states: []
+      versioning: monotonic_block_tx_position
+      decision_refs: [DEC-PRISM-SYS-001_PROPOSED_digest_semantics,
+                      DEC-PRISM-SYS-002_PROPOSED_cross_id_exclusivity_not_enforced]
+    - object_id: OBJ-PRISM-004
+      name: ExecutionIdentity
+      purpose: venue-native account performing actions on one chain
+      canonical_identifier: venue+native_address
+      authority: the_venue_itself
+      participants: []
+      visibility_class: public
+      privacy_class: public
+      persisted_fields: []
+      derived_fields: []
+      relationships: [referenced_by_OBJ-PRISM-003]
+      states: []
+      commands: []
+      queries: []
+      events: []
+      invariants: [INV-SYS-009]
+      terminal_states: []
+      failure_states: []
+      versioning: n/a
+    - object_id: OBJ-PRISM-005
+      name: OwnershipProof
+      purpose: single-use evidence of control over a Base execution account
+      canonical_identifier: proof_digest
+      authority: backend_verifier_plus_registry_digest_consumption
+      participants: [challenge_service, backend_verifier, base_wallet]
+      visibility_class: private_until_used
+      privacy_class: internal
+      persisted_fields:
+        [domain, venue, execution_account, prism_id, nonce, expiry,
+         nonce_state, verification_result_signature_class]
+      derived_fields: [proof_digest]
+      relationships: [targets_OBJ-PRISM-003_via_CMD-8-01]
+      states: [ISSUED, VERIFIED, REJECTED, CONSUMED, EXPIRED]
+      commands: [CMD-B-01, CMD-B-02]
+      queries: []
+      events: []
+      invariants: [INV-SYS-004, INV-SYS-010, INV-SYS-011, INV-SYS-012]
+      terminal_states: [CONSUMED, EXPIRED, REJECTED]
+      failure_states: [REJECTED]
+      versioning: challenge_schema_version
+  excluded_objects_non_goals:
+    [Guardian, Successor, Delegation, AgentAuthority, RecoveryPolicy,
+     InheritancePolicy, SelectiveDisclosureProof, PrivateBindingProof,
+     PrismClaim, PrismChannel, ChannelMessage, ExternalPrincipal,
+     Portfolio, PrivateBalance]
