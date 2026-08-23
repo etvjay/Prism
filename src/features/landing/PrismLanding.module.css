@@ -365,6 +365,11 @@
   transform: none;
 }
 
+.satinSettled .satinWord {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .heroSupport {
   max-width: 650px;
   min-height: 3em;
@@ -1036,7 +1041,7 @@
   }
 
   100% {
-    opacity: 0.18;
+    opacity: 0;
     transform: translateY(-8px);
   }
 }
