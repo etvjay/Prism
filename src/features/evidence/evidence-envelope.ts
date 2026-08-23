@@ -199,7 +199,10 @@ export function validateEvidenceEnvelope(envelope: EvidenceEnvelope): Validation
   if (!envelope.procedure || envelope.procedure.length === 0) errors.push("procedure missing");
   if (!envelope.observed_at) errors.push("observed_at missing");
   if (!isNonEmptyString(envelope.claim_scope)) warnings.push("claim_scope empty");
-  if (!envelope.limitations || envelope.limitations.length === 0) warnings.push("limitations empty — must document what is NOT evidenced");
+  if (!envelope.limitations || envelope.limitations.length === 0) {
+    errors.push("limitations missing — must document what is NOT evidenced");
+    blockers.push("limitations missing — must document what is NOT evidenced");
+  }
 
   // Deployment evidence is the critical block for network/address/class hash/deploy tx/blocks/status
   const dep = envelope.deployment;

@@ -82,7 +82,27 @@ test -n "$BASE_RPC_URL" && echo "BASE_RPC_URL set (redacted)" || echo "MISSING �
 
 ---
 
-## 4. Live-network checks (OFFLINE — requires funded deployer + owner gate)
+## 4. Dry-run deployment command checks (offline, secret-free)
+
+Every live `sncast` broadcast must first be validated with `--dry-run` (or `--simulate`) without touching RPC:
+
+```bash
+# Dry-run syntax validation (offline — no env, no RPC)
+node ops/starknet/dry-run-check.mjs
+# Checks: templates are env-var driven, manifest still PROPOSED/UNDECIDED,
+# no active sncast.toml, no un-gated bare `sncast deploy` without --dry-run/OFFLINE marker.
+
+# Toolchain dry-run (no RPC, no deployment) — validates class hash without broadcasting:
+sncast --profile sepolia declare --contract-name PrismIdentityRegistry --dry-run
+sncast --profile sepolia deploy --class-hash 0x... --constructor-calldata 0x... --dry-run
+# These commands parse calldata, compile, and simulate without broadcasting;
+# they are safe to run once STARKNET_SEPOLIA_RPC_URL is set, but still require owner gate.
+# In Bundle 3T they are NOT executed — they are documented as the next dry-run gate after DEC-PRISM-OPS-001.
+```
+
+---
+
+## 5. Live-network checks (OFFLINE — requires funded deployer + owner gate)
 
 These are **NOT** run in Bundle 3T. They are documented only for the owner-approval packet that follows.
 
@@ -105,7 +125,7 @@ Live runs record their transaction hash, block, status, class hash, and independ
 
 ---
 
-## 5. What must NOT happen
+## 6. What must NOT happen
 
 - No secret (RPC URL with key, private key, keystore content) is ever committed — `ops/starknet/validate.mjs` fails on any `0x` 64-hex private key literal or `alchemy.com/v2/<key>`-like string.
 - No `sncast` profile is wired to a real RPC URL by default in the repo — all profiles reference env vars.

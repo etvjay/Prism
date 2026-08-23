@@ -25,7 +25,7 @@ function validate(env){
   if (!env.build?.spec_versions || Object.keys(env.build.spec_versions).length===0) errors.push("build.spec_versions missing");
   if (!env.procedure || env.procedure.length===0) errors.push("procedure missing");
   if (!env.observed_at) errors.push("observed_at missing");
-  if (!env.limitations || env.limitations.length===0) warnings.push("limitations empty");
+  if (!env.limitations || env.limitations.length===0) { errors.push("limitations missing — must document what is NOT evidenced"); blockers.push("limitations missing — must document what is NOT evidenced"); }
   const dep = env.deployment;
   if (!dep) blockers.push("deployment missing — need network, address, class_hash, deploy_tx, block_number, status");
   else {
