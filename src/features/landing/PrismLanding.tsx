@@ -41,7 +41,7 @@ const heroNarrative: readonly HeroNarrativeState[] = [
     id: "identity-anchor",
     label: "Identity anchor",
     support: "Starknet anchors your Prism ID.",
-    title: ["Your Home,", "Wherever You Act."],
+    title: ["Anchored on", "Starknet."],
   },
   {
     core: "CONTINUITY",
@@ -50,7 +50,7 @@ const heroNarrative: readonly HeroNarrativeState[] = [
     id: "native-context",
     label: "Native contexts",
     support: "Your accounts stay native. Your identity stays coherent.",
-    title: ["Your Home,", "Wherever You Act."],
+    title: ["Native where", "you act."],
   },
   {
     core: "HOME",
@@ -212,7 +212,7 @@ export default function PrismLanding() {
               <p className={styles.eyebrow}>
                 {String(activeStateIndex + 1).padStart(2, "0")} / 04 · {activeState.label}
               </p>
-              <h1 id="hero-title">
+              <h1 aria-label={`${activeState.title[0]} ${activeState.title[1]}`} id="hero-title">
                 {activeState.title[0]}
                 <br />
                 {activeState.title[1]}
