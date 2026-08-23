@@ -1,7 +1,10 @@
 // Deterministic recovery / reconciliation boundary for SM-PRISM-003.
 // Pure policy + typed worker boundary. No DB/RPC SDK imports; the worker
-// receives an OperationStore and an OperationReconciliationPort and never
-// invents chain truth.
+// receives an OperationStore and Ledger/Index ports and never invents chain truth.
+//
+// Transport-neutral worker: narrow ports (LedgerStatusPort + EventIndexerPort)
+// are composed into OperationReconciliationPort; the worker never imports
+// starknet.js / viem / pg. Tests supply labelled fakes.
 //
 // Invariants enforced:
 // - submitted/processing/confirming/confirmed NEVER become completed without
@@ -15,6 +18,28 @@
 //   reconciled on the basis of "unknown".
 // - Version CAS is the only writer; stale_version errors are counted as
 //   benign concurrent-writer races.
+//
+// Divergence handling (AUTHORITY_MATRIX §4, SYSTEM_FOUNDRY §20):
+// | case                          | authoritative source          | detection                              | repair / handling                          |
+// | submitted-but-unknown         | chain RPC re-query            | tick finds chain=null                 | noop, poll again; after N misses caller may mark failed_retryable externally |
+// | confirmed-but-unindexed       | chain receipt                 | indexer.eventObserved=false            | noop awaiting_indexer_event             |
+// | reverted                      | tx_receipt_revert_code        | chain.execution=REVERTED               | advance to reverted with stable ERR     |
+// | duplicate event               | indexer (tx_hash,event_index) | idempotent same-state re-apply (store) | benign duplicate (isDuplicate)          |
+// | missed event                  | chain receipts ground truth   | indexer gap scan -> null              | noop awaiting_indexer_event             |
+// | stale cache (ACTIVE for REVOKED) | registry state (watermark) | watermark < confirmedBlock-K          | invalidate; serve NO_ACTIVE_DESTINATION |
+// | dependency outage (RPC/indexer/store) | op_policy / dependency | observe* throws                        | fail-closed, dependencyFailure=true     |
+// | restart                       | durable op row                | startup sweep listNonTerminal           | resume polling from last txHash         |
+// | retryable vs terminal         | op_policy                     | isRetryableFailure / isTerminal         | distinct states, attempts incremented   |
+//
+// Authoritative source per state (STATE_MACHINES.md SM-PRISM-003):
+// created/awaiting_authorization/ready -> backend_op_row
+// submitted/processing/confirming -> starknet_rpc_tx_status
+// confirmed -> execution_status_succeeded
+// indexed -> indexer_event_observed
+// reconciled -> reconciliation_match
+// completed -> receipt_issued
+// reverted -> tx_receipt_revert_code
+// failed_* / expired / cancelled / requires_attention -> op_policy / ttl_policy / user_or_operator
 
 import type { ChainTxObservation, IndexerObservation, ReconciliationObservation, ReconciliationFacts } from "./ports";
 import { decideReconciliationStep, type OperationReconciliationPort } from "./ports";
@@ -121,16 +146,19 @@ export async function tickReconciliation(
   }
 
   // Attempt versioned transition. Map txHash/revertCode preservation from facts.
+  // Persist: tx hash, block/watermark, event correlation (txHash+eventIndex), retry count (attempts via store), reconciliation metadata.
   const patch: {
     txHash: Hex | null;
     errorCode: string | null;
     errorDetail: string | null;
     reconciliationWatermark: number | null;
+    reconciliationMetadata: Record<string, unknown> | null;
   } = {
     txHash: (op.txHash as Hex | null) ?? null,
     errorCode: op.errorCode,
     errorDetail: op.errorDetail,
     reconciliationWatermark: op.reconciliationWatermark,
+    reconciliationMetadata: op.reconciliationMetadata,
   };
   if (decision.nextState === "reverted" && chain?.revertCode) {
     patch.errorCode = chain.revertCode;
@@ -139,6 +167,27 @@ export async function tickReconciliation(
     patch.reconciliationWatermark = chain.blockNumber;
   } else if (indexer?.blockNumber !== undefined && indexer.blockNumber !== null) {
     patch.reconciliationWatermark = indexer.blockNumber;
+  }
+  // Event correlation + watermark + retry metadata: persisted via reconciliationMetadata
+  // Keyed by tx_hash + event_index per EVENT_CATALOGUE (idempotent reconstruction).
+  if (indexer?.eventObserved) {
+    patch.reconciliationMetadata = {
+      ...(patch.reconciliationMetadata ?? {}),
+      txHash: indexer.txHash,
+      eventIndex: indexer.eventIndex,
+      eventName: indexer.eventName,
+      blockNumber: indexer.blockNumber,
+      authoritativeSource: decision.authoritativeSource,
+      observedAt: now,
+    };
+  } else if (chain?.blockNumber !== null && chain?.blockNumber !== undefined) {
+    patch.reconciliationMetadata = {
+      ...(patch.reconciliationMetadata ?? {}),
+      txHash: chain.txHash,
+      blockNumber: chain.blockNumber,
+      authoritativeSource: decision.authoritativeSource,
+      observedAt: now,
+    };
   }
 
   try {
@@ -150,6 +199,7 @@ export async function tickReconciliation(
       errorCode: patch.errorCode ?? undefined,
       errorDetail: patch.errorDetail ?? undefined,
       reconciliationWatermark: patch.reconciliationWatermark ?? undefined,
+      reconciliationMetadata: patch.reconciliationMetadata ?? undefined,
     });
     return { operationId, fromState, toState: decision.nextState, advanced: true, reason: decision.reason, dependencyFailure: false };
   } catch (cause) {
@@ -200,4 +250,47 @@ export async function recoverNonTerminalOperations(
 export function isWatermarkStale(watermark: number | null, confirmedBlock: number, boundK: number): boolean {
   if (watermark === null) return true;
   return watermark < confirmedBlock - boundK;
+}
+
+/**
+ * Narrow-port variant: deterministic tick using separate transport-neutral ports.
+ * Exists to prove the Ledger vs Indexer boundary is separable and transport-neutral.
+ * Behavior is identical to tickReconciliation; the composite is built inline.
+ */
+export async function tickReconciliationWithNarrowPorts(
+  store: OperationStore,
+  ledger: import("./ports").LedgerStatusPort,
+  indexer: import("./ports").EventIndexerPort,
+  operationId: string,
+  now: number,
+): Promise<ReconcileTickResult> {
+  const composite: import("./ports").OperationReconciliationPort = {
+    observeChain: (txHash) => ledger.observeChain(txHash),
+    observeIndexer: (txHash) => indexer.observeIndexer(txHash),
+    observeReconciliation: (txHash) => indexer.observeReconciliation(txHash),
+  };
+  return tickReconciliation(store, composite, operationId, now);
+}
+
+/** Authoritative source lookup for observability chain (AUTHORITY_MATRIX §5). */
+export function authoritativeSourceForState(state: OperationState): string | null {
+  const map: Record<string, string> = {
+    created: "backend_op_row",
+    awaiting_authorization: "backend_op_row",
+    ready: "backend_op_row",
+    submitted: "starknet_rpc_tx_status",
+    processing: "starknet_rpc_tx_status",
+    confirming: "starknet_rpc_tx_status",
+    confirmed: "execution_status_succeeded",
+    indexed: "indexer_event_observed",
+    reconciled: "reconciliation_match",
+    completed: "receipt_issued",
+    failed_retryable: "op_policy",
+    failed_terminal: "op_policy",
+    reverted: "tx_receipt_revert_code",
+    expired: "ttl_policy",
+    cancelled: "user_or_operator",
+    requires_attention: "timeout_escalation",
+  };
+  return map[state] ?? null;
 }

@@ -7,12 +7,16 @@
 //
 // Worker / polling / adapter lives outside this slice. This file contains
 // only types and a pure decision function that tests exercise directly.
+//
+// Transport-neutral contract: no starknet.js, viem, or RPC SDK is imported.
+// Ledger and indexer ports are pure interfaces over typed observations; adapters
+// translate any transport (RPC, gateway, fake) into these observations.
 
 import type { Hex, Operation, OperationState } from "./operation";
 import { AUTHORITATIVE_SOURCE } from "./operation";
 
 // ---------------------------------------------------------------------------
-// Chain / indexer observation types (typed boundary only)
+// Transport-neutral Ledger (RPC status) and Event/Indexer observation types
 // ---------------------------------------------------------------------------
 
 export type TxExecutionStatus = "RECEIVED" | "ACCEPTED_ON_L2" | "SUCCEEDED" | "REVERTED";
@@ -140,7 +144,34 @@ export function decideReconciliationStep(
 }
 
 // ---------------------------------------------------------------------------
-// Reconciliation port (typed boundary — no implementation in this slice)
+// Transport-neutral ports (ledger RPC status + event/indexer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Transport-neutral Ledger / RPC status port.
+ * Authority for states submitted/processing/confirming/confirmed/reverted is
+ * Starknet RPC tx status (AUTHORITY_MATRIX row: submitted_unknown etc.).
+ * No transport SDK is imported; adapters translate.
+ */
+export interface LedgerStatusPort {
+  /** Observe chain tx status for txHash. Pure read; never mutates. */
+  observeChain(txHash: Hex): Promise<ChainTxObservation | null>;
+}
+
+/**
+ * Transport-neutral Event / Indexer port.
+ * Authority for states indexed/reconciled is the indexer event observed
+ * plus reconciliation match (AUTHORITY_MATRIX: confirmed-but-unindexed etc.).
+ */
+export interface EventIndexerPort {
+  /** Observe indexer for the operation's canonical event. */
+  observeIndexer(txHash: Hex): Promise<IndexerObservation | null>;
+  /** Observe reconciliation ledger correlation for the operation. */
+  observeReconciliation(txHash: Hex): Promise<ReconciliationObservation | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Composite reconciliation port (typed boundary — no implementation in this slice)
 // ---------------------------------------------------------------------------
 
 /**
@@ -148,12 +179,12 @@ export function decideReconciliationStep(
  * pure domain (adapter/worker). The domain never creates a fake worker or
  * mocks production completion; tests supply `ReconciliationFacts` directly to
  * `decideReconciliationStep` and separately exercise `transition`.
+ *
+ * Composition of the two transport-neutral ports above; workers may depend
+ * on the composite or on the two narrow ports individually.
  */
-export interface OperationReconciliationPort {
-  /** Observe the chain for the operation's txHash. Pure read; no side effect. */
-  observeChain(txHash: Hex): Promise<ChainTxObservation | null>;
-  /** Observe the indexer for the operation's event. */
-  observeIndexer(txHash: Hex): Promise<IndexerObservation | null>;
-  /** Observe reconciliation ledger for the operation. */
-  observeReconciliation(txHash: Hex): Promise<ReconciliationObservation | null>;
-}
+export interface OperationReconciliationPort extends LedgerStatusPort, EventIndexerPort {}
+
+/** Explicit aliases required by the closeout contract wording. */
+export type LedgerPort = LedgerStatusPort;
+export type IndexerPort = EventIndexerPort;
