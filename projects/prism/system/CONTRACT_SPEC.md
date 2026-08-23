@@ -72,7 +72,7 @@ authorization: require_caller == identities[prism_id].controller
 reads: [identities[prism_id], bindings[(prism_id,venue,execution_account)], consumed_digests[proof_digest]]
 writes:
   - bindings[(prism_id,venue,execution_account)] = {ACTIVE, bound_at_block}
-  - consumed_digests[proof_digest] = true         # PROPOSED placement — see INV-SYS-004
+  - consumed_digests[proof_digest] = true         # placement ACCEPTED under DEC-PRISM-SYS-001 (Option A)
 asset_movements: none
 outputs: success; emits event
 events: [EVT-EXECUTION-IDENTITY-BOUND]
@@ -112,7 +112,7 @@ outputs: ACTIVE account | NO_ACTIVE_DESTINATION sentinel
 events: []
 revert_codes: []          # never reverts for missing/revoked — returns sentinel (INV-PRISM-004 semantics)
 replay_protection: n/a
-uniqueness: if multiple ACTIVE bindings exist per (prism_id,venue) — possible only via DEC-PRISM-SYS-002 default — returns deterministic first-by-binding-order and the multiplicity is observable via a list variant
+uniqueness: if multiple ACTIVE bindings exist per (prism_id,venue) — possible only via DEC-PRISM-SYS-002 default — resolution follows the LAST bind (the active_destinations pointer names the most recently bound account); an older still-ACTIVE binding becomes unresolvable until the newer instance is revoked (characterized by test rt_multi_active_last_bind_wins_and_shadow_active_unresolvable; disposition pending DEC-PRISM-SYS-002 owner decision)
 privacy_behavior: exposes only what is already public
 pause_behavior: n/a
 upgrade_impact: n/a

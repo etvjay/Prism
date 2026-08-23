@@ -35,7 +35,7 @@ reason: PRISM-7/8 off-chain surface is one challenge service + indexer + resolve
 constraint: domain layer imports no web framework / RPC SDK / DB driver
 ```
 
-## SD-004 — Base verification: viem-style unified ladder — DECISION_REQUIRED dependency
+## SD-004 — Base verification: viem-style unified ladder
 
 ```yaml
 decision_id: DEC-SYS-SD-004
