@@ -51,18 +51,23 @@ To select Claim, all four must be accepted into Product/System/Research truth be
 
 ### Option B — Prism-owned application helper
 
-Current artifact:
+Current artifacts:
 
 ```text
 PrismAllocationHelper
-canonical privacy_invoke ABI
-measured output delta
-caller-scoped approval
-atomic rollback tests
-11/11 local Cairo tests
+  generic u128 ERC-20 fixture
+  11/11 local tests
+  BLOCKED for real SN_SEPOLIA STRK/vToken use by H1 u128/u256 mismatch
+
+PrismVesuLendingHelper
+  pinned privacy_pool + underlying + Vesu vToken
+  canonical privacy_invoke ABI preserved
+  u256 real-token surfaces with checked u256→u128 output conversion
+  16/16 local adversarial tests
+  deployed candidate and narrow real helper→Vesu probe observed on SN_SEPOLIA
 ```
 
-This is the faster technically specified route, but it must be tied to a real, meaningful Prism action and a real first-party-compatible pool target. The current vault-shaped test target is not itself live evidence.
+The live probe proves only the helper→real-Vesu leg; it does not prove pool invocation or private-note credit.
 
 ## Recommended closure route
 
@@ -170,13 +175,14 @@ nonzero note token/amount
 no storage/events/privacy overclaim
 ```
 
-Current baseline:
+Current local evidence:
 
 ```text
-PrismAllocationHelper: 11/11 local tests
+PrismVesuLendingHelper: 16/16 local adversarial tests
+PrismAllocationHelper regression: 11/11 local tests
 ```
 
-This closes local T4/T5 evidence only. It does not close M5.
+The generic helper's 11/11 suite is retained as regression evidence only; it does not establish real-token compatibility. The pinned helper's 16/16 suite closes local T4/T5 evidence only. Neither closes M5.
 
 ---
 
@@ -184,16 +190,22 @@ This closes local T4/T5 evidence only. It does not close M5.
 
 Deploy the selected helper/action to SN_SEPOLIA only after M5.0/M5.1/M5.2.
 
-Run a real supported pool invocation:
+Before the pool invocation, the parent must have a real STRK20-capable Wallet API or official SDK/prover path. A raw Starknet account/`sncast` call cannot create the required SNIP-36 proof and is not an M5 substitute.
 
-```text
-wallet/pool prepares input
-→ pool calls Prism helper via privacy_invoke
-→ helper calls real application target
-→ helper measures output
-→ helper approves pool
-→ pool credits returned note/output
+For the pinned Vesu helper, the private action shape is:
+
+```ts
+[
+  { type: "transfer", token: STRK, amount: "OPEN", recipient: account },
+  {
+    type: "invoke",
+    contract: PRISM_VESU_LENDING_HELPER,
+    calldata: [STRK, STRK_VTOKEN, amount, "${openNoteIds[0]}"],
+  },
+]
 ```
+
+The official Wallet API/prover must resolve the open-note placeholder, generate the proof, and submit the transaction. If no supported wallet/prover is available, stop with `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE`; do not fall back to a mock proof or ordinary invoke.
 
 Record:
 
