@@ -1,0 +1,571 @@
+# Prism — Whole-Product Phases to Mainnet
+
+**Status:** Proposed release and implementation phase plan  
+**Date:** 2026-08-23  
+**Authority:** Product Truth → System Foundry → Research Foundry → Evidence/Audit  
+**Maturity rule:** local implementation = X2; observed SN_SEPOLIA/Base testnet = X3; repeated independently verified mainnet = X4/X5
+
+## Executive answer
+
+Prism should not be treated as one monolithic mainnet gate. There are three meaningful release bands:
+
+```text
+Band A — Identity MVP mainnet
+  persistent Prism ID + native Base binding + truthful Home/operation surface
+
+Band B — Pause-enabled Prism mainnet
+  Band A + Prism Pause as a pre-settlement control boundary
+
+Band C — Full Prism vision
+  social principals, claims, channels, portfolio, continuity/delegation,
+  and broader private relationship capabilities
+```
+
+**Band A** is the minimum credible Prism mainnet.  
+**Band B** is required if Prism Pause is included in the mainnet product promise.  
+**Band C** is not a prerequisite for the first mainnet release; it is the post-mainnet product evolution path.
+
+---
+
+## Product Truth that every band preserves
+
+```text
+One Prism ID. One home across chains.
+Starknet anchors identity and continuity state.
+Connected chains execute natively.
+Base authority remains Base-valid.
+STRK20 is private only where the underlying route proves privacy.
+The backend verifies/prepares but never becomes canonical identity authority.
+Submitted is not completed.
+Pause delays settlement; it never reverses finality.
+```
+
+---
+
+# Phase M0 — Product, System, and release contract
+
+**Purpose:** lock what “mainnet Prism” means before more code is added.
+
+### Work
+
+- accept the bounded mainnet band: Identity MVP or Pause-enabled MVP;
+- register the selected decisive workflows;
+- align Product Truth, System Foundry, Research Foundry, Audit, and evidence ledger;
+- define what is explicitly deferred;
+- freeze privacy language and authority boundaries;
+- define the exact mainnet claims allowed in README, UI, demo, and video.
+
+### Required decisions
+
+```text
+Which release band is being shipped?
+Is Prism Pause a mainnet requirement or a post-mainnet enhancement?
+Which social provider is MVP (Telegram is the current strongest candidate)?
+Is PrismClaim the selected project-owned STRK20 action, or is another helper selected?
+Which contracts will be declared in strk20.json.contracts?
+```
+
+### Exit gate
+
+```text
+one accepted Product/System release contract
+no unresolved contradiction in the selected MVP path
+all deferred features explicitly labeled
+```
+
+**Current state:** Product/system material exists; release-band choice is not yet recorded as a dedicated decision.
+
+---
+
+# Phase M1 — Starknet identity root
+
+**Purpose:** prove that Prism identity exists canonically on Starknet.
+
+### Work
+
+```text
+account deployed
+registry declared
+registry deployed
+create_identity live
+get_identity live
+PrismIdentityCreated indexed
+independent readback
+```
+
+### Required guarantees
+
+```text
+Prism ID != Starknet account address
+controller is recorded correctly
+identity survives unrelated state growth
+identity remains after binding revocation
+registry is immutable/no-proxy as decided
+```
+
+### Evidence
+
+```text
+registry address
+class hash
+deploy receipt/block/status
+create tx receipt/block/status
+created Prism ID
+get_identity second read
+indexed event + watermark
+```
+
+**Current state:** account and registry deployment are observed on SN_SEPOLIA; live `create_identity` and independent identity read remain open.
+
+**Exit maturity:** X3 testnet identity evidence.
+
+---
+
+# Phase M2 — Backend authority, proof, and operation runtime
+
+**Purpose:** turn the local backend foundation into a real service boundary.
+
+### Work
+
+- real HTTP/API runtime over the transport-neutral handlers;
+- real `STARKNET_RPC_URL` and registry-address configuration;
+- real Account/provider wiring without committed secrets;
+- Base proof ladder: EOA → EIP-1271 → ERC-6492;
+- durable PostgreSQL challenge/operation/event stores;
+- real indexer pagination and gap scans;
+- reconciliation worker startup/metrics/recovery;
+- watermarked resolve responses;
+- stable errors and correlation chain.
+
+### Required operation truth
+
+```text
+operation row before broadcast
+submitted != completed
+unknown status remains unknown
+reverted remains reverted
+indexer lag is visible
+stale ACTIVE is never served
+restart resumes from durable tx hash/version
+```
+
+### Exit gate
+
+```text
+T7 DB integration
+T8 API contract
+T9 ledger/indexer integration
+T10 operation-state UI contract
+T12 failure/recovery
+real runtime smoke test on testnet
+```
+
+**Current state:** strong X2 implementation; no deployed HTTP runtime or live reconciliation process has completed the decisive flow.
+
+---
+
+# Phase M3 — Base connection and decisive identity proof
+
+**Purpose:** prove Prism is more than a Starknet name-to-address registry.
+
+### Work
+
+```text
+connect Base EOA
+issue chainId-v2 challenge
+Base wallet signs
+backend verifies EOA/1271/6492 class
+controller signs Starknet bind
+registry consumes digest
+resolve(P, BASE) = B
+revoke B
+resolve(P, BASE) = NO_ACTIVE_DESTINATION
+get_identity(P) still succeeds
+```
+
+### Required adversarial cases
+
+```text
+wrong signer
+altered recipient
+altered Prism ID
+altered domain/venue/chainId
+expired challenge
+nonce replay
+digest replay
+wrong Starknet controller
+duplicate active destination
+stale indexer/cache
+```
+
+### Exit evidence
+
+```text
+all operation IDs
+Base proof signature class
+bind/revoke tx hashes
+receipt/status/block for each
+independent registry reads
+reconciliation watermark
+failure/retry results
+```
+
+**Current state:** wallets funded; no live proof/bind/resolve/revoke sequence observed.
+
+**Exit maturity:** X3 testnet decisive identity evidence.
+
+---
+
+# Phase M4 — STRK20 consumer privacy route
+
+**Purpose:** deliver Prism’s first real private financial surface through the supported wallet route.
+
+The official STRK20 route separates:
+
+```text
+Wallet API = normal dapp route
+Privacy SDK = advanced controlled-key route
+Anonymizer = app-specific privacy_invoke route
+```
+
+Prism’s normal dapp must not receive or persist viewing keys.
+
+### Work
+
+```text
+wallet capability detection
+wallet/network compatibility
+pool registration state
+shield: approve → deposit
+screening result states
+note maturity state
+private balance with intentional consent
+private note-to-note transfer
+pool fee read
+private receipt/reconciliation
+privacy wording audit
+```
+
+### Required UX states
+
+```text
+capability unknown
+wallet mismatch
+registration required
+approval pending
+shielding
+confirmed
+maturing
+private balance available
+private transfer pending
+private transfer confirmed
+screening rejected
+```
+
+### Exit gate
+
+```text
+real supported wallet route
+real pool interaction
+no viewing-key handling by Prism
+private balance consent is intentional
+maturity is represented honestly
+privacy claim is action-specific
+```
+
+**Current state:** capability-detection scaffold exists; shield, private balance, private transfer, maturity, and receipt route are not implemented.
+
+---
+
+# Phase M5 — Prism-owned STRK20 action / PrismClaim decision
+
+**Purpose:** satisfy both product depth and the own-contract evidence rule without inventing a scoring-only transaction.
+
+### Decision fork
+
+```text
+Option A — PrismClaim
+  human identifier → unresolved recipient → private claim → onboarding → claim/refund
+
+Option B — Prism-owned application helper
+  privacy_invoke → meaningful application action → open-note result
+```
+
+The current `PrismAllocationHelper` is a canonical ABI-shaped local helper, but it is not yet a live pool integration. PrismClaim is the stronger product-native candidate in the canonical documentation because it connects human identity, onboarding, private value, and persistent identity.
+
+### Work
+
+- inspect first-party private routes before custom Cairo;
+- select one action and record the decision;
+- implement minimal contract/storage/events/errors;
+- prove authorization, replay, atomic rollback, value conservation;
+- deploy to SN_SEPOLIA first;
+- run testnet helper/claim sequence;
+- audit privacy and metadata leakage;
+- deploy to SN_MAIN only after testnet acceptance.
+
+### Exit evidence
+
+```text
+contract address/class hash
+pool invocation receipt
+successful result
+rollback/revert evidence
+privacy boundary record
+declared Prism contract involvement
+```
+
+**Current state:** local helper X2 only; no live helper/claim deployment or pool transaction.
+
+---
+
+# Phase M6 — Product Home and vertical surfaces
+
+**Purpose:** make the protocol legible as Prism rather than as infrastructure.
+
+### Required product surfaces
+
+```text
+Home
+Connections
+Send
+Receive
+Activity / receipts
+Profile
+```
+
+### Home must show truthful state
+
+```text
+Prism ID
+connected accounts
+public balances where available
+private state only after wallet consent
+pending/paused/settled operations
+identity/social connections
+privacy labels
+```
+
+### Send/Receive must support
+
+```text
+Prism ID recipient
+native address advanced fallback
+verified social identifier when implemented
+public/private route distinction
+fee and maturity disclosure
+pending/confirmed/reverted states
+```
+
+### Connections must support
+
+```text
+Starknet controller
+Base execution identity
+social principal(s) when implemented
+verified/pending/revoked states
+network mismatch
+reverification
+```
+
+### Exit gate
+
+```text
+no fake balances
+no fake activity
+no fake integrations
+operation labels derive from Operation state
+wallet authority and app authentication remain distinct
+responsive/accessibility/reduced-motion QA passes
+```
+
+**Current state:** public landing exists; authenticated Home, Connections, Send, Receive, Activity, and Profile are not implemented. The current “Enter Prism” action is a preview only.
+
+---
+
+# Phase M7 — Prism Pause, if included in mainnet promise
+
+**Purpose:** add the pre-settlement control layer described in `PRISM_PAUSE_PHASE_PLAN.md`.
+
+Required subphases:
+
+```text
+P0 Product/System acceptance
+P1 Intent + normalized execution plan
+P2 Durable Pause persistence/lifecycle
+P3 Verification + policy engine
+P4 Release / Cancel / Escalate / Approval
+P5 Settlement adapter integration
+P6 Product/API vertical slice
+P7 Security/red-team/observability
+P8 Testnet Pause evidence
+```
+
+### Mainnet requirement
+
+If Prism markets Pause as a core mainnet capability, all of M7/P0–P8 must pass before M9. If Pause is explicitly deferred from the first mainnet product, it may follow M9 under a recorded scope decision.
+
+**Current state:** phase plan only; no Pause implementation.
+
+---
+
+# Phase M8 — Full testnet rehearsal and evidence acceptance
+
+**Purpose:** replace local plausibility with realistic observed evidence.
+
+### Required rehearsal
+
+```text
+SN_SEPOLIA registry
+Base Sepolia EOA
+create/read identity
+Base proof/bind
+resolve/revoke
+STRK20 wallet route
+selected helper/claim action
+operation/reconciliation worker
+independent RPC/explorer reads
+failure/retry/recovery cases
+```
+
+### Evidence package
+
+```text
+network
+contract address
+class hash
+deploy tx
+operation txs
+block numbers
+execution status
+events
+watermarks
+independent second reads
+commit/spec versions
+limitations
+```
+
+### Exit gate
+
+```text
+EVD-PRISM-004..007 promoted only from observed facts
+X3 testnet maturity
+no unresolved critical security gap
+no fake receipt/balance/privacy claim
+```
+
+**Current state:** account/registry infrastructure evidence exists; decisive workflow and STRK20 evidence remain open.
+
+---
+
+# Phase M9 — Mainnet release and submission
+
+**Purpose:** release the bounded Prism product and earn mainnet evidence.
+
+### Preconditions
+
+```text
+M0–M6 accepted
+M8 testnet rehearsal accepted
+M7 accepted if Pause is in the product promise
+SN_MAIN release decision
+funded mainnet operational wallets
+current pool fee/readiness
+privacy wording audit
+public demo route
+```
+
+### Mainnet work
+
+```text
+G0 pool reachability
+SN_MAIN contract deployment
+STRK20 Wallet API action
+Prism-owned helper/Claim action
+three qualifying pool transactions
+own-contract involvement if contracts are declared
+independent validator checks
+public demo
+3-minute video
+README/reproducibility package
+final strk20.json
+```
+
+### Qualifying hash rule
+
+Every final hash must:
+
+```text
+exist on SN_MAIN
+succeed
+touch the STRK20 pool
+involve a declared Prism contract when Prism contracts are listed
+```
+
+A registry deployment alone does not satisfy STRK20 submission evidence.
+
+---
+
+# What can be deferred after first mainnet
+
+These should not block a bounded first release unless they are explicitly included in its promise:
+
+```text
+second social provider
+full PrismChannel messenger
+advanced claim variants
+multiple claim/refund policies
+guardians
+successors
+delegation
+agent authority expansion
+recovery/inheritance
+private Base
+all-chain privacy
+universal portfolio indexing
+all DeFi adapters
+```
+
+They require their own Product/System phases and should not be implied by the first mainnet deployment.
+
+---
+
+# Current phase status
+
+```text
+M0  Product/release contract       partially governed; needs release-band decision
+M1  Starknet identity root          infrastructure deployed; live identity workflow open
+M2  Backend runtime                 X2 implementation; live service/reconciliation open
+M3  Base decisive proof             wallets funded; live bind sequence open
+M4  STRK20 consumer route           capability scaffold only
+M5  Prism-owned action/Claim        helper X2; live route not deployed
+M6  Home/product surfaces           landing only; app surfaces open
+M7  Prism Pause                     proposed plan only
+M8  Testnet rehearsal               open
+M9  Mainnet release                 blocked
+```
+
+## Bottom-line release equation
+
+```text
+Product Truth
++ identity root
++ live Base binding
++ STRK20 wallet action
++ selected product-owned action
++ Home/product surfaces
++ Pause if promised
++ testnet evidence
++ independent reads
++ mainnet pool/own-contract evidence
++ demo/submission package
+= Prism mainnet release
+```
+
+The current system has the identity/backend foundation and testnet registry infrastructure, but it is not yet through M3–M8. The next highest-value vertical slice is:
+
+```text
+live create/read Prism ID
+→ live Base bind/resolve/revoke
+→ wire the resulting Operation state into Home/Activity
+```
