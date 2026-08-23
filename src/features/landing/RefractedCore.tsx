@@ -27,6 +27,9 @@ export default function RefractedCore({
   state = "PRISM",
   variant = "living",
 }: RefractedCoreProps) {
+  const accessibility = label
+    ? { "aria-label": label, role: "img" as const }
+    : { "aria-hidden": true as const };
   const instanceId = useId().replaceAll(":", "");
   const gradientIds = {
     ivory: `prism-ivory-${instanceId}`,
@@ -49,27 +52,26 @@ export default function RefractedCore({
 
   return (
     <svg
-      aria-label={label}
+      {...accessibility}
       className={`${styles.refractedCore} ${styles[variant]} ${className}`}
       data-state={state}
-      role="img"
       viewBox="0 0 240 240"
     >
       <defs>
         <linearGradient id={gradientIds.ivory} x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#fffdfa" />
-          <stop offset="0.52" stopColor="#dfe0e5" />
-          <stop offset="1" stopColor="#96989e" />
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.48" stopColor="#e1e3e8" />
+          <stop offset="1" stopColor="#858890" />
         </linearGradient>
         <linearGradient id={gradientIds.neutral} x1="0" x2="0.9" y1="0" y2="1">
-          <stop offset="0" stopColor="#f6f6f7" />
-          <stop offset="0.48" stopColor="#c5c6cb" />
-          <stop offset="1" stopColor="#777980" />
+          <stop offset="0" stopColor="#fafbfc" />
+          <stop offset="0.46" stopColor="#c7c9cf" />
+          <stop offset="1" stopColor="#6f727a" />
         </linearGradient>
         <linearGradient id={gradientIds.graphite} x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#a4a5aa" />
-          <stop offset="0.5" stopColor="#5d5f64" />
-          <stop offset="1" stopColor="#1f1e24" />
+          <stop offset="0" stopColor="#9b9da4" />
+          <stop offset="0.48" stopColor="#51535a" />
+          <stop offset="1" stopColor="#19191e" />
         </linearGradient>
         <linearGradient id={gradientIds.pearl} x1="0" x2="1" y1="0" y2="1">
           <stop offset="0" stopColor="#ffffff" />
@@ -78,8 +80,8 @@ export default function RefractedCore({
         </linearGradient>
         <radialGradient id={gradientIds.core} cx="38%" cy="28%" r="75%">
           <stop offset="0" stopColor="#ffffff" />
-          <stop offset="0.68" stopColor="#e1e2e6" />
-          <stop offset="1" stopColor="#95979e" />
+          <stop offset="0.62" stopColor="#e2e4e8" />
+          <stop offset="1" stopColor="#878a92" />
         </radialGradient>
         <filter id={gradientIds.shadow} x="-40%" y="-40%" width="180%" height="180%">
           <feDropShadow dx="0" dy="4" floodColor="#101010" floodOpacity="0.2" stdDeviation="3" />

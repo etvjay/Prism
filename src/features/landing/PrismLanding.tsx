@@ -4,83 +4,182 @@ import { useEffect, useRef, useState } from "react";
 import RefractedCore, { type RefractedCoreState } from "./RefractedCore";
 import styles from "./PrismLanding.module.css";
 
-const narrativeStates: Record<string, { core: RefractedCoreState; label: string }> = {
-  "identity-anchor": { core: "ID", label: "Identity anchor" },
-  "native-execution": { core: "PRISM", label: "Native execution" },
-  "home-resolution": { core: "HOME", label: "Prism Home" },
-  continuity: { core: "CONTINUITY", label: "Persistent identity" },
+type HeroContext = {
+  network: "Starknet" | "Base";
+  role: "Identity anchor" | "Native execution";
 };
+
+type HeroNarrativeState = {
+  core: RefractedCoreState;
+  contexts: readonly HeroContext[];
+  holdMs: number;
+  id: "promise" | "identity-anchor" | "native-context" | "resolved-identity";
+  label: string;
+  support: string;
+  title: readonly [string, string];
+};
+
+const identityContexts: readonly HeroContext[] = [
+  { network: "Starknet", role: "Identity anchor" },
+  { network: "Base", role: "Native execution" },
+];
+
+const heroNarrative: readonly HeroNarrativeState[] = [
+  {
+    core: "PRISM",
+    contexts: [],
+    holdMs: 3000,
+    id: "promise",
+    label: "Promise",
+    support: "One Prism ID for your identity, assets, relationships, and activity across networks.",
+    title: ["Your Home", "Across Chains."],
+  },
+  {
+    core: "ID",
+    contexts: [identityContexts[0]],
+    holdMs: 3200,
+    id: "identity-anchor",
+    label: "Identity anchor",
+    support: "Starknet anchors your Prism ID.",
+    title: ["Your Home,", "Wherever You Act."],
+  },
+  {
+    core: "CONTINUITY",
+    contexts: identityContexts,
+    holdMs: 3900,
+    id: "native-context",
+    label: "Native contexts",
+    support: "Your accounts stay native. Your identity stays coherent.",
+    title: ["Your Home,", "Wherever You Act."],
+  },
+  {
+    core: "HOME",
+    contexts: identityContexts,
+    holdMs: 0,
+    id: "resolved-identity",
+    label: "Persistent identity",
+    support: "One Prism ID. One persistent identity across the accounts you use.",
+    title: ["Your Home,", "Wherever You Act."],
+  },
+];
+
+const finalHeroStateIndex = heroNarrative.length - 1;
 
 function BrandLockup() {
   return (
-    <a className={styles.brandLockup} href="#top" aria-label="Prism">
-      <RefractedCore label="Prism" state="PRISM" variant="flat" />
+    <a className={styles.brandLockup} href="#top" aria-label="Prism home">
+      <RefractedCore label="" state="PRISM" variant="flat" />
       <span>Prism</span>
     </a>
   );
 }
 
-function ContextRow({ label, state }: { label: string; state: string }) {
-  return (
-    <div className={styles.contextRow}>
-      <dt>{label}</dt>
-      <dd>{state}</dd>
-    </div>
-  );
-}
-
 export default function PrismLanding() {
-  const storyRef = useRef<HTMLOListElement>(null);
-  const [activeBeat, setActiveBeat] = useState("identity-anchor");
+  const enterTimerRef = useRef<number | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const [activeStateIndex, setActiveStateIndex] = useState(0);
+  const [entryAcknowledged, setEntryAcknowledged] = useState(false);
+  const [entering, setEntering] = useState(false);
+  const [introRunning, setIntroRunning] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  const activeState = heroNarrative[activeStateIndex];
+  const sequenceComplete = activeStateIndex === finalHeroStateIndex;
 
   useEffect(() => {
-    const story = storyRef.current;
-    if (!story || typeof IntersectionObserver === "undefined") return;
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const applyMotionPreference = () => {
+      setReducedMotion(motionQuery.matches);
 
-    const sections = Array.from(story.querySelectorAll<HTMLElement>("[data-core-state]"));
-    const visibility = new Map<Element, number>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          visibility.set(entry.target, entry.isIntersecting ? entry.intersectionRatio : 0);
-        });
+      if (motionQuery.matches) {
+        setIntroRunning(false);
+        setActiveStateIndex(finalHeroStateIndex);
+      }
+    };
 
-        const nextSection = sections.reduce<HTMLElement | null>((mostVisible, section) => {
-          if (!mostVisible) return visibility.get(section) ? section : null;
-          return (visibility.get(section) ?? 0) > (visibility.get(mostVisible) ?? 0) ? section : mostVisible;
-        }, null);
-
-        if (nextSection && (visibility.get(nextSection) ?? 0) > 0) setActiveBeat(nextSection.id);
-      },
-      { rootMargin: "-24% 0px -38%", threshold: [0, 0.2, 0.45, 0.7] },
-    );
-
-    sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
+    applyMotionPreference();
+    motionQuery.addEventListener("change", applyMotionPreference);
+    return () => motionQuery.removeEventListener("change", applyMotionPreference);
   }, []);
 
-  const narrativeState = narrativeStates[activeBeat] ?? narrativeStates["identity-anchor"];
+  useEffect(() => {
+    if (reducedMotion || !introRunning || sequenceComplete) return;
+
+    const timer = window.setTimeout(() => {
+      setActiveStateIndex((current) => Math.min(current + 1, finalHeroStateIndex));
+    }, activeState.holdMs);
+
+    return () => window.clearTimeout(timer);
+  }, [activeState.holdMs, introRunning, reducedMotion, sequenceComplete]);
+
+  useEffect(() => {
+    return () => {
+      if (enterTimerRef.current !== null) window.clearTimeout(enterTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const closeMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      menuButtonRef.current?.focus();
+    };
+
+    window.addEventListener("keydown", closeMenuOnEscape);
+    return () => window.removeEventListener("keydown", closeMenuOnEscape);
+  }, [menuOpen]);
+
+  const selectHeroState = (stateIndex: number) => {
+    setIntroRunning(false);
+    setActiveStateIndex(stateIndex);
+  };
+
+  const previewEntryTransition = () => {
+    if (entering) return;
+
+    setIntroRunning(false);
+    setEntryAcknowledged(true);
+
+    if (reducedMotion) return;
+
+    setEntering(true);
+    enterTimerRef.current = window.setTimeout(() => {
+      setEntering(false);
+      enterTimerRef.current = null;
+    }, 1200);
+  };
+
+  const closeMenuAndSelect = (stateIndex: number) => {
+    setMenuOpen(false);
+    selectHeroState(stateIndex);
+  };
 
   return (
     <main className={styles.page} id="top">
-      <section className={styles.heroShell} aria-labelledby="hero-title">
+      <section
+        className={`${styles.heroShell} ${entering ? styles.heroEntering : ""}`}
+        aria-labelledby="hero-title"
+      >
         <nav className={styles.publicNav} aria-label="Public navigation">
           <BrandLockup />
 
           <div className={styles.navLinks}>
-            <a href="#top">Home</a>
-            <a href="#identity-anchor">ID</a>
-            <a href="#narrative">Explore</a>
+            <a href="#top" onClick={() => selectHeroState(0)}>Home</a>
+            <a href="#hero-sequence" onClick={() => selectHeroState(1)}>ID</a>
+            <a href="#identity-context" onClick={() => selectHeroState(2)}>Explore</a>
           </div>
 
           <div className={styles.navActions}>
-            <a className={styles.signInLink} href="#top">Sign in</a>
+            <a className={styles.signInLink} href="#enter-prism">Entry preview</a>
             <button
               aria-controls="mobile-menu"
               aria-expanded={menuOpen}
               aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
               className={styles.menuButton}
+              ref={menuButtonRef}
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
             >
@@ -94,134 +193,114 @@ export default function PrismLanding() {
 
           {menuOpen ? (
             <div className={styles.mobileMenu} id="mobile-menu">
-              <a href="#top" onClick={() => setMenuOpen(false)}>Home</a>
-              <a href="#identity-anchor" onClick={() => setMenuOpen(false)}>ID</a>
-              <a href="#narrative" onClick={() => setMenuOpen(false)}>Explore</a>
-              <a href="#top" onClick={() => setMenuOpen(false)}>Sign in</a>
+              <a href="#top" onClick={() => closeMenuAndSelect(0)}>Home</a>
+              <a href="#hero-sequence" onClick={() => closeMenuAndSelect(1)}>ID</a>
+              <a href="#identity-context" onClick={() => closeMenuAndSelect(2)}>Explore</a>
+              <a href="#enter-prism" onClick={() => setMenuOpen(false)}>Entry preview</a>
             </div>
           ) : null}
         </nav>
 
-        <div className={styles.heroContent}>
+        <div className={styles.heroContent} id="hero-sequence">
           <div className={styles.heroCopy}>
-            <h1 id="hero-title">
-              Your Home
-              <br />
-              Across Chains.
-            </h1>
-            <p>
-              One Prism ID for your identity, assets,
-              <br className={styles.desktopBreak} /> relationships, and activity across networks.
-            </p>
+            <div
+              aria-atomic="true"
+              aria-live="polite"
+              className={styles.heroMessage}
+              key={activeState.id}
+            >
+              <p className={styles.eyebrow}>
+                {String(activeStateIndex + 1).padStart(2, "0")} / 04 · {activeState.label}
+              </p>
+              <h1 id="hero-title">
+                {activeState.title[0]}
+                <br />
+                {activeState.title[1]}
+              </h1>
+              <p className={styles.heroSupport}>{activeState.support}</p>
+            </div>
+
+            <div className={styles.contextStage} id="identity-context">
+              {activeState.contexts.length > 0 ? (
+                <dl className={styles.contextLedger} aria-label="Prism identity and execution contexts">
+                  {activeState.contexts.map((context) => (
+                    <div className={styles.contextRow} key={context.network}>
+                      <dt>{context.network}</dt>
+                      <dd>{context.role}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className={styles.contextPlaceholder}>Identity continuity, without replacing native accounts.</p>
+              )}
+            </div>
+
+            <div className={styles.sequenceControls} aria-label="Hero narrative states">
+              <div className={styles.sequenceSteps}>
+                {heroNarrative.map((state, stateIndex) => (
+                  <button
+                    aria-label={`Show ${state.label.toLowerCase()} state`}
+                    aria-pressed={stateIndex === activeStateIndex}
+                    className={styles.sequenceStep}
+                    key={state.id}
+                    onClick={() => selectHeroState(stateIndex)}
+                    type="button"
+                  >
+                    <span aria-hidden="true">{String(stateIndex + 1).padStart(2, "0")}</span>
+                  </button>
+                ))}
+              </div>
+              {!reducedMotion && !sequenceComplete ? (
+                <button
+                  className={styles.sequenceToggle}
+                  onClick={() => setIntroRunning((running) => !running)}
+                  type="button"
+                >
+                  {introRunning ? "Pause intro" : "Continue intro"}
+                </button>
+              ) : null}
+            </div>
+
             <button
               aria-describedby="enter-prism-status"
-              aria-disabled="true"
               className={`${styles.darkButton} ${styles.heroButton}`}
+              disabled={entering}
+              id="enter-prism"
+              onClick={previewEntryTransition}
               type="button"
             >
-              Enter Prism <span aria-hidden="true">›</span>
+              {entering ? "Previewing transition" : "Enter Prism"}
+              <span aria-hidden="true">›</span>
             </button>
-            <span className={styles.srOnly} id="enter-prism-status">
-              The Enter Prism transition is not available in this phase.
-            </span>
+            <p
+              aria-live="polite"
+              className={styles.entryStatus}
+              id="enter-prism-status"
+              role="status"
+            >
+              {entering
+                ? "Transition preview only. No sign-in or navigation has occurred."
+                : entryAcknowledged
+                  ? reducedMotion
+                    ? "Entry preview acknowledged. Motion is off; no sign-in or navigation occurred."
+                    : "Transition preview complete. No sign-in or navigation occurred."
+                  : "Preview only — product entry is not connected yet."}
+            </p>
           </div>
 
           <div className={styles.heroObject}>
             <div className={styles.heroAssembly}>
-              <RefractedCore className={styles.heroCore} state="PRISM" variant="living" />
+              <RefractedCore
+                className={styles.heroCore}
+                label={`Living Refracted Core. Current state: ${activeState.label}`}
+                state={activeState.core}
+                variant="living"
+              />
               <div className={styles.plinth} aria-hidden="true">
                 <span />
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section className={styles.narrative} id="narrative" aria-labelledby="narrative-title">
-        <h2 className={styles.srOnly} id="narrative-title">How Prism identity persists across accounts</h2>
-
-        <div className={styles.storyLayout}>
-          <aside
-            className={styles.stickyCore}
-            aria-label={`Living Refracted Core. Current narrative state: ${narrativeState.label}`}
-          >
-            <div className={styles.stickyCoreInner}>
-              <div className={styles.storyCoreStage} aria-hidden="true">
-                <RefractedCore className={styles.storyCore} state={narrativeState.core} variant="living" />
-                <span className={styles.storyCoreShadow} />
-              </div>
-              <div className={styles.storyReadout}>
-                <span>Living Core</span>
-                <strong>{narrativeState.label}</strong>
-              </div>
-            </div>
-          </aside>
-
-          <ol className={styles.storySections} ref={storyRef}>
-            <li
-              aria-current={activeBeat === "identity-anchor" ? "step" : undefined}
-              className={`${styles.storySection} ${activeBeat === "identity-anchor" ? styles.storyActive : ""}`}
-              data-core-state="ID"
-              id="identity-anchor"
-            >
-              <div className={styles.storyIndex}>01 / 04</div>
-              <div className={styles.storyCopy}>
-                <p className={styles.eyebrow}>One persistent center</p>
-                <h3>Starknet anchors your Prism ID.</h3>
-              </div>
-              <dl className={styles.contextLedger} aria-label="Starknet role">
-                <ContextRow label="Starknet" state="Identity anchor" />
-              </dl>
-            </li>
-
-            <li
-              aria-current={activeBeat === "native-execution" ? "step" : undefined}
-              className={`${styles.storySection} ${activeBeat === "native-execution" ? styles.storyActive : ""}`}
-              data-core-state="PRISM"
-              id="native-execution"
-            >
-              <div className={styles.storyIndex}>02 / 04</div>
-              <div className={styles.storyCopy}>
-                <p className={styles.eyebrow}>Persistent identity. Venue-specific authority.</p>
-                <h3>Your accounts stay native. Your identity stays coherent.</h3>
-              </div>
-              <dl className={`${styles.contextLedger} ${styles.contextPair}`} aria-label="MVP identity and execution contexts">
-                <ContextRow label="Starknet" state="Identity anchor" />
-                <ContextRow label="Base" state="Native execution" />
-              </dl>
-            </li>
-
-            <li
-              aria-current={activeBeat === "home-resolution" ? "step" : undefined}
-              className={`${styles.storySection} ${activeBeat === "home-resolution" ? styles.storyActive : ""}`}
-              data-core-state="HOME"
-              id="home-resolution"
-            >
-              <div className={styles.storyIndex}>03 / 04</div>
-              <div className={styles.storyCopy}>
-                <p className={styles.eyebrow}>The experience resolves</p>
-                <h3>Your Home, Wherever You Act.</h3>
-              </div>
-              <div className={styles.resolutionLine} aria-hidden="true">
-                <span />
-                <i />
-                <span />
-              </div>
-            </li>
-
-            <li
-              aria-current={activeBeat === "continuity" ? "step" : undefined}
-              className={`${styles.storySection} ${activeBeat === "continuity" ? styles.storyActive : ""}`}
-              data-core-state="CONTINUITY"
-              id="continuity"
-            >
-              <div className={styles.storyIndex}>04 / 04</div>
-              <div className={styles.storyCopy}>
-                <p className={styles.eyebrow}>Continuity</p>
-                <h3>One Prism ID. One persistent identity across the accounts you use.</h3>
-              </div>
-            </li>
-          </ol>
         </div>
       </section>
     </main>
