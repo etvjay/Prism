@@ -515,6 +515,69 @@ A registry deployment alone does not satisfy STRK20 submission evidence.
 
 ---
 
+# Future Phase C1 — PrismChannel (non-blocking)
+
+PrismChannel is a **private relationship channel between Prism identities**, not a general-purpose messaging app.
+
+It can carry Prism-native relationship objects such as:
+
+```text
+payment memo
+payment request
+claim invitation
+invoice
+settlement proposal
+authorization request
+receipt
+```
+
+### What it is
+
+```text
+PrismIdentity A
+      │
+      └── PrismChannel
+               │
+               └── PrismIdentity B
+```
+
+A conceptual channel contains:
+
+```text
+channel_id
+participants
+channel key commitments
+created_at
+status
+policy
+```
+
+Messages should use ciphertext or encrypted payload references, not plaintext identity/payment metadata on a public chain.
+
+### What it is not
+
+```text
+not the Prism identity root
+not a wallet
+not a payment authority
+not a replacement for STRK20
+not a guarantee of private metadata
+not required for the first mainnet release
+```
+
+Communication keys must remain separate from Starknet account keys, Base keys, and STRK20 viewing keys.
+
+### Status
+
+```text
+Product concept: retained
+Current implementation: none
+Mainnet blocker: no
+Future trigger: after core identity, payment, Pause, and receipt flows are stable
+```
+
+---
+
 # What can be deferred after first mainnet
 
 These should not block a bounded first release unless they are explicitly included in its promise:
