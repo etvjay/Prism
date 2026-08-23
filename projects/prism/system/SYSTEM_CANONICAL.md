@@ -4,11 +4,11 @@
 ```yaml
 artifact_id: SYS-PRISM-78
 artifact_type: system
-version: 0.1
-status: proposed            # becomes canonical only after Jason accepts + DEC-PRISM-SYS-001 is decided
+version: 0.2
+status: canonical            # DEC-PRISM-SYS-001 accepted (Option A) by owner Jason, 2026-08-23; V8.3 implementation is now unblocked and remains in progress
 authority: System Foundry
 created_at: 2026-08-22
-updated_at: 2026-08-22
+updated_at: 2026-08-23
 supersedes: null
 depends_on:
   - projects/prism/CANONICAL_STATE.md@v0.1
@@ -20,7 +20,7 @@ depends_on:
   - projects/prism/system-inputs/RESEARCH_BACKEND_GATE.md@2026-08-22
 decision_refs:
   - DEC-PRISM-001..018 (all acknowledged, none mutated)
-  - DEC-PRISM-SYS-001 (PROPOSED — created here, DECISION_REQUIRED)
+  - DEC-PRISM-SYS-001 (ACCEPTED — Option A, owner Jason, 2026-08-23; see DECISIONS.md)
 evidence_refs:
   - EVD-PRISM-004..007 (all X0 — this package creates no evidence)
 ```
@@ -54,7 +54,7 @@ The System Foundry must refuse canonicalization without the Product handoff. It 
 | decisive proof | create P → prove Base control → bind → resolve=B → revoke → NO_ACTIVE_DESTINATION → P exists | CANONICAL_STATE §10 |
 | protected decisions | DEC-PRISM-001…018 | DECISIONS.md v0.2 |
 
-**All protected decisions are acknowledged and preserved. This package mutates none of them.** It adds one PROPOSED decision (DEC-PRISM-SYS-001) and registers system-layer assumptions, per FOUNDRY_PROTOCOL change classes:
+**All protected decisions are acknowledged and preserved. This package mutates none of them.** It added DEC-PRISM-SYS-001 (now ACCEPTED — Option A, owner Jason, 2026-08-23; recorded append-only in `DECISIONS.md`) and registers system-layer assumptions, per FOUNDRY_PROTOCOL change classes:
 
 - `STRENGTHEN` (flagged for owner acceptance, per RESEARCH_BACKEND_GATE §11): EIP-1271/ERC-6492 coverage is now a hard requirement of the Base ownership proof.
 - `EXTEND` (this package): machine-readable system companions now exist in-repo.
@@ -106,25 +106,25 @@ Off-chain challenge service + Base signature verification ladder (EOA → EIP-12
 
 ---
 
-# 5. DECISION_REQUIRED — DEC-PRISM-SYS-001 (the only blocker)
+# 5. DECIDED — DEC-PRISM-SYS-001 (Option A, ACCEPTED)
 
-**Status: PROPOSED. Not canonical. PRISM-8 V8.3+ (binding acceptance) is BLOCKED on Jason's sign-off. PRISM-7 is NOT blocked.**
+**Status: ACCEPTED (owner Jason, 2026-08-23). Canonical. The PRISM-8 V8.3 binding slice is unblocked and remains an implementation task; no V8.3 contract/runtime evidence is claimed here.**
 
-## The unresolved question
+## The question
 
 Where does trust for a cross-chain (Base) ownership proof come from when the Starknet registry accepts the binding? The repo canon says "offchain verification, onchain canonicalization" (ASM-PRISM-005) but **no artifact specifies the mechanism** that keeps this trust-minimized (RESEARCH_BACKEND_GATE U2 / Q8.3, support level E0).
 
-## Researched recommendation (modeled throughout this package as PROPOSED)
+## Accepted decision (Option A)
 
 ```text
-DEC-PRISM-SYS-001 (PROPOSED)
+DEC-PRISM-SYS-001 (ACCEPTED)
 decision:    Backend verifies the Base ownership proof (viem-style ladder:
              EOA ecrecover → EIP-1271 isValidSignature → ERC-6492 unwrap).
              The user's Starknet controller signs the binding transaction.
              The registry enforces controller authorization and onchain
              single-use consumption of the proof digest. The binding becomes
              canonical ONLY at the Starknet state transition.
-status:      proposed
+status:      accepted
 reason:      Keeps authority with keys the user controls; consistent with
              DEC-PRISM-001 (Starknet root) and DEC-PRISM-004 (venue-native
              authorization); avoids heavy on-Starknet EVM signature
@@ -144,7 +144,7 @@ reopen_if:   a supported wallet path cannot express controller-signed
              protected invariant
 ```
 
-## Downstream semantics that depend on this decision (each marked DECISION_REQUIRED in place)
+## Downstream semantics that depended on this decision (now resolved by acceptance)
 
 | Location | Dependency if DEC-PRISM-SYS-001 is NOT accepted |
 |---|---|
@@ -153,7 +153,7 @@ reopen_if:   a supported wallet path cannot express controller-signed
 | INVARIANTS INV-SYS-003 / INV-SYS-004 | canonical-only-after-transition; digest single-use placement |
 | ERROR_CATALOGUE ERR-007 / ERR-009 | replay/not-controller errors assume this mechanism |
 | STACK_DECISIONS SD-004 | viem unified verification dependency |
-| Prohibited claims | "trustless/permissionless" stays banned until this DEC is accepted AND evidenced |
+| Prohibited claims | "trustless/permissionless" stays banned until this DEC is accepted AND evidenced. The DEC is now accepted, but no onchain evidence exists — the ban remains in force at X2. |
 
 If Jason selects a different option, affected artifacts are amended via a superseding decision — never silently.
 
@@ -185,7 +185,7 @@ If Jason selects a different option, affected artifacts are amended via a supers
 [x] next evidence spike named                    (§7)
 ```
 
-**Gate status: CONDITIONALLY CANONICAL** — every specification checkbox closes. The two open items are (a) DEC-PRISM-SYS-001 owner sign-off and (b) vertical-slice execution, which belongs to the implementation run by mandate.
+**Gate status: CANONICAL (v0.2)** — every specification checkbox is closed or explicitly tracked open. (a) DEC-PRISM-SYS-001 was ACCEPTED by the owner (Option A, 2026-08-23). (b) Vertical-slice execution remains open: PRISM-7 executed previously; PRISM-8 V8.3 bind/resolve/revoke/digest-single-use implementation and tests are now unblocked but not yet evidenced.
 
 ## Assumptions registered by this package (to migrate into ASSUMPTIONS.md by owner)
 
@@ -253,7 +253,7 @@ From RESEARCH_BACKEND_GATE §7, binding on this package and every downstream con
 
 ```text
 Canonical artifacts updated: projects/prism/system/* (17 files, created)
-Decisions created: DEC-PRISM-SYS-001 (PROPOSED, DECISION_REQUIRED), DEC-PRISM-SYS-002 (PROPOSED, non-blocking)
+Decisions created: DEC-PRISM-SYS-001 (ACCEPTED — Option A, owner Jason, 2026-08-23), DEC-PRISM-SYS-002 (PROPOSED, non-blocking, unresolved)
 Decisions superseded: 0
 Assumptions added: ASM-SYS-001..003 (pending owner migration into ASSUMPTIONS.md)
 Contradictions added: 0 (U1/U2 from RESEARCH_BACKEND_GATE are modeled, not new)

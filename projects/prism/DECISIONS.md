@@ -248,3 +248,37 @@ The sprint's own-contract evidence requirement is evaluated separately. A first-
 Use Wallet API/spec capability-version checks for feature detection. Do not invoke balance-reading methods merely to discover whether a wallet supports STRK20.
 
 Balance reads are requested only when Prism intentionally presents the user's private balance and the resulting wallet consent is part of the designed flow.
+
+---
+
+## DEC-PRISM-SYS-001 — Cross-chain proof acceptance trust model (Option A)
+
+**Layer:** System
+**Status:** Accepted (owner: Jason, 2026-08-23)
+**Decision ID:** DEC-PRISM-SYS-001
+**Selected option:** Option A
+
+**Decision**
+The backend verifies the Base ownership proof via the ladder EOA ecrecover → EIP-1271 isValidSignature → ERC-6492 unwrap. The user's Starknet controller signs the binding transaction. The Starknet registry enforces `caller == identity.controller`, consumes the proof digest exactly once onchain, and makes the binding canonical only at the Starknet state transition. The registry does NOT re-verify Base signatures onchain.
+
+Base remains native/public execution; STRK20 privacy remains a separate Starknet wallet-mediated surface and is untouched by this decision.
+
+**Rationale**
+Keeps authority with keys the user controls; consistent with DEC-PRISM-001 (Starknet canonical identity root) and DEC-PRISM-004 (venue-native authorization); avoids heavy on-Starknet EVM signature verification, which is out of sprint scope. The binding is a Starknet state fact; a verified proof alone confers zero canonical effect (VERIFIED ≠ ACTIVE).
+
+**Consequences**
+- The backend is a TRUSTED VERIFIER for proof validity only (never for identity state). This is stated plainly and must never be marketed as trustless.
+- Registry authorization model: bind/revoke caller MUST be the identity controller.
+- Onchain replay protection: consumed-proof-digest map inside the registry; digest single-use forever.
+- Canonicality attaches exclusively at the Starknet state transition.
+- Changing this later is HIGH cost: it reworks registry authorization, replay protection, and the error catalogue.
+
+**Rejected alternatives**
+- On-Starknet verification of Base signatures: heavy, high sprint risk.
+- Light-client / attestation route: out of scope.
+
+**Reopen conditions**
+- A supported wallet path cannot express controller-signed binding; or
+- Evidence shows backend-verifier trust breaks a protected invariant (INV-PRISM-* / INV-SYS-*).
+
+Superseding this decision requires a new append-only record; history is not rewritten.
