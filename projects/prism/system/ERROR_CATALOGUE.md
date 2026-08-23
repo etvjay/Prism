@@ -1,7 +1,7 @@
 # Prism Error Catalogue — PRISM-7 / PRISM-8
 ## System Foundry Package v0.1 (authority: System Foundry; status: proposed)
 
-**DECISION_REQUIRED:** ERR-004 (not_controller), ERR-007 (proof_digest_already_consumed), and ERR-009's placement assume the acceptance-trust mechanism of DEC-PRISM-SYS-001 (PROPOSED): backend verifies, controller signs, registry consumes the digest onchain. If the owner selects a different mechanism, this catalogue is amended via a superseding decision — never silently.
+**DECIDED:** ERR-004 (not_controller), ERR-007 (proof_digest_already_consumed), and ERR-009's placement assume the acceptance-trust mechanism of DEC-PRISM-SYS-001 (ACCEPTED — Option A, 2026-08-23): backend verifies, controller signs, registry consumes the digest onchain. Any change to this mechanism is amended via a superseding decision — never silently.
 
 Machine-readable companion: `errors.yaml`. Format follows SYSTEM_FOUNDRY §16.
 

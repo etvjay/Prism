@@ -41,7 +41,7 @@ constraint: domain layer imports no web framework / RPC SDK / DB driver
 decision_id: DEC-SYS-SD-004
 decision: backend verifier implements EOA ecrecover → EIP-1271 isValidSignature → ERC-6492 unwrap via a unified verify library (viem-class), covering all three signature classes
 reason: S3/S4 corroboration (RESEARCH gate C17); naive ecrecover-only silently rejects ERC-4337 Base Accounts (C14/U1)
-depends_on: DEC-PRISM-SYS-001 (PROPOSED) — this is the verifying half of that mechanism
+depends_on: DEC-PRISM-SYS-001 (ACCEPTED — Option A) — this is the verifying half of that mechanism
 ```
 
 ## SD-005 — Challenge format: SIWE/EIP-712-class typed challenge

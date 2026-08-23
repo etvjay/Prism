@@ -67,7 +67,7 @@ gas_execution_notes: view function
 ```yaml
 operation: OP-8-01 bind_execution_identity
 purpose: Accept a verified Base ownership proof as a canonical ACTIVE binding
-caller: identity.controller                       # DECISION_REQUIRED DEC-PRISM-SYS-001
+caller: identity.controller                       # per DEC-PRISM-SYS-001 (ACCEPTED — Option A)
 authorization: require_caller == identities[prism_id].controller
 reads: [identities[prism_id], bindings[(prism_id,venue,execution_account)], consumed_digests[proof_digest]]
 writes:

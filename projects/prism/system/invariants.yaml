@@ -24,7 +24,7 @@ invariants:
     violating_commands: [backend_premature_binding_write]
     tests: [TEST-8-3-4]
     severity: critical
-    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
   - invariant_id: INV-SYS-004
     statement: each accepted OwnershipProof digest is consumed exactly once ever; second submission reverts regardless of state
     upstream: [FT-003]
@@ -33,7 +33,7 @@ invariants:
     violating_commands: [CMD-8-01_with_used_digest]
     tests: [TEST-8-2-6, TEST-8-2-7, TEST-8-3-3]
     severity: critical
-    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
   - invariant_id: INV-SYS-005
     statement: no surface represents submitted_or_confirming work as complete
     upstream: [INV-PRISM-015]

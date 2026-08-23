@@ -56,7 +56,7 @@ severity: critical
 monitoring_signal: operation stuck in confirming beyond timeout escalates to requires_attention
 recovery_procedure: reconciliation job re-reads chain status; operation corrected, never faked
 evidence_required: T6/T9 tests + FT-001 run record
-note: DECISION_REQUIRED — semantics assume DEC-PRISM-SYS-001 (PROPOSED)
+note: semantics assume DEC-PRISM-SYS-001 (ACCEPTED — Option A, 2026-08-23)
 ```
 
 ## INV-SYS-004 — Proof digest single-use
@@ -66,7 +66,7 @@ invariant_id: INV-SYS-004
 statement: Each accepted OwnershipProof's digest is consumed exactly once across all binds, ever; a second submission reverts regardless of registry state.
 why: FT-003 replay test; RESEARCH gate Q8.2/A3.
 scope: OBJ-PRISM-005, TR-8-01
-authoritative_enforcement: onchain consumed-digest map inside registry (PROPOSED under DEC-PRISM-SYS-001); server nonce store as first line
+authoritative_enforcement: onchain consumed-digest map inside registry (ACCEPTED Option A under DEC-PRISM-SYS-001); server nonce store as first line
 secondary_validations: [challenge service rejects known-consumed digests pre-submission]
 violating_commands: [CMD-8-01 with used digest]
 tests: [TEST-8-2-6, TEST-8-2-7, TEST-8-3-3]

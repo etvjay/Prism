@@ -40,7 +40,7 @@ operations:
     name: bind_execution_identity
     layer: starknet_contract
     purpose: accept verified Base ownership proof as canonical ACTIVE binding
-    caller: identity_controller            # DECISION_REQUIRED DEC-PRISM-SYS-001 (PROPOSED)
+    caller: identity_controller            # DEC-PRISM-SYS-001 (ACCEPTED — Option A)
     authorization: require_caller_eq_controller AND proof_verified_offchain AND digest_unconsumed
     storage_reads: ["identities[prism_id]", "bindings[(prism_id,venue,execution_account)]", "consumed_digests[proof_digest]"]
     storage_writes: ["bindings[key]=ACTIVE", "consumed_digests[proof_digest]=true"]
@@ -122,7 +122,7 @@ operations:
     state_transition: ISSUED_to_VERIFIED_or_REJECTED
     records_signature_class: true
     errors: [ERR-003, ERR-006, ERR-012, ERR-013, ERR-014]
-    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
     slice: PRISM-8
 
   # ---------- Queries ----------

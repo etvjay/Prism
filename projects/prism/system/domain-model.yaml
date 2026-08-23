@@ -64,7 +64,7 @@ domain_model:
       terminal_states: [REVOKED]
       failure_states: []
       versioning: monotonic_block_tx_position
-      decision_refs: [DEC-PRISM-SYS-001_PROPOSED_digest_semantics,
+      decision_refs: [DEC-PRISM-SYS-001_ACCEPTED_digest_semantics,
                       DEC-PRISM-SYS-002_PROPOSED_cross_id_exclusivity_not_enforced]
     - object_id: OBJ-PRISM-004
       name: ExecutionIdentity

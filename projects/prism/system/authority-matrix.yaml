@@ -20,7 +20,7 @@ authority_rows:
     primary_authority: backend_verifier_full_ladder   # EOA→EIP-1271→ERC-6492; onchain consumes digest only
     secondary_validation: registry_digest_single_use_check
     never_authoritative: [frontend_wallet_messages_alone]
-    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
   - row_id: A5
     behavior: canonical_acceptance_of_base_proof
     primary_authority: registry_state_transition
@@ -75,7 +75,7 @@ trust_boundaries:
     can_override: none_trusted_verifier_for_proof_validity_only
     failure_impact: liveness_degradation_no_integrity_loss_to_canonical_state
     compromise_boundary: can_issue_fraudulent_VERIFIED_but_cannot_bind_without_users_starknet_key
-    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
   - principal: base_wallet
     can_authenticate_as: owner_of_execution_account_via_ladder_valid_signature
     can_authorize: one_ownership_proof_over_one_challenge

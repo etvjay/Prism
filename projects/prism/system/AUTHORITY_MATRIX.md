@@ -14,14 +14,14 @@ Every critical rule has exactly one primary authority. "Never authoritative" is 
 | A1 | Prism identity existence & read | Starknet `PrismIdentityRegistry` | backend indexer | frontend, backend cache |
 | A2 | Controller state | Registry (caller checks) | backend relay pre-checks | UI session |
 | A3 | Binding lifecycle (create/revoke status) | Registry | indexer events | optimistic UI |
-| A4 | Base ownership proof validity | Backend verifier implementing EOA→1271→6492 ladder *(PROPOSED — DEC-PRISM-SYS-001; onchain only consumes the digest)* | registry digest single-use check | frontend wallet messages alone |
+| A4 | Base ownership proof validity | Backend verifier implementing EOA→1271→6492 ladder (ACCEPTED — DEC-PRISM-SYS-001, Option A; onchain only consumes the digest) | registry digest single-use check | frontend wallet messages alone |
 | A5 | Canonical acceptance of a Base proof | Registry state transition | operation reconciliation | backend "verified" flag |
 | A6 | Resolution result | Registry canonical state (or indexer under INV-SYS-007 staleness bound) | cache watermark re-check | any cached value past its watermark |
 | A7 | Base balances / public activity | Base RPC/explorer | derived portfolio layer | Prism registry |
 | A8 | Operation UX status | SM-PRISM-003 workflow + ledger reconciliation | frontend subscription | optimistic UI |
 | A9 | Privacy claims | Underlying mechanism evidence (DEC-PRISM-013) | FT-007 copy audit | marketing copy |
 
-Competing-authority note: A4 is the one row where authority is deliberately split (verify offchain, accept onchain). That split **is** DEC-PRISM-SYS-001 and stays PROPOSED until signed.
+Competing-authority note: A4 is the one row where authority is deliberately split (verify offchain, accept onchain). That split **is** DEC-PRISM-SYS-001 and is now ACCEPTED (Option A, owner Jason, 2026-08-23; see DECISIONS.md).
 
 ---
 
@@ -62,7 +62,7 @@ Product authentication (email/passkey/session) never substitutes for controller 
   can_derive: [resolution views, activity feeds]
   must_not_know: [user private keys, viewing keys, session↔binding linkage beyond operational need]
   can_move_value: none
-  can_override: none — trusted verifier for PROOF VALIDITY only (DECISION_REQUIRED DEC-PRISM-SYS-001)
+  can_override: none — trusted verifier for PROOF VALIDITY only (DEC-PRISM-SYS-001, ACCEPTED — Option A)
   failure_impact: binds/revokes unavailable; resolution degrades to canonical reads; no integrity loss to canonical state
   compromise_boundary: can issue fraudulent VERIFIED results → mitigated ONLY by controller still signing the bind tx; attacker cannot bind without the user's Starknet key
 

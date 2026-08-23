@@ -97,9 +97,11 @@ envelope for X3+; local results recorded here and in commit message only).
 
 ## 8. Remaining risks
 
-- DEC-PRISM-SYS-001 unresolved: PRISM-8 binding ops will reshape storage; if the
-  decision lands differently, the reservation notes here get superseded (no code
-  rework needed since nothing was implemented).
+- RESOLVED: DEC-PRISM-SYS-001 was ACCEPTED (Option A, owner Jason, 2026-08-23) and
+  PRISM-8 binding ops are implemented in V8.3 with the reserved storage shape
+  (bindings / consumed_digests / active_destinations); see
+  `agent-packets/V8_3_IMPLEMENTATION_REPORT.md`. The PRISM-7 layout observations
+  above remain historical record.
 - snforge 0.63.0/scarb 2.20.0 pins are current-toolchain, not repo-pinned; SD-007
   requires recording them (done above and in commit message).
 - No fuzz/property tier (T3) yet — counter monotonicity is unit-tested, not fuzzed;

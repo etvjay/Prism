@@ -84,7 +84,7 @@ object_id: OBJ-PRISM-003
 name: Binding
 purpose: Canonical link from a Prism ID to a venue-native execution identity
 canonical_identifier: (prism_id, venue=BASE, execution_account)
-authority: Starknet PrismIdentityRegistry (status), backend verifier (proof validity only, PROPOSED under DEC-PRISM-SYS-001)
+authority: Starknet PrismIdentityRegistry (status), backend verifier (proof validity only, ACCEPTED — Option A under DEC-PRISM-SYS-001)
 participants: [controller, base_execution_account_owner (same human), challenge_service]
 visibility_class: public_onchain     # v0 Base bindings are public by design (CON-PRISM-002)
 privacy_class: linkage_sensitive     # minimal fields only; no handles/social data (INV-PRISM-008..010)
@@ -110,7 +110,7 @@ failure_states: []
 versioning: monotonic block/tx position; no mutable payload after acceptance except status
 ```
 
-**DECISION_REQUIRED (DEC-PRISM-SYS-001):** `proof_digest` semantics — keccak256 of the canonical challenge bytes, recorded and consumed single-use ONCHAIN at bind time (recommended). If the owner rejects the recommendation, digest consumption moves off-chain and ERR-007 replay guarantees weaken to service-level only.
+**DECIDED (DEC-PRISM-SYS-001, ACCEPTED — Option A, 2026-08-23):** `proof_digest` semantics — keccak256 of the canonical challenge bytes, recorded and consumed single-use ONCHAIN at bind time. Implemented in V8.3 (`consumed_digests` map; ERR-007 enforced onchain).
 
 **DECISION_REQUIRED (DEC-PRISM-SYS-002):** cross-ID account exclusivity is NOT enforced — the same Base account may be ACTIVE-bound to two Prism IDs unless Product truth says otherwise. Resolution keys on `(prism_id, venue)` so this does not corrupt resolution for either ID.
 
@@ -145,7 +145,7 @@ object_id: OBJ-PRISM-005
 name: OwnershipProof
 purpose: Single-use evidence that the caller controls a Base execution account
 canonical_identifier: proof_digest = keccak256(canonical challenge bytes)
-authority: challenge_service issues nonce; backend verifies; registry consumes digest (PROPOSED split, DEC-PRISM-SYS-001)
+authority: challenge_service issues nonce; backend verifies; registry consumes digest (ACCEPTED split, DEC-PRISM-SYS-001)
 participants: [challenge_service, backend_verifier, base_wallet]
 visibility_class: private_until_used # challenge/nonce are server-side; digest becomes public at bind tx
 privacy_class: internal

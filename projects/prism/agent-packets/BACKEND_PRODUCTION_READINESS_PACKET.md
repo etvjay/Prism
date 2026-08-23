@@ -38,7 +38,7 @@ Merged via `221106c`, integrated through the same merge commit `75224d2`. Report
 
 ### 1.4 Register state (FACT)
 
-All decisive runtime rows remain X0: EVD-PRISM-004..007 NOT_IMPLEMENTED; gates G1/G2/G3 NOT_IMPLEMENTED in `AUDIT.md`; DEC-PRISM-SYS-001 PROPOSED/unresolved; ASM-PRISM-001/005 open; ASM-SYS-001..003 registered in `SYSTEM_CANONICAL.md` §6 pending owner migration into `ASSUMPTIONS.md`. Local test passes are X2 and never upgrade ledger rows by themselves.
+All decisive runtime rows remain X0: EVD-PRISM-004..007 NOT_IMPLEMENTED; gates G1/G2/G3 NOT_IMPLEMENTED in `AUDIT.md`; DEC-PRISM-SYS-001 ACCEPTED (Option A, 2026-08-23); runtime evidence rows remain X0; ASM-PRISM-001/005 open; ASM-SYS-001..003 registered in `SYSTEM_CANONICAL.md` §6 pending owner migration into `ASSUMPTIONS.md`. Local test passes are X2 and never upgrade ledger rows by themselves.
 
 ---
 
@@ -145,15 +145,15 @@ Ordered checklist a deployment worker must close before any live-network step:
 6. **Deployment mechanics:** `snfoundry.toml` currently contains ONLY commented placeholder profile lines — no network, account, RPC, or keystore configuration exists. A deployer account/funding path and sncast profile must be prepared WITHOUT committing secrets (G8: no committed secrets).
 7. **Evidence obligations per deploy:** record network, contract address, class hash, deploy tx hash, block, status in `EVIDENCE_LEDGER.md` using the yaml template; EVD-PRISM-004 moves X0 → at most X3 after observed live create/read (A7-7); X4/X5 requires SN_MAIN + independent explorer/RPC re-read (V8.6 territory, release-gated).
 8. **Expectation boundary (hub evidence):** declaring registry addresses later interacts with DEC-PRISM-016 own-contract rules, but registry operations alone do NOT satisfy hub own-contract final-hash evidence — that requires the Phase 5 helper. Keep the two evidence tracks separate; do not write `strk20.json` from Sepolia work.
-9. **Prohibited during deploy work:** the full banned-claims list (SYSTEM_CANONICAL §8 / RESEARCH gate §7) — including any trustless/permissionless phrasing while DEC-PRISM-SYS-001 is unresolved.
+9. **Prohibited during deploy work:** the full banned-claims list (SYSTEM_CANONICAL §8 / RESEARCH gate §7) — including any trustless/permissionless phrasing.
 
 ---
 
 ## 7. Decision blockers (owner: Jason) — this packet chooses none
 
-### 7.1 DEC-PRISM-SYS-001 — acceptance-trust mechanism (BLOCKING for V8.3+)
+### 7.1 DEC-PRISM-SYS-001 — acceptance-trust mechanism (RESOLVED — Option A accepted 2026-08-23)
 
-Status: PROPOSED in `SYSTEM_CANONICAL.md` §5; unresolved. The researched recommendation (backend verifies via EOA→1271→6492 ladder; user's Starknet controller signs the binding tx; registry enforces controller auth + onchain single-use digest consumption; canonical only at the Starknet transition) remains modeled as PROPOSED throughout the artifacts. Downstream placements that depend on it: OP-8-01 caller/authorization, authority row A4 split, INV-SYS-003/INV-SYS-004 enforcement points, ERR-004/ERR-007 semantics, SD-004. Flip cost is HIGH (registry authorization + replay protection + error catalogue rework). Until accepted: V8.3 bind acceptance, OP-8-01..03 implementation, and any "trustless"-adjacent language remain blocked/banned. **This packet does not select it.**
+Status: ACCEPTED (Option A, owner Jason, 2026-08-23; recorded in `DECISIONS.md`). The accepted mechanism is exactly the researched recommendation (backend verifies via EOA→1271→6492 ladder; user's Starknet controller signs the binding tx; registry enforces controller auth + onchain single-use digest consumption; canonical only at the Starknet transition). Downstream placements now reflect ACCEPTED: OP-8-01 caller/authorization, authority row A4 split, INV-SYS-003/INV-SYS-004 enforcement points, ERR-004/ERR-007 semantics, SD-004. V8.3 bind acceptance, OP-8-01..03 implementation are implemented and X2-verified (see `V8_3_IMPLEMENTATION_REPORT.md`); "trustless"-adjacent language remains banned. **This packet did not select it — the owner did.**
 
 Non-blocking sibling: DEC-PRISM-SYS-002 (cross-ID account exclusivity not enforced; default allow-and-observe).
 
@@ -179,7 +179,7 @@ Still missing, by tier:
 - **T12 failure/recovery:** RPC outage, indexer lag, duplicate events, restart mid-bind, cache-disagreement override (TEST-8-4-4). NOT_EVIDENCED.
 - **T10/T11:** frontend lifecycle labeling from op states; full decisive sequence FT-001 with success + ERR-012 rejection + ERR-004 permission + ERR-023 stale conflict + ERR-021 dependency + retry + restart-mid-op. NOT_EVIDENCED.
 - **TEST-8-2 fixture corpus against LIVE Base:** deployed EIP-1271 wallet + undeployed ERC-6492 fixtures (current 1271 checker is a local test double). NOT_EVIDENCED.
-- **Remaining PRISM-8 acceptance tests requiring V8.3+/V8.4 code (blocked on DEC-PRISM-SYS-001):** TEST-8-3-1..-4 (bind acceptance incl. FT-002 wrong-signer, FT-003 replay ERR-007 at contract, VERIFIED-without-tx produces no canonical change), TEST-8-4-1..-4 (resolve/revoke incl. decisive tail and revoked→ACTIVE impossibility).
+- **Remaining PRISM-8 acceptance tests requiring V8.3+/V8.4 code (blocked on DEC-PRISM-SYS-001):** TEST-8-3-1..-4 (bind acceptance incl. FT-002 wrong-signer, FT-003 replay ERR-007 at contract, VERIFIED-without-tx produces no canonical change), TEST-8-4-1..-4 (resolve/revoke incl. decisive tail and revoked→ACTIVE impossibility). — IMPLEMENTED at X2 in V8.3 (see V8_3_IMPLEMENTATION_REPORT.md); FT-002 wrong-signer remains an offchain-ladder test, not covered onchain by design.
 - **Live-network evidence envelopes:** V7.5 SN_SEPOLIA deploy receipt (network/address/class hash/deploy tx) → EVD-PRISM-004 ≤X3; V8.5 decisive sequence on SN_SEPOLIA + Base testnet with every tx hash + status recorded → EVD-PRISM-005/006/007 ≤X3; X4/X5 additionally requires SN_MAIN repeat behind the Jason-approved release gate (V8.6) and independent re-read. Each ledger update uses the yaml evidence template (commit SHA, spec_versions, procedure, transactions, claim_scope, limitations, independent_verification, observed_at) — never batch-retroactive.
 - **Cross-cutting per phase:** pin-freshness re-check; tsc/build/diff green (blocked in this worktree until deps restored); privacy-copy lint against the ban list; EVIDENCE_LEDGER + AUDIT updated per milestone.
 
@@ -189,12 +189,12 @@ Still missing, by tier:
 
 Dependency-ordered; each packet is bounded, ends with its own session footer, and may not expand scope. Owner decisions (D-items) gate the sequence.
 
-1. **WP-0 (owner):** Decide DEC-PRISM-SYS-001 (accept recommended mechanism or amend via superseding decision) — unblocks WP-5. Also: declare target networks per environment (§7.2); dispose of e8886af (accept → triggers WP-1; reject/supersede → WP-1 collapses to spec-note only); optionally migrate ASM-SYS-001..003 and acknowledge STRENGTHEN class.
+1. **WP-0 (owner):** DONE — DEC-PRISM-SYS-001 ACCEPTED (Option A, 2026-08-23); WP-5 executed at X2. Also: declare target networks per environment (§7.2); dispose of e8886af (accept → triggers WP-1; reject/supersede → WP-1 collapses to spec-note only); optionally migrate ASM-SYS-001..003 and acknowledge STRENGTHEN class.
 2. **WP-1 (code, unblocked now):** Land e8886af chainId hardening + its EXTEND-class spec companion (amend SD-005 envelope and INV-SYS-011 field list in `system/*` md+yaml to include chain_id, schema v2 note) IF accepted at WP-0. Regenerate fixtures; keep suite green (46-test baseline). Prohibited: no store swap, no chain calls.
 3. **WP-2 (code, unblocked now):** Restore full dependency install in this worktree; re-establish typecheck/build/diff hygiene baseline and record it (closes the §1.3 NOT_EVIDENCED gap). Prohibited: no dependency upgrades beyond lockfile restoration (A5).
 4. **WP-3 (code, unblocked now):** Production `OwnershipProofStore` adapter (§3 requirements) + TTL sweeper + T7 concurrency/restart suites against the real store. Prohibited: no semantic drift from the port contract; fail-closed behavior preserved.
 5. **WP-4 (code, unblocked now):** SM-PRISM-003 Operation resource + reconciliation worker + observability chain fields (op rows, tx-hash correlation, watermarks, stable ERR mapping) per §4. Includes T12 harness cases for restart/staleness.
-6. **WP-5 (code, gated on WP-0 DEC-PRISM-SYS-001 acceptance):** V8.3 binding acceptance: add OP-8-01 (+ consumed-digest map) to the registry lineage per the accepted mechanism; wire controller-signed bind flow; implement TEST-8-3-1..-4. Prohibited: starting before WP-0 lands.
+6. **WP-5 (code):** DONE at X2 — V8.3 binding acceptance implemented (OP-8-01..03 + consumed-digest map + tests TEST-8-3/8-4 set) per the accepted mechanism; controller-signed bind flow wiring to the live backend remains open runtime work.
 7. **WP-6 (code, after WP-5):** V8.4 resolve + revoke: resolver honesty (INV-SYS-007), revoke idempotence (ERR-011 semantics), TEST-8-4-1..-4 including cache-disagreement override.
 8. **WP-7 (ops, after WP-2/WP-4):** PRISM-7 deployment to the WP-0-declared Starknet testnet (SN_SEPOLIA default): sncast profile prep without secrets, deploy, record receipt envelope; observe live create/read → move EVD-PRISM-004 to X3 (A7-7). Update EVIDENCE_LEDGER + AUDIT gate statuses.
 9. **WP-8 (e2e, after WP-5..WP-7):** V8.5 decisive sequence end-to-end on Starknet testnet + declared Base testnet, exercising success/rejection/permission/stale/dependency/retry/recovery branches; live-corpus ladder fixtures; record every tx hash → EVD-PRISM-005/006/007 ≤X3. This closes G2/G3 candidates at testnet depth.
@@ -212,7 +212,7 @@ Parallel-safe from the start: WP-2; WP-1/WP-3/WP-4 touch disjoint layers (challe
 - e8886af beyond local X2: merged nowhere; its chainId requirement appears in no system spec artifact yet; no owner accept/amend recorded.
 - Durable OwnershipProofStore, operation lifecycle machinery, reconciliation worker, indexer/projection layer, watermark serving: entirely unimplemented.
 - Target networks (Starknet + Base, per environment) and therefore the venue chain id: undecided/unrecorded.
-- DEC-PRISM-SYS-001 outcome and all downstream semantics contingent on it; DEC-PRISM-SYS-002 likewise open (non-blocking).
+- DEC-PRISM-SYS-001 ACCEPTED (Option A); downstream semantics reconciled; DEC-PRISM-SYS-002 remains open (non-blocking).
 - ASM-SYS-001..003 remain open assumptions (pending migration into ASSUMPTIONS.md); ASM-PRISM-001/005 validation sequences unexecuted.
 - Fuzz/property coverage (T3), T7/T9/T10/T11/T12 tiers, and every X3+ maturity claim in §8.
 - G0 mainnet reachability and all sprint final-evidence rows (strk20.json empty by design; untouched by this packet).
@@ -227,11 +227,11 @@ Per prohibited-claims rules: nothing above may be summarized as "working", "prod
 Packet created: projects/prism/agent-packets/BACKEND_PRODUCTION_READINESS_PACKET.md (this file)
 Canonical registers edited: none (DECISIONS/EVIDENCE_LEDGER/AUDIT/ASSUMPTIONS/CANONICAL_STATE untouched)
 Source code edited: none — documentation-only packet; no cleanup commands run
-Decisions created: 0 (DEC-PRISM-SYS-001 left PROPOSED, deliberately unchosen)
+Decisions created: 0 by this packet (DEC-PRISM-SYS-001 subsequently ACCEPTED by owner — Option A, 2026-08-23)
 Assumptions added: 0   Evidence added: 0 (all rows unchanged; observations recorded here only)
 Verification performed this session: vitest 42/42 (HEAD), 46/46 (e8886af extraction),
   snforge 7/7 (HEAD); typecheck/build blocked by incomplete node_modules (recorded honestly)
-Unresolved questions: DEC-PRISM-SYS-001 (blocking V8.3+), target-network declaration,
+Unresolved questions: DEC-PRISM-SYS-002 (non-blocking), target-network declaration, SD-008 chainId-v2 hardening,
   e8886af disposition, ASM-SYS migration (non-blocking)
 Next evidence-producing step: WP-0 owner decisions, then WP-1/WP-2 in parallel
 ```

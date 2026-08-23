@@ -108,7 +108,7 @@ Off-chain challenge service + Base signature verification ladder (EOA → EIP-12
 
 # 5. DECIDED — DEC-PRISM-SYS-001 (Option A, ACCEPTED)
 
-**Status: ACCEPTED (owner Jason, 2026-08-23). Canonical. The PRISM-8 V8.3 binding slice is unblocked and remains an implementation task; no V8.3 contract/runtime evidence is claimed here.**
+**Status: ACCEPTED (owner Jason, 2026-08-23). Canonical. The PRISM-8 V8.3 binding slice is implemented in `contracts/prism_identity_registry` and verified at evidence level X2 (snforge local execution only — no contract/runtime/deployment evidence is claimed here; see `agent-packets/V8_3_IMPLEMENTATION_REPORT.md`).**
 
 ## The question
 
@@ -185,7 +185,7 @@ If Jason selects a different option, affected artifacts are amended via a supers
 [x] next evidence spike named                    (§7)
 ```
 
-**Gate status: CANONICAL (v0.2)** — every specification checkbox is closed or explicitly tracked open. (a) DEC-PRISM-SYS-001 was ACCEPTED by the owner (Option A, 2026-08-23). (b) Vertical-slice execution remains open: PRISM-7 executed previously; PRISM-8 V8.3 bind/resolve/revoke/digest-single-use implementation and tests are now unblocked but not yet evidenced.
+**Gate status: CANONICAL (v0.2)** — every specification checkbox is closed or explicitly tracked open. (a) DEC-PRISM-SYS-001 was ACCEPTED by the owner (Option A, 2026-08-23). (b) Vertical-slice execution: PRISM-7 executed previously; PRISM-8 V8.3 bind/resolve/revoke/digest-single-use implementation and tests are complete at evidence level X2 (snforge only). Deployment, runtime, and mainnet verification remain open pre-deployment gates (including SD-008 chainId-v2 hardening).
 
 ## Assumptions registered by this package (to migrate into ASSUMPTIONS.md by owner)
 
@@ -260,6 +260,6 @@ Contradictions added: 0 (U1/U2 from RESEARCH_BACKEND_GATE are modeled, not new)
 Evidence added: none — all runtime rows remain X0
 Maturity changes: none
 Drift detected: none (package is a projection of accepted product truth)
-Unresolved questions: DEC-PRISM-SYS-001 (blocking PRISM-8 V8.3+), DEC-PRISM-SYS-002 (non-blocking)
+Unresolved questions: DEC-PRISM-SYS-002 (non-blocking; cross-ID exclusivity) — DEC-PRISM-SYS-001 was ACCEPTED (Option A, 2026-08-23); SD-008 chainId-v2 hardening remains an open pre-deployment gate
 Next evidence-producing step: V7.1 scaffold tests + V8.0 owner decision
 ```

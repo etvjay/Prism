@@ -62,7 +62,7 @@ Never present VERIFIED as bound: **verified ≠ canonical** (INV-SYS-003; ASM-PR
   authorization: caller == identity.controller (registry-enforced)
   preconditions:
     - PrismIdentity exists and is ACTIVE
-    - proof verified by backend within expiry window (PROPOSED, DEC-PRISM-SYS-001)
+    - proof verified by backend within expiry window (ACCEPTED — Option A, DEC-PRISM-SYS-001)
     - proof_digest not previously consumed onchain
     - venue enum contains BASE
   expected_version: none needed — bindings are append-only facts; uniqueness enforced by key
