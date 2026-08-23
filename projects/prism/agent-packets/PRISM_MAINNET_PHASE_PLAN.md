@@ -20,12 +20,12 @@ Band C — Full Prism vision after the first release
   social principals, claims, portfolio, continuity/delegation,
   and broader private financial capabilities
 
-Explicit exclusion from the current MVP/mainnet phases:
+Explicit scope for the current release:
 
 ```text
-PrismChannel is not a mainnet requirement and has no implementation phase
-in this release plan. No PrismChannel UI, contract, storage, or messaging
-surface should be built as part of the current release.
+PrismChannel is included in the testnet path as the minimal S4 relationship/
+payment-memo slice. It is not a full messenger and is not a mainnet blocker
+unless the mainnet release explicitly promises PrismChannel.
 ```
 
 **Band A** is the minimum credible Prism mainnet.  
@@ -430,6 +430,11 @@ Base Sepolia EOA
 create/read identity
 Base proof/bind
 resolve/revoke
+REST/API runtime
+SDK client path
+MCP adapter path when agents/Pause are enabled
+Prism Pause path when promised
+minimal PrismChannel S4 slice: channel + encrypted payment memo/receipt reference + revoke
 STRK20 wallet route
 selected helper/claim action
 operation/reconciliation worker
@@ -475,8 +480,12 @@ no fake receipt/balance/privacy claim
 
 ```text
 M0–M6 accepted
+S1 REST/API accepted
+S2 SDK accepted
+S3 MCP accepted when agents/Pause are in the product promise
+S4 PrismChannel testnet slice accepted
 M8 testnet rehearsal accepted
-M7 accepted if Pause is in the product promise
+M7 Pause P0–P8 accepted if Pause is in the product promise
 SN_MAIN release decision
 funded mainnet operational wallets
 current pool fee/readiness
@@ -607,11 +616,15 @@ They require their own Product/System phases and should not be implied by the fi
 M0  Product/release contract       partially governed; needs release-band decision
 M1  Starknet identity root          infrastructure deployed; live identity workflow open
 M2  Backend runtime                 X2 implementation; live service/reconciliation open
+S1  REST/API runtime                handlers exist; real service open
+S2  SDK                             not implemented
+S3  MCP adapter                     not implemented; conditional on agent/Pause promise
 M3  Base decisive proof             wallets funded; live bind sequence open
+M7  Prism Pause                     proposed plan only; before M4/M6 settlement actions
 M4  STRK20 consumer route           capability scaffold only
 M5  Prism-owned action/Claim        helper X2; live route not deployed
 M6  Home/product surfaces           landing only; app surfaces open
-M7  Prism Pause                     proposed plan only
+C1  PrismChannel testnet slice      included in M8; not implemented
 M8  Testnet rehearsal               open
 M9  Mainnet release                 blocked
 ```
