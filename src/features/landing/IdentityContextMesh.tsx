@@ -55,6 +55,7 @@ export default function IdentityContextMesh({
       aria-label={stateDescriptions[state]}
       className={styles.identityMesh}
       data-state={state}
+      data-transitioning={signalKey > 0 && !reducedMotion}
       id="identity-context"
       role="img"
     >
@@ -70,9 +71,9 @@ export default function IdentityContextMesh({
           preserveAspectRatio="none"
           viewBox="0 0 560 390"
         >
-          <path className={styles.meshRoute} d="M280 156 V218" />
-          <path className={styles.meshRoute} d="M280 218 H136 V270" />
-          <path className={styles.meshRoute} d="M280 218 H424 V270" />
+          <path className={styles.meshRoute} d="M280 156 V218" pathLength={1} />
+          <path className={styles.meshRoute} d="M280 218 H136 V270" pathLength={1} />
+          <path className={styles.meshRoute} d="M280 218 H424 V270" pathLength={1} />
           <circle className={styles.routeNode} cx="280" cy="218" r="3.5" />
           <circle className={styles.routeNode} cx="136" cy="270" r="3.5" />
           <circle className={styles.routeNode} cx="424" cy="270" r="3.5" />
@@ -85,7 +86,7 @@ export default function IdentityContextMesh({
             preserveAspectRatio="none"
             viewBox="0 0 560 390"
           >
-            <path className={styles.routeSignal} d={signalRoutes[state]} />
+            <path className={styles.routeSignal} d={signalRoutes[state]} pathLength={1} />
           </svg>
         ) : null}
 

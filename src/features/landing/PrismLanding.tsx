@@ -50,8 +50,8 @@ function SatinWords({ className, text }: SatinLayerProps) {
   return (
     <span aria-hidden="true" className={className}>
       {text.split(" ").map((word, wordIndex) => (
-        <span className={styles.satinWord} key={`${word}-${wordIndex}`}>
-          {word}
+        <span className={styles.satinWordMask} key={`${word}-${wordIndex}`}>
+          <span className={styles.satinWord}>{word}</span>
         </span>
       ))}
     </span>
@@ -320,6 +320,7 @@ export default function PrismLanding() {
 
           <div className={styles.heroObject}>
             <IdentityContextMesh
+              key={transitionCycle}
               reducedMotion={reducedMotion}
               signalKey={transitionCycle}
               state={activeState.id}

@@ -7,6 +7,8 @@
   --line: #dfe0e5;
   --line-strong: #c9cbd1;
   --graphite: #1f1e24;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-duration: 820ms;
   min-height: 100vh;
   padding: 32px 0;
   overflow: clip;
@@ -310,44 +312,51 @@
   max-width: 100%;
 }
 
+.satinWordMask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
 .satinWord {
   --word-stagger: 0ms;
   display: inline-block;
   white-space: nowrap;
+  transform: translateY(110%);
+  will-change: opacity, transform;
 }
 
 .satinOutgoing .satinWord {
-  animation: satinWordLift 740ms cubic-bezier(0.32, 0, 0.18, 1) both;
+  animation: satinWordLift var(--motion-duration) var(--motion-ease) both;
   animation-delay: calc(var(--line-stagger) + var(--word-stagger));
 }
 
 .satinIncoming .satinWord {
-  animation: satinWordResolve 740ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(36ms + var(--line-stagger) + var(--word-stagger));
+  animation: satinWordResolve var(--motion-duration) var(--motion-ease) both;
+  animation-delay: calc(24ms + var(--line-stagger) + var(--word-stagger));
 }
 
-.satinOutgoing .satinWord:nth-child(2) {
-  --word-stagger: 46ms;
+.satinOutgoing .satinWordMask:nth-child(2),
+.satinIncoming .satinWordMask:nth-child(2) {
+  --word-stagger: 42ms;
 }
 
-.satinOutgoing .satinWord:nth-child(3) {
-  --word-stagger: 64ms;
+.satinOutgoing .satinWordMask:nth-child(3),
+.satinIncoming .satinWordMask:nth-child(3) {
+  --word-stagger: 84ms;
 }
 
-.satinIncoming .satinWord:nth-child(2) {
-  --word-stagger: 46ms;
-}
-
-.satinIncoming .satinWord:nth-child(3) {
-  --word-stagger: 64ms;
+.satinOutgoing .satinWordMask:nth-child(4),
+.satinIncoming .satinWordMask:nth-child(4) {
+  --word-stagger: 126ms;
 }
 
 .satinBlockOutgoing {
-  animation: satinBlockLift 740ms cubic-bezier(0.32, 0, 0.18, 1) 90ms both;
+  animation: satinBlockLift 680ms var(--motion-ease) 110ms both;
 }
 
 .satinBlockIncoming {
-  animation: satinBlockResolve 740ms cubic-bezier(0.22, 1, 0.36, 1) 126ms both;
+  animation: satinBlockResolve 720ms var(--motion-ease) 150ms both;
 }
 
 .satinSettled {
@@ -547,17 +556,18 @@
 .meshRoute {
   fill: none;
   stroke: #3a3a3d;
-  stroke-dasharray: 520;
-  stroke-dashoffset: 520;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
   stroke-linecap: square;
   stroke-linejoin: miter;
   stroke-width: 1.1;
   opacity: 0;
-  transition:
-    opacity 260ms ease,
-    stroke 620ms ease,
-    stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1);
   vector-effect: non-scaling-stroke;
+}
+
+.identityMesh[data-state="native-context"][data-transitioning="true"] .meshRoute,
+.identityMesh[data-state="resolved-identity"][data-transitioning="true"] .meshRoute {
+  animation: satinMeshRouteDraw var(--motion-duration) var(--motion-ease) both;
 }
 
 .routeNode {
@@ -569,14 +579,21 @@
   vector-effect: non-scaling-stroke;
 }
 
+.identityMesh[data-state="native-context"][data-transitioning="true"] .routeNode,
+.identityMesh[data-state="resolved-identity"][data-transitioning="true"] .routeNode {
+  animation: satinMeshNodeSettle var(--motion-duration) var(--motion-ease) 90ms both;
+}
+
 .routeSignal {
   fill: none;
   stroke: #18181a;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2.2;
   opacity: 0;
-  animation: routeSignalSettle 820ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: satinRouteSignalDraw var(--motion-duration) var(--motion-ease) both;
   vector-effect: non-scaling-stroke;
 }
 
@@ -624,6 +641,22 @@
     border-color 520ms ease,
     box-shadow 620ms ease,
     transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.identityMesh[data-transitioning="true"] .primaryUnit,
+.identityMesh[data-transitioning="true"] .prismIdentity,
+.identityMesh[data-transitioning="true"] .starknetRoot {
+  animation: satinMeshModuleRise 760ms var(--motion-ease) both;
+}
+
+.identityMesh[data-transitioning="true"] .contextModule {
+  animation: satinMeshModuleRise 760ms var(--motion-ease) 120ms both;
+}
+
+.identityMesh[data-state="native-context"][data-transitioning="true"] .contextLabel,
+.identityMesh[data-state="resolved-identity"][data-transitioning="true"] .contextLabel,
+.identityMesh[data-state="resolved-identity"][data-transitioning="true"] .resolutionRail {
+  animation: satinMeshRailRise 620ms var(--motion-ease) 180ms both;
 }
 
 .identityMesh[data-state="resolved-identity"] .primaryUnit {
@@ -975,133 +1008,108 @@
 @keyframes satinWordLift {
   0% {
     opacity: 1;
-    filter: blur(0);
-    letter-spacing: -0.058em;
-    transform: translate3d(0, 0, 0);
-  }
-
-  52% {
-    opacity: 0.78;
-    filter: blur(0.12px);
-    letter-spacing: -0.052em;
-    transform: translate3d(0.008em, -1px, 0);
-  }
-
-  76% {
-    opacity: 0.32;
-    filter: blur(0.26px);
-    letter-spacing: -0.046em;
-    transform: translate3d(0.014em, -3px, 0);
+    transform: translateY(0);
   }
 
   100% {
-    opacity: 0;
-    filter: blur(0.35px);
-    letter-spacing: -0.042em;
-    transform: translate3d(0.018em, -4px, 0);
+    opacity: 0.08;
+    transform: translateY(-110%);
   }
 }
 
 @keyframes satinWordResolve {
   0% {
-    opacity: 0.04;
-    filter: blur(0.35px);
-    letter-spacing: -0.042em;
-    transform: translate3d(-0.018em, 4px, 0);
-  }
-
-  42% {
-    opacity: 0.28;
-    filter: blur(0.24px);
-    letter-spacing: -0.047em;
-    transform: translate3d(-0.01em, 2px, 0);
-  }
-
-  68% {
-    opacity: 0.76;
-    filter: blur(0.1px);
-    letter-spacing: -0.054em;
-    transform: translate3d(-0.004em, 1px, 0);
+    opacity: 0.08;
+    transform: translateY(110%);
   }
 
   100% {
     opacity: 1;
-    filter: blur(0);
-    letter-spacing: -0.058em;
-    transform: translate3d(0, 0, 0);
+    transform: translateY(0);
   }
 }
 
 @keyframes satinBlockLift {
   0% {
     opacity: 1;
-    filter: blur(0);
-    transform: translate3d(0, 0, 0);
-  }
-
-  52% {
-    opacity: 0.78;
-    filter: blur(0.1px);
-    transform: translate3d(0, -1px, 0);
-  }
-
-  76% {
-    opacity: 0.32;
-    filter: blur(0.2px);
-    transform: translate3d(0, -2px, 0);
+    transform: translateY(0);
   }
 
   100% {
-    opacity: 0;
-    filter: blur(0.3px);
-    transform: translate3d(0, -3px, 0);
+    opacity: 0.18;
+    transform: translateY(-8px);
   }
 }
 
 @keyframes satinBlockResolve {
   0% {
-    opacity: 0.04;
-    filter: blur(0.3px);
-    transform: translate3d(0, 3px, 0);
-  }
-
-  42% {
-    opacity: 0.28;
-    filter: blur(0.2px);
-    transform: translate3d(0, 2px, 0);
-  }
-
-  68% {
-    opacity: 0.76;
-    filter: blur(0.08px);
-    transform: translate3d(0, 1px, 0);
+    opacity: 0.18;
+    transform: translateY(8px);
   }
 
   100% {
     opacity: 1;
-    filter: blur(0);
-    transform: translate3d(0, 0, 0);
+    transform: translateY(0);
   }
 }
 
-@keyframes routeSignalSettle {
+@keyframes satinRouteSignalDraw {
   0% {
     opacity: 0;
-    stroke-width: 2.2;
-  }
-
-  28% {
-    opacity: 0.56;
-  }
-
-  68% {
-    opacity: 0.24;
-    stroke-width: 1.5;
+    stroke-dashoffset: 1;
   }
 
   100% {
+    opacity: 0.78;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes satinMeshRouteDraw {
+  0% {
+    opacity: 0.08;
+    stroke-dashoffset: 1;
+  }
+
+  100% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes satinMeshNodeSettle {
+  0% {
     opacity: 0;
-    stroke-width: 1.1;
+    transform: scale(0.7);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes satinMeshModuleRise {
+  0% {
+    opacity: 0.34;
+    transform: translateY(12px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes satinMeshRailRise {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
