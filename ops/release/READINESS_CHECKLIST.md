@@ -9,13 +9,22 @@
 
 ## 0. Invariant: PROPOSED ≠ ACCEPTED
 
-```
-ops/target-network/manifest.yaml:status == PROPOSED
-ops/target-network/manifest.yaml:owner_decision.status == UNDECIDED
-=> deployment MUST be refused; every envelope is NOT PROMOTABLE
+```text
+PROPOSED + UNDECIDED => deployment MUST be refused
+ACCEPTED + mirrored append-only DECISIONS.md records => testnet path may proceed
 ```
 
-`node ops/target-network/validate.mjs` must report `PROPOSED/UNDECIDED correctly blocking` before any gate below is considered closed.
+Current state:
+
+```text
+DEC-PRISM-SYS-003: ACCEPTED (chainId-v2)
+DEC-PRISM-OPS-001: ACCEPTED (testnet = SN_SEPOLIA + Base Sepolia 84532)
+SN_MAIN: RELEASE_GATED_PROPOSED
+```
+
+Acceptance removes only the owner-decision blocker. Dry-run, funded-account,
+account deployment, live receipts, independent reads, and evidence promotion
+remain separate gates.
 
 ---
 
@@ -29,7 +38,7 @@ ops/target-network/manifest.yaml:owner_decision.status == UNDECIDED
 | Harness asserts `chainId target mismatch → ERR-012 altered_fields:chain_id` | `src/features/evidence/__tests__/envelope-and-gates.test.ts` | **PASS (offline)** | — |
 | Envelope `inputs.chainId` vs `target_manifest.chain_id` mismatch is a promotion blocker | `src/features/evidence/evidence-envelope.ts:validate` | **ENFORCED** | Wrong-network proof cannot be promoted |
 
-**Gate result:** `FAIL` — owner decision required before any testnet deploy.
+**Gate result:** `PASS — OWNER DECISION CLOSED`; companion spec, funded-account, deployment, and evidence gates remain separate.
 
 ---
 
@@ -37,13 +46,13 @@ ops/target-network/manifest.yaml:owner_decision.status == UNDECIDED
 
 | Check | Required | Current | Blocks |
 |---|---|---|---|
-| Default proposal accepted: `SN_SEPOLIA + Base Sepolia (84532)` testnet default | `ops/target-network/manifest.yaml:environments.testnet` `PROPOSED` | **PROPOSED** | `SN_SEPOLIA` deploy, V7.5/V8.5 harness live run, envelope promotion to X3 |
-| Release-gated proposal recorded: `SN_MAIN + Base Mainnet (8453, pool 0x0403…812a)` | `ops/target-network/manifest.yaml:environments.mainnet` `RELEASE_GATED_PROPOSED` | **PROPOSED** | `SN_MAIN` evidence, G0, final hashes (`ok=pool=mine`) |
-| `owner_decision.status == ACCEPTED` with `decision_id=DEC-PRISM-OPS-001`, `decided_by=Jason`, `selected_environment`, `disposition_chainId_v2`, `signature` mirroring `DECISIONS.md` append-only | Owner Jason | **UNDECIDED** | Any deployment or promotion |
-| `node ops/target-network/validate.mjs` reports `PROPOSED/UNDECIDED` blocking | Offline static validator | **PASS — blocking correctly** | — |
+| Default environment accepted: `SN_SEPOLIA + Base Sepolia (84532)` | `ops/target-network/manifest.yaml:environments.testnet` `ACCEPTED` | **ACCEPTED** | Live deployment/evidence still gated |
+| Release-gated proposal recorded: `SN_MAIN + Base Mainnet (8453, pool 0x0403…812a)` | `ops/target-network/manifest.yaml:environments.mainnet` `RELEASE_GATED_PROPOSED` | **RELEASE-GATED** | `SN_MAIN` evidence, G0, final hashes (`ok=pool=mine`) |
+| `owner_decision.status == ACCEPTED` with `decision_id=DEC-PRISM-OPS-001`, `decided_by=Jason`, `selected_environment`, `disposition_chainId_v2`, `signature` mirroring `DECISIONS.md` append-only | Owner Jason | **ACCEPTED** | Does not itself deploy |
+| `node ops/target-network/validate.mjs` validates the accepted mirror | Offline static validator | **PENDING RERUN** | Invalid mirror must block |
 | `strk20.json` never written from testnet logic | `ops/evidence/validate.mjs` + envelope builder | **ENFORCED (empty `{transactions:[], contracts:[]}`)`** | Hub `mine` check per `INV-PRISM-016` belongs to Phase 5 helper |
 
-**Gate result:** `FAIL` — remains `PROPOSED/UNDECIDED` until owner record exists.
+**Gate result:** `PASS — OWNER DECISION CLOSED`; funded accounts, deployment, live receipts, and independent reads remain open.
 
 ---
 

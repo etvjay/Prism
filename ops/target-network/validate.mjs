@@ -24,10 +24,35 @@ if (!existsSync(manifestPath)) {
 const raw = readFileSync(manifestPath, "utf8");
 
 // Minimal checks without yaml dep (keep offline, no install)
+const decisionLedgerPath = resolve("projects/prism/DECISIONS.md");
+const decisionLedger = existsSync(decisionLedgerPath) ? readFileSync(decisionLedgerPath, "utf8") : "";
+const topStatus = raw.match(/^status:\s*([A-Z_]+)/m)?.[1] ?? "MISSING";
+const ownerStart = raw.indexOf("owner_decision:");
+const ownerRaw = ownerStart >= 0 ? raw.slice(ownerStart) : "";
+const ownerStatus = ownerRaw.match(/^\s+status:\s*([A-Z_]+)/m)?.[1] ?? "MISSING";
+const hasDecisionRecord =
+  /## DEC-PRISM-SYS-003[\s\S]*?\*\*Status:\*\* Accepted/.test(decisionLedger) &&
+  /## DEC-PRISM-OPS-001[\s\S]*?\*\*Status:\*\* Accepted/.test(decisionLedger);
+const accepted =
+  topStatus === "ACCEPTED" &&
+  ownerStatus === "ACCEPTED" &&
+  raw.includes("decision_id: DEC-PRISM-OPS-001") &&
+  raw.includes("selected_environment: testnet") &&
+  raw.includes("disposition_chainId_v2: ACCEPT") &&
+  hasDecisionRecord;
+const proposed = topStatus === "PROPOSED" && ownerStatus === "UNDECIDED";
+
 const checks = [
-  { needle: "status: PROPOSED", passMsg: "manifest status is PROPOSED (not silently ACCEPTED)", failMsg: "manifest status is not PROPOSED — would silently accept without owner decision" },
-  { needle: "owner_decision:", passMsg: "owner_decision block exists", failMsg: "owner_decision block missing" },
-  { needle: "status: UNDECIDED", passMsg: "owner_decision.status is UNDECIDED (correctly blocking)", failMsg: "owner_decision.status is not UNDECIDED — deployment not correctly gated" },
+  accepted
+    ? { ok: true, passMsg: "manifest status ACCEPTED with mirrored owner decision" }
+    : proposed
+      ? { ok: true, passMsg: "manifest status is PROPOSED (correctly blocking before owner decision)" }
+      : { ok: false, failMsg: `manifest/owner decision state invalid: ${topStatus}/${ownerStatus}` },
+  accepted
+    ? { ok: true, passMsg: "DEC-PRISM-SYS-003 and DEC-PRISM-OPS-001 append-only records verified" }
+    : proposed
+      ? { ok: true, passMsg: "owner_decision UNDECIDED (correctly blocking)" }
+      : { ok: false, failMsg: "accepted manifest requires both append-only decision records" },
   { needle: "SN_SEPOLIA", passMsg: "testnet starknet SN_SEPOLIA present", failMsg: "testnet starknet SN_SEPOLIA missing" },
   { needle: "chain_id: 84532", passMsg: "testnet Base chain_id 84532 present", failMsg: "testnet Base chain_id 84532 missing" },
   { needle: "SN_MAIN", passMsg: "mainnet SN_MAIN present (release-gated)", failMsg: "mainnet SN_MAIN missing" },
@@ -37,7 +62,7 @@ const checks = [
 
 let ok = true;
 for (const c of checks) {
-  if (raw.includes(c.needle)) pass(c.passMsg);
+  if (c.ok === true || (c.needle && raw.includes(c.needle))) pass(c.passMsg);
   else { fail(c.failMsg); ok = false; }
 }
 
@@ -66,8 +91,11 @@ if (existsSync(resolve("ops/target-network/PROPOSAL.md"))) pass("PROPOSAL.md exi
 else { fail("PROPOSAL.md missing"); ok = false; }
 
 if (!ok) {
-  console.error("\n✕ target-network manifest validation FAILED — correctly blocking promotion until owner decision.");
-  console.error("  This is the expected state before DEC-PRISM-OPS-001 is ACCEPTED.");
+  console.error("\n✕ target-network manifest validation FAILED — decision state or environment declaration is invalid.");
   process.exit(1);
 }
-console.log("\n✓ target-network manifest validation passed (still PROPOSED/UNDECIDED — deployment correctly blocked).");
+if (accepted) {
+  console.log("\n✓ target-network manifest validation passed — testnet owner decision accepted; mainnet remains release-gated.");
+} else {
+  console.log("\n✓ target-network manifest validation passed — still PROPOSED/UNDECIDED and correctly blocking promotion.");
+}

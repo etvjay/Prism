@@ -236,3 +236,21 @@ Gates:             G1/G2/G3 remain NOT_IMPLEMENTED until live observation per le
 ```
 
 *Governing principle: Research → Experiment → Build → Evidence. No ledger row moves without observed results.*
+
+---
+
+## 10. Post-acceptance owner decision update — 2026-08-23
+
+The owner decisions previously listed as open are now recorded append-only in
+`projects/prism/DECISIONS.md` at commit `e612c4a`:
+
+- `DEC-PRISM-SYS-003`: **Accepted**, Option 1; chainId-v2 is a mandatory
+  pre-deployment security gate and schema-v2 companion work is accepted.
+- `DEC-PRISM-OPS-001`: **Accepted for testnet**, selecting `SN_SEPOLIA` +
+  Base Sepolia (`84532`); `SN_MAIN` + Base Mainnet (`8453`) remains
+  `RELEASE_GATED_PROPOSED`.
+
+`ops/target-network/manifest.yaml` mirrors the accepted decision and retains
+its dry-run, funded-account, live-receipt, independent-read, and evidence
+promotion gates. This update changes governance state only; it does not create
+X3 evidence or authorize a broadcast by itself.

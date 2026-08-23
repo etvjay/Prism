@@ -8,10 +8,11 @@ Any command that would require a secret is marked `OFFLINE — requires env` and
 ## 1. Static checks (no secrets, no RPC)
 
 ```bash
-# Manifest is still PROPOSED (correctly blocking deployment)
+# Target-network decision state (accepted for testnet; mainnet remains release-gated)
 node ops/target-network/validate.mjs
-# Expected before owner decision:
-#   ✕ owner_decision UNDECIDED — correctly blocking promotion
+# Expected now:
+#   ✓ accepted testnet owner decision mirror
+# The validator still does not authorize broadcast by itself.
 
 # Starknet templates contain no secrets and reference env vars
 node ops/starknet/validate.mjs
@@ -89,7 +90,7 @@ Every live `sncast` broadcast must first be validated with `--dry-run` (or `--si
 ```bash
 # Dry-run syntax validation (offline — no env, no RPC)
 node ops/starknet/dry-run-check.mjs
-# Checks: templates are env-var driven, manifest still PROPOSED/UNDECIDED,
+# Checks: templates are env-var driven, accepted decision mirror is valid,
 # no active sncast.toml, no un-gated bare `sncast deploy` without --dry-run/OFFLINE marker.
 
 # Toolchain dry-run (no RPC, no deployment) — validates class hash without broadcasting:

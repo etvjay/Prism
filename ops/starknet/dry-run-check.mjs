@@ -64,12 +64,28 @@ if (existsSync(example)) {
   else pass("sncast.toml.example documents secret-free gate (dry-run in VALIDATION.md)");
 } else { fail("sncast.toml.example missing"); ok=false; }
 
-// 4. Check target-network manifest still PROPOSED/UNDECIDED (no silent dry-run bypass)
+// 4. Check target-network manifest state and append-only decision mirror.
 const manifest = resolve("ops/target-network/manifest.yaml");
+const decisions = resolve("projects/prism/DECISIONS.md");
 if (existsSync(manifest)) {
   const raw = readFileSync(manifest, "utf8");
-  if (raw.includes("status: PROPOSED") && raw.includes("status: UNDECIDED")) pass("manifest still PROPOSED/UNDECIDED — dry-run cannot be promoted without owner decision");
-  else { fail("manifest must remain PROPOSED/UNDECIDED until owner decision"); ok=false; }
+  const ledger = existsSync(decisions) ? readFileSync(decisions, "utf8") : "";
+  const topStatus = raw.match(/^status:\s*([A-Z_]+)/m)?.[1] ?? "MISSING";
+  const ownerStart = raw.indexOf("owner_decision:");
+  const ownerRaw = ownerStart >= 0 ? raw.slice(ownerStart) : "";
+  const ownerStatus = ownerRaw.match(/^\s+status:\s*([A-Z_]+)/m)?.[1] ?? "MISSING";
+  const accepted =
+    topStatus === "ACCEPTED" &&
+    ownerStatus === "ACCEPTED" &&
+    raw.includes("decision_id: DEC-PRISM-OPS-001") &&
+    raw.includes("selected_environment: testnet") &&
+    raw.includes("disposition_chainId_v2: ACCEPT") &&
+    /## DEC-PRISM-SYS-003[\s\S]*?\*\*Status:\*\* Accepted/.test(ledger) &&
+    /## DEC-PRISM-OPS-001[\s\S]*?\*\*Status:\*\* Accepted/.test(ledger);
+  const proposed = topStatus === "PROPOSED" && ownerStatus === "UNDECIDED";
+  if (accepted) pass("manifest owner decision ACCEPTED and mirrored in DECISIONS.md — dry-run still required");
+  else if (proposed) pass("manifest still PROPOSED/UNDECIDED — dry-run cannot be promoted without owner decision");
+  else { fail(`manifest decision state invalid: ${topStatus}/${ownerStatus}`); ok=false; }
 }
 
 // 5. Ensure no active sncast.toml with real url= exists (would bypass dry-run check)
@@ -91,4 +107,4 @@ if (!ok) {
   console.error("\n✕ dry-run deployment command check FAILED — deployment not correctly gated");
   process.exit(1);
 }
-console.log("\n✓ dry-run deployment command check passed (all templates secret-free, deploy gated on --dry-run/OFFLINE, manifest still PROPOSED/UNDECIDED).");
+console.log("\n✓ dry-run deployment command check passed (templates secret-free, dry-run gate intact, target-network decision state valid).");
