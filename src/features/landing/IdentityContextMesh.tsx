@@ -16,7 +16,7 @@ type IdentityContextMeshProps = {
 
 const stateDescriptions: Record<IdentityContextMeshState, string> = {
   promise:
-    "Prism ID and Starknet form one bidirectional identity and execution unit.",
+    "Prism ID begins as the persistent identity root; canonical execution context resolves next.",
   "identity-anchor":
     "Prism ID and Starknet form one bidirectional unit, with Starknet emphasized as the canonical identity root and native execution network.",
   "native-context":
