@@ -32,8 +32,8 @@ remain separate gates.
 
 | Check | Required | Current | Blocks |
 |---|---|---|---|
-| `DEC-PRISM-SYS-003` (chainId-v2) recorded append-only in `projects/prism/DECISIONS.md` with `ACCEPT` or `REJECT` + companion `disposition_chainId_v2` | Owner Jason | **OPEN — PROPOSED** (`CHAINID_V2_DECISION_PACKET.md:§1–§6`) | Any `policy.defaultChainId` wiring; Base proof envelope `chainId` binding; cross-network replay window |
-| If `ACCEPT`: `system/STACK_DECISIONS.md:SD-005` envelope adds `chain_id` as first ordered field, `system/INVARIANTS.md:INV-SYS-011` adds `chain_id` to tamper-evidence, `OBJ-PRISM-005` persisted_fields amended, `CHALLENGE_SCHEMA_VERSION=2` | Implements `e8886af` as fast-forward | **NOT_EVIDENCED** until DEC exists | `altered_fields:chain_id` test (`envelope-and-gates.test.ts:chainId`) stays blocker |
+| `DEC-PRISM-SYS-003` (chainId-v2) recorded append-only in `projects/prism/DECISIONS.md` with `ACCEPT` or `REJECT` + companion `disposition_chainId_v2` | Owner Jason | **ACCEPTED** (`e612c4a`) | No longer blocks policy wiring; live evidence still required |
+| If `ACCEPT`: `system/STACK_DECISIONS.md:SD-005` envelope adds `chain_id` as first ordered field, `system/INVARIANTS.md:INV-SYS-011` adds `chain_id` to tamper-evidence, `OBJ-PRISM-005` persisted_fields amended, `CHALLENGE_SCHEMA_VERSION=2` | Implements `e8886af` as fast-forward | **ACCEPTED / X2 local** | Live cross-network fixture remains required for X3 |
 | If `REJECT`: rejection rationale + residual-risk owner + revisit trigger recorded | same DEC | — | Window stays open, explicitly documented |
 | Harness asserts `chainId target mismatch → ERR-012 altered_fields:chain_id` | `src/features/evidence/__tests__/envelope-and-gates.test.ts` | **PASS (offline)** | — |
 | Envelope `inputs.chainId` vs `target_manifest.chain_id` mismatch is a promotion blocker | `src/features/evidence/evidence-envelope.ts:validate` | **ENFORCED** | Wrong-network proof cannot be promoted |
@@ -49,7 +49,7 @@ remain separate gates.
 | Default environment accepted: `SN_SEPOLIA + Base Sepolia (84532)` | `ops/target-network/manifest.yaml:environments.testnet` `ACCEPTED` | **ACCEPTED** | Live deployment/evidence still gated |
 | Release-gated proposal recorded: `SN_MAIN + Base Mainnet (8453, pool 0x0403…812a)` | `ops/target-network/manifest.yaml:environments.mainnet` `RELEASE_GATED_PROPOSED` | **RELEASE-GATED** | `SN_MAIN` evidence, G0, final hashes (`ok=pool=mine`) |
 | `owner_decision.status == ACCEPTED` with `decision_id=DEC-PRISM-OPS-001`, `decided_by=Jason`, `selected_environment`, `disposition_chainId_v2`, `signature` mirroring `DECISIONS.md` append-only | Owner Jason | **ACCEPTED** | Does not itself deploy |
-| `node ops/target-network/validate.mjs` validates the accepted mirror | Offline static validator | **PENDING RERUN** | Invalid mirror must block |
+| `node ops/target-network/validate.mjs` validates the accepted mirror | Offline static validator | **PASS — accepted mirror verified** | Invalid mirror must block |
 | `strk20.json` never written from testnet logic | `ops/evidence/validate.mjs` + envelope builder | **ENFORCED (empty `{transactions:[], contracts:[]}`)`** | Hub `mine` check per `INV-PRISM-016` belongs to Phase 5 helper |
 
 **Gate result:** `PASS — OWNER DECISION CLOSED`; funded accounts, deployment, live receipts, and independent reads remain open.
@@ -62,12 +62,12 @@ remain separate gates.
 |---|---|---|---|
 | Secret-free templates pass `node ops/starknet/validate.mjs` | No `0x` 64-hex secret, no hard-coded `alchemy.com/v2/<key>`, every profile references `*_RPC_URL` env var, no active `sncast.toml` committed | **PASS** | Deployment |
 | Env contract outside repo: `STARKNET_SEPOLIA_RPC_URL` / `STARKNET_RPC_URL`, `BASE_RPC_URL`, `BASE_CHAIN_ID=84532` (testnet) declared in `ops/target-network/manifest.yaml` + `ops/starknet/provider.example.toml` | Shell / `.env` excluded by `.gitignore` | **NOT_PROVIDED (expected offline)** | Live `sncast declare/deploy`, `get_identity` second read |
-| Funded SN_SEPOLIA deployer account + faucet plan (address/keystore referenced by env var, never committed) | `ops/starknet/accounts.json.example` + `sncast.toml.example` | **OPEN — template only** | `sncast declare --class-hash` / `deploy` |
-| Funded Base Sepolia EOA for ladder fixtures (EOA → 1271 → 6492) | E2E procedure `DECISIVE_SEQUENCE_PROCEDURE.md §2` | **OPEN** | Real Base proof against live RPC |
+| Funded SN_SEPOLIA deployer account + faucet plan (address/keystore referenced by env var, never committed) | `ops/starknet/accounts.json.example` + `sncast.toml.example` | **FUNDED — 3005 STRK read back; account not deployed** | Account deployment / registry declare/deploy |
+| Funded Base Sepolia EOA for ladder fixtures (EOA → 1271 → 6492) | E2E procedure `DECISIVE_SEQUENCE_PROCEDURE.md §2` | **OPEN — EOA created but not funded** | Real Base proof against live RPC |
 | Dry-run deployment command check passes without RPC: `sncast declare --dry-run` syntax validated via `node ops/starknet/dry-run-check.mjs` (offline) | New in Bundle 3T Deploy | **PASS when --dry-run present** | Prevents accidental live broadcast |
 | `.env.example` stays placeholder (`YOUR_ALCHEMY_KEY`), `.gitignore` excludes `.env`, `snfoundry.toml` has only commented placeholder profiles | Verified by validator | **PASS** | Secret leak |
 
-**Gate result:** `FAIL` — templates pass, but funded accounts are not shown (expected pre-deployment).
+**Gate result:** `PARTIAL` — Starknet deployer funded; Base EOA funding and RPC/account deployment remain open.
 
 ---
 
