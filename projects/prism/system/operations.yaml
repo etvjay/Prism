@@ -49,7 +49,7 @@ operations:
     events: [EVT-EXECUTION-IDENTITY-BOUND]
     errors: [ERR-001, ERR-002, ERR-004, ERR-005, ERR-007, ERR-008, ERR-010]
     replay_protection: onchain_digest_single_use_plus_server_nonce_store
-    uniqueness: key_unique_while_ACTIVE_rebind_after_revoke_with_fresh_digest_allowed
+    uniqueness: one_ACTIVE_binding_per_prism_id_venue; rebind_after_revoke_with_fresh_digest_allowed
     cross_id_exclusivity: NOT_ENFORCED     # DECISION_REQUIRED DEC-PRISM-SYS-002
     privacy_behavior: fields_limited_to_INV-SYS-008_list
     upgrade_impact: immutable

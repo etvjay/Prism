@@ -52,7 +52,7 @@ function buildHarness(start = 1_789_000_000): Harness {
     crypto: viemChallengeCrypto,
     checker,
     store: ownershipStore,
-    policy: { defaultTtlSeconds: 600, defaultDomain: DOMAIN },
+    policy: { defaultTtlSeconds: 600, defaultDomain: DOMAIN, defaultChainId: 84532 },
   });
   const operationStore = new InMemoryOperationStore();
   const registry = new InMemoryRegistry();
@@ -180,7 +180,7 @@ describe("App boundary — application command/query contract", () => {
     const res = await h.app.submitProof({
       headers: { requestId: "r2" },
       session,
-      payload: { challengeId: issued.data.challengeId, presented: altered as unknown as { domain: string; venue: string; executionAccount: string; prismId: string; schemaVersion: number; nonce: Hex; expiresAt: number }, signature: sig as Hex },
+      payload: { challengeId: issued.data.challengeId, presented: altered as unknown as { domain: string; venue: string; executionAccount: string; prismId: string; chainId: number; schemaVersion: number; nonce: Hex; expiresAt: number }, signature: sig as Hex },
     });
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("should have failed");

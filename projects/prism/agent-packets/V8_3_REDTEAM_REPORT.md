@@ -38,28 +38,16 @@ was touched.
 
 Severity scale: CRITICAL (blocks deployment) / HIGH / MEDIUM / LOW / NOTE.
 
-### RT-01 — MEDIUM — Multi-ACTIVE shadow binding via last-bind-wins pointer
-**Attack:** controller binds account A on (P, BASE) [ACTIVE], then binds
-account B on the same pair (no cross-account exclusivity in this slice; only
-the identical triple is blocked by ERR-008). The pointer now names B. Revoking
-B yields NoActiveDestination even though A's binding is still ACTIVE in
-storage — A is a live canonical fact that resolve() cannot reach, and event
-reconstruction alone would show two ACTIVE bindings where resolution shows one
-or none.
-**Verified by:** `rt_multi_active_last_bind_wins_and_shadow_active_unresolvable`
-(observed behavior pinned, not endorsed).
-**Spec status:** the old CONTRACT_SPEC OP-8-02 text ("deterministic
-first-by-binding-order … list variant") described behavior that does not exist
-in code — corrected this session to record actual last-bind-wins semantics.
-**Disposition:** genuinely requires the owner decision DEC-PRISM-SYS-002
-(cross-ID/account exclusivity). Options: (a) accept allow-and-observe with an
-indexer-side multiplicity alarm; (b) EXTEND-class contract change blocking new
-binds while any ACTIVE binding exists for the (prism_id, venue) pair. Not
-chosen here. Not deployment-blocking IF (a) is consciously chosen and recorded.
+### RT-01 — RESOLVED — Multi-ACTIVE shadow binding prevented
+**Former attack:** controller bound account A on (P, BASE), then bound account B on the same pair. The last-bind-wins pointer left A ACTIVE but unresolvable.
+
+**Fix:** the registry now rejects any second ACTIVE destination for the same `(prism_id, venue)` with ERR-008 before digest consumption. A new destination requires revoking the current binding first. The regression is `rt_second_active_same_prism_venue_reverts`.
+
+**Residual boundary:** DEC-PRISM-SYS-002 cross-ID account exclusivity remains unresolved; this fix is only per Prism ID + venue.
 
 ### RT-02 — VERIFIED-SOUND — Guard ordering & atomicity
-Order is existence → controller → venue → zero-account → duplicate-active →
-digest-consumed, all before any write; bind/revoke are single-tx atomic by
+Order is existence → controller → venue → zero-account → digest-consumed →
+one-active-destination → duplicate-active, all before any write; bind/revoke are single-tx atomic by
 sequencer ordering. Property tests prove failed binds consume nothing:
 `rt_duplicate_active_still_reverts_before_digest_write`,
 `rt_digest_single_use_survives_failed_interleavings`. No partial-state path
@@ -93,9 +81,10 @@ Base network can be presented at a bind targeting another; onchain defenses
 (controller sig + fresh digest) cannot see it. Full assessment, options,
 compatibility facts, and the decision-record template:
 `projects/prism/agent-packets/CHAINID_V2_DECISION_PACKET.md`.
-**Red-team position: ACCEPT e8886af + spec companion as a hard pre-deployment
-security gate (G2/G3 prerequisite). NOT canonicalized — no owner decision
-record exists; SD-008 remains open everywhere by design.**
+**Red-team position:** the chainId-v2 implementation is now landed in
+`8dd4d9a` and the expanded local suite passes. The companion decision record,
+target-network declaration, and live cross-network fixture remain required
+before deployment; SD-008 stays an owner/deployment gate.**
 
 ### RT-07 — NOTE — Trusted-verifier trust concentration
 Under accepted Option A, onchain trust reduces to (fresh digest + controller
@@ -135,7 +124,7 @@ point (multiplicity observable at index time).
 | ERR-011 | benign idempotent success, no duplicate event | MATCH |
 | EVT-* payloads | exactly {catalogue fields}, keyed per schema v1 | MATCH |
 | SM-PRISM-002 | ACTIVE↔REVOKED single-path, terminal REVOKED | MATCH |
-| OP-8-02 uniqueness clause | spec said first-by-order + list variant; code is last-bind-wins, no list variant | FIXED this session |
+| OP-8-02 uniqueness clause | at most one ACTIVE binding per (prism_id, venue); second active destination rejected with ERR-008 | MATCH |
 
 Drift sweep result after fixes: the only remaining PROPOSED /
 DECISION_REQUIRED markers are DEC-PRISM-SYS-002 (correctly unresolved),

@@ -97,6 +97,7 @@ export class PrismApplicationService {
           executionAccount: view.executionAccount,
           prismId: view.prismId,
           nonce: view.nonce,
+          chainId: view.chainId,
           schemaVersion: view.schemaVersion,
         },
         undefined,

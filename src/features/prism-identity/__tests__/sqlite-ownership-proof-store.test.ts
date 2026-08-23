@@ -31,7 +31,8 @@ function makeTempStore(): { store: SqliteOwnershipProofStore; filePath: string }
 
 function makeRecord(overrides: Partial<StoredOwnershipChallenge> = {}): StoredOwnershipChallenge {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    chainId: 84532,
     domain: "prism.example",
     venue: "BASE",
     executionAccount: "0xabc0000000000000000000000000000000000001" as Hex,
@@ -148,7 +149,7 @@ describe("SqliteOwnershipProofStore (T7, INV-SYS-010)", () => {
     const reopened = new SqliteOwnershipProofStore({ filePath });
     const stored = await reopened.getById(record.challengeId);
     expect(stored).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       domain: record.domain,
       venue: record.venue,
       executionAccount: record.executionAccount,

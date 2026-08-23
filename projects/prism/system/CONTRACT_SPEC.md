@@ -112,7 +112,7 @@ outputs: ACTIVE account | NO_ACTIVE_DESTINATION sentinel
 events: []
 revert_codes: []          # never reverts for missing/revoked — returns sentinel (INV-PRISM-004 semantics)
 replay_protection: n/a
-uniqueness: if multiple ACTIVE bindings exist per (prism_id,venue) — possible only via DEC-PRISM-SYS-002 default — resolution follows the LAST bind (the active_destinations pointer names the most recently bound account); an older still-ACTIVE binding becomes unresolvable until the newer instance is revoked (characterized by test rt_multi_active_last_bind_wins_and_shadow_active_unresolvable; disposition pending DEC-PRISM-SYS-002 owner decision)
+uniqueness: at most one ACTIVE binding per (prism_id,venue); a new binding requires revocation of the current destination first (RT-01 shadow-active divergence closed by the contract invariant); cross-ID account exclusivity remains unresolved under DEC-PRISM-SYS-002
 privacy_behavior: exposes only what is already public
 pause_behavior: n/a
 upgrade_impact: n/a

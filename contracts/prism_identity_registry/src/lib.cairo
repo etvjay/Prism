@@ -15,7 +15,8 @@
 //
 // Scope guard: NO proxy/upgradeability, NO social metadata, NO balances, NO
 // bridge/value movement, NO controller rotation, NO cross-ID exclusivity
-// (DEC-PRISM-SYS-002 unresolved), NO reactivation of revoked bindings.
+// (DEC-PRISM-SYS-002 unresolved), NO multiple ACTIVE destinations per
+// (prism_id, venue), NO reactivation of revoked bindings.
 //
 // Deployment posture: immutable, no proxy (SD-002).
 
@@ -254,10 +255,10 @@ pub mod PrismIdentityRegistry {
         }
 
         /// OP-8-01. Order of checks: existence → authorization → venue →
-        /// account validity → duplicate-active → digest single-use. Each
-        /// failure reverts with its distinct catalogue code before ANY
-        /// storage write (atomicity: bind = digest-consume + binding-create
-        /// in one tx, sequencer atomicity).
+        /// account validity → digest single-use → one-active-destination →
+        /// duplicate-active. Each failure reverts before ANY storage write.
+        /// A Prism ID has at most one ACTIVE destination per venue; a new
+        /// binding requires revoking the current one first.
         fn bind_execution_identity(
             ref self: ContractState,
             prism_id: felt252,
@@ -282,12 +283,23 @@ pub mod PrismIdentityRegistry {
             let key = (prism_id, venue, execution_account);
             let existing = self.bindings.read(key);
 
+            // ERR-007 (INV-SYS-004): each proof digest is consumable exactly
+            // once ever, regardless of binding state. Replay takes precedence
+            // over destination-conflict reporting so the replay invariant is
+            // stable across same-key and different-key attempts.
+            assert(!self.consumed_digests.read(proof_digest), ERR_DIGEST_CONSUMED);
+
+            // At most one ACTIVE destination may exist for a Prism ID + venue.
+            // This prevents last-bind-wins shadowing where an older ACTIVE fact
+            // remains in storage but becomes impossible to resolve or replay.
+            let active_pointer = self.active_destinations.read((prism_id, venue));
+            if !active_pointer.is_zero() {
+                let active_binding = self.bindings.read((prism_id, venue, active_pointer));
+                assert(!active_binding.active, ERR_BINDING_ALREADY_ACTIVE);
+            }
+
             // ERR-008: key must not already hold an ACTIVE binding.
             assert(!existing.active, ERR_BINDING_ALREADY_ACTIVE);
-
-            // ERR-007 (INV-SYS-004): each proof digest is consumable exactly
-            // once ever, regardless of binding state.
-            assert(!self.consumed_digests.read(proof_digest), ERR_DIGEST_CONSUMED);
 
             // --- Canonical Starknet state transition (INV-SYS-003):
             // --- the binding becomes real HERE, nowhere earlier.

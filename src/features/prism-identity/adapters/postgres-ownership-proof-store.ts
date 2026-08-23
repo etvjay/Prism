@@ -50,7 +50,7 @@ import type { Hex } from "../domain/hex";
 import type { PoolConfig } from "pg";
 
 /** Current schema version of the durable challenge table. */
-export const OWNERSHIP_STORE_SCHEMA_VERSION = 1;
+export const OWNERSHIP_STORE_SCHEMA_VERSION = 2;
 
 /** Versioned migration applied at construction (idempotent). */
 export const OWNERSHIP_STORE_MIGRATION_SQL = `
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS prism_store_meta (
 );
 CREATE TABLE IF NOT EXISTS ownership_challenges (
   schema_version INTEGER NOT NULL,
+  chain_id INTEGER NOT NULL CHECK (chain_id > 0),
   challenge_id TEXT PRIMARY KEY,
   nonce TEXT NOT NULL,
   domain TEXT NOT NULL,
@@ -96,6 +97,7 @@ export class PostgresOwnershipProofStoreError extends Error {
 
 const COLUMNS = [
   "schema_version",
+  "chain_id",
   "challenge_id",
   "nonce",
   "domain",
@@ -114,6 +116,7 @@ const COLUMNS = [
 
 interface Row {
   schema_version: number;
+  chain_id: number;
   challenge_id: string;
   nonce: string;
   domain: string;
@@ -150,6 +153,7 @@ function rowToRecord(row: Row): StoredOwnershipChallenge {
   }
   return {
     schemaVersion: row.schema_version,
+    chainId: row.chain_id,
     challengeId: row.challenge_id as Hex,
     nonce: row.nonce as Hex,
     domain: row.domain,
@@ -212,6 +216,38 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
       await client.query("BEGIN");
       try {
         await client.query(OWNERSHIP_STORE_MIGRATION_SQL);
+        const chainColumn = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'ownership_challenges'
+               AND column_name = 'chain_id'
+           ) AS exists`,
+        );
+        if (!chainColumn.rows[0]?.exists) {
+          await client.query("ALTER TABLE ownership_challenges ADD COLUMN chain_id INTEGER");
+        }
+        const legacy = await client.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM ownership_challenges WHERE chain_id IS NULL",
+        );
+        if (legacy.rows[0]?.count !== "0") {
+          throw new PostgresOwnershipProofStoreError(
+            "store_migrate_failed",
+            "legacy schema-v1 challenges require explicit invalidation before schema-v2 migration",
+          );
+        }
+        await client.query("ALTER TABLE ownership_challenges ALTER COLUMN chain_id SET NOT NULL");
+        const chainConstraint = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'ownership_challenges'::regclass
+               AND conname = 'ownership_challenges_chain_id_positive'
+           ) AS exists`,
+        );
+        if (!chainConstraint.rows[0]?.exists) {
+          await client.query("ALTER TABLE ownership_challenges ADD CONSTRAINT ownership_challenges_chain_id_positive CHECK (chain_id > 0) NOT VALID");
+        }
+        await client.query("ALTER TABLE ownership_challenges VALIDATE CONSTRAINT ownership_challenges_chain_id_positive");
         const meta = await client.query<{ value: string }>(
           "SELECT value FROM prism_store_meta WHERE key = 'schema_version' FOR UPDATE",
         );
@@ -225,6 +261,10 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
             "store_migrate_failed",
             `database schema_version ${meta.rows[0].value} is newer than supported ${OWNERSHIP_STORE_SCHEMA_VERSION}`,
           );
+        } else if (Number.parseInt(meta.rows[0].value, 10) < OWNERSHIP_STORE_SCHEMA_VERSION) {
+          await client.query("UPDATE prism_store_meta SET value = $1 WHERE key = 'schema_version'", [
+            String(OWNERSHIP_STORE_SCHEMA_VERSION),
+          ]);
         }
         await client.query("COMMIT");
       } catch (inner) {
@@ -242,7 +282,7 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
   /** Factory that connects + migrates before returning (fail-fast startup). */
   static async create(options: PostgresOwnershipProofStoreOptions): Promise<PostgresOwnershipProofStore> {
     const store = new PostgresOwnershipProofStore(options);
-    await store.migrate();
+    if (!options.skipMigration) await store.migrate();
     return store;
   }
 
@@ -258,9 +298,10 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
     try {
       await this.pool.query(
         `INSERT INTO ownership_challenges (${COLUMNS.join(", ")})
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [
           record.schemaVersion,
+          record.chainId,
           record.challengeId,
           record.nonce,
           record.domain,
@@ -395,6 +436,9 @@ function validateRecord(record: StoredOwnershipChallenge): void {
   }
   if (record.nonceState !== "UNUSED" && record.nonceState !== "CONSUMED") {
     throw new PostgresOwnershipProofStoreError("invalid_record", `invalid nonceState ${String(record.nonceState)}`);
+  }
+  if (!Number.isSafeInteger(record.chainId) || record.chainId <= 0) {
+    throw new PostgresOwnershipProofStoreError("invalid_record", "invalid chainId");
   }
   if (!Number.isFinite(record.schemaVersion) || !Number.isFinite(record.issuedAt) || !Number.isFinite(record.expiresAt)) {
     throw new PostgresOwnershipProofStoreError("invalid_record", "non-finite numeric field");

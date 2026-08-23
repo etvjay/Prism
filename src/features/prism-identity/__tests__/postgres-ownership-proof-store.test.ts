@@ -28,7 +28,8 @@ type CapturedQuery = { text: string; values?: unknown[] };
 
 function makeRecord(overrides: Partial<StoredOwnershipChallenge> = {}): StoredOwnershipChallenge {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    chainId: 84532,
     domain: "prism.example",
     venue: "BASE",
     executionAccount: "0xabc0000000000000000000000000000000000001" as Hex,
@@ -102,7 +103,7 @@ async function loadStoreModule() {
 }
 
 describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
-  it("putIssued issues fully parameterized INSERT with all 15 typed fields", async () => {
+  it("putIssued issues fully parameterized INSERT with all 16 typed fields", async () => {
     const fake = installFakePool();
     const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
     const store = new Store({ connectionString: "postgres://u:p@db:5432/prism" });
@@ -112,7 +113,8 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
     expect(q.text).toContain("INSERT INTO ownership_challenges");
     expect(q.text).not.toContain("0xdef1"); // no literal values in SQL text
     expect(q.values).toEqual([
-      1,
+      2,
+      84532,
       "0xdef1000000000000000000000000000000000000000000000000000000000001",
       "0xfeed000000000000000000000000000000000000000000000000000000000001",
       "prism.example",
@@ -182,7 +184,7 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
         rowCount: 1,
         rows: [
           {
-            schema_version: 1,
+            schema_version: 2, chain_id: 84532,
             challenge_id: "0xdef1",
             nonce: "0xfeed",
             domain: "prism.example",
@@ -205,7 +207,8 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
     const store = new Store({});
     const rec = await store.getById("0xdef1" as Hex);
     expect(rec).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      chainId: 84532,
       challengeId: "0xdef1",
       nonce: "0xfeed",
       domain: "prism.example",
@@ -238,7 +241,7 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
         rowCount: 1,
         rows: [
           {
-            schema_version: 1, challenge_id: "c", nonce: "n", domain: "d", venue: "V",
+            schema_version: 2, chain_id: 84532, challenge_id: "c", nonce: "n", domain: "d", venue: "V",
             execution_account: "0xa", prism_id: "p", issued_at: 1, expires_at: 2,
             digest: "g", state: "REJECTED", nonce_state: "CONSUMED",
             verified_signature_class: null, verified_at: null, rejection_json: "{not-json",

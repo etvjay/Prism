@@ -84,6 +84,7 @@ export interface IssueChallengeData {
   readonly executionAccount: string;
   readonly prismId: string;
   readonly nonce: Hex;
+  readonly chainId: number;
   readonly schemaVersion: number;
 }
 
@@ -95,6 +96,7 @@ export interface SubmitProofPayload {
     readonly venue: string;
     readonly executionAccount: string;
     readonly prismId: string;
+    readonly chainId: number;
     readonly schemaVersion: number;
     readonly nonce: Hex;
     readonly expiresAt: number;

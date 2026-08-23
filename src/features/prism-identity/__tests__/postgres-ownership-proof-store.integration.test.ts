@@ -21,10 +21,20 @@ import type { Hex } from "../domain/hex";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
+const TEST_SCHEMA = `prism_identity_${process.pid}`;
+
+function storeOptions(extra: Record<string, unknown> = {}) {
+  return { connectionString: TEST_URL, options: `-c search_path=${TEST_SCHEMA}`, ...extra };
+}
+
+function createStore(extra: Record<string, unknown> = {}) {
+  return PostgresOwnershipProofStore.create(storeOptions(extra));
+}
 
 function makeRecord(suffix: string, overrides: Partial<StoredOwnershipChallenge> = {}): StoredOwnershipChallenge {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    chainId: 84532,
     domain: "prism.example",
     venue: "BASE",
     executionAccount: `0xabc00000000000000000000000000000000000${suffix}` as Hex,
@@ -41,25 +51,21 @@ function makeRecord(suffix: string, overrides: Partial<StoredOwnershipChallenge>
 }
 
 let store: PostgresOwnershipProofStore;
+let adminPool: Pool;
 
 beforeAll(async () => {
-  store = await PostgresOwnershipProofStore.create({
-    connectionString: TEST_URL,
-    max: 10,
-  });
-  // This database is dedicated to the gated integration suite. Reset only its
-  // challenge rows so repeated local runs remain independent without adding a
-  // destructive operation to the production adapter.
-  const cleanup = new Pool({ connectionString: TEST_URL, max: 1 });
-  try {
-    await cleanup.query("TRUNCATE TABLE ownership_challenges");
-  } finally {
-    await cleanup.end();
-  }
+  if (!TEST_URL) return;
+  adminPool = new Pool({ connectionString: TEST_URL, max: 1 });
+  await adminPool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
+  store = await createStore({ max: 10 });
 });
 
 afterAll(async () => {
-  await store.close();
+  if (store) await store.close();
+  if (adminPool) {
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`).catch(() => undefined);
+    await adminPool.end().catch(() => undefined);
+  }
 });
 
 suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
@@ -89,7 +95,7 @@ suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
     // Independent pools simulate separate instances/processes.
     const contenders = await Promise.all(
       Array.from({ length: 8 }, () =>
-        PostgresOwnershipProofStore.create({ connectionString: TEST_URL, max: 2 }),
+        createStore({ max: 2, skipMigration: true }),
       ),
     );
     try {
@@ -106,7 +112,7 @@ suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
     await store.putIssued(record);
     const contenders = await Promise.all(
       Array.from({ length: 6 }, () =>
-        PostgresOwnershipProofStore.create({ connectionString: TEST_URL, max: 2 }),
+        createStore({ max: 2, skipMigration: true }),
       ),
     );
     try {
@@ -137,7 +143,7 @@ suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
     });
     // Full close + fresh pool = process restart.
     await store.close();
-    const reopened = await PostgresOwnershipProofStore.create({ connectionString: TEST_URL });
+    const reopened = await createStore();
     try {
       const back = await reopened.getById(record.challengeId);
       expect(back).toMatchObject({
@@ -153,7 +159,7 @@ suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
     } finally {
       await reopened.close();
       // Restore a pool for afterAll.
-      store = await PostgresOwnershipProofStore.create({ connectionString: TEST_URL });
+      store = await createStore();
     }
   });
 

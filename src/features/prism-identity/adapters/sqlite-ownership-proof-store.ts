@@ -36,7 +36,7 @@ import type {
 import type { Hex } from "../domain/hex";
 
 /** Current schema version of the durable challenge table. */
-export const OWNERSHIP_STORE_SCHEMA_VERSION = 1;
+export const OWNERSHIP_STORE_SCHEMA_VERSION = 2;
 
 export type OwnershipStoreErrorCode =
   | "store_open_failed"
@@ -56,6 +56,7 @@ export class SqliteOwnershipProofStoreError extends Error {
 
 const COLUMNS = [
   "schemaVersion",
+  "chainId",
   "challengeId",
   "nonce",
   "domain",
@@ -74,6 +75,7 @@ const COLUMNS = [
 
 interface Row {
   schemaVersion: number;
+  chainId: number;
   challengeId: string;
   nonce: string;
   domain: string;
@@ -95,6 +97,7 @@ function rowToRecord(row: Row): StoredOwnershipChallenge {
     row.rejectionJson === null ? undefined : (JSON.parse(row.rejectionJson) as { code: string; detail?: string });
   return {
     schemaVersion: row.schemaVersion,
+    chainId: row.chainId,
     challengeId: row.challengeId as Hex,
     nonce: row.nonce as Hex,
     domain: row.domain,
@@ -153,6 +156,7 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
       );
       CREATE TABLE IF NOT EXISTS ownership_challenges (
         schemaVersion INTEGER NOT NULL,
+        chainId INTEGER NOT NULL CHECK (chainId > 0),
         challengeId TEXT PRIMARY KEY,
         nonce TEXT NOT NULL,
         domain TEXT NOT NULL,
@@ -169,6 +173,20 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
         rejectionJson TEXT
       );
     `);
+    const columns = db.prepare("PRAGMA table_info(ownership_challenges)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "chainId")) {
+      db.exec("ALTER TABLE ownership_challenges ADD COLUMN chainId INTEGER");
+    }
+    const legacy = db
+      .prepare("SELECT COUNT(*) AS count FROM ownership_challenges WHERE chainId IS NULL")
+      .get() as { count: number };
+    if (legacy.count !== 0) {
+      throw new SqliteOwnershipProofStoreError(
+        "store_migrate_failed",
+        "legacy schema-v1 challenges require explicit invalidation before schema-v2 migration",
+      );
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ownership_challenges_chain_id ON ownership_challenges(chainId)");
     const meta = db
       .prepare("SELECT value FROM prism_store_meta WHERE key = 'schema_version'")
       .get() as { value: string } | undefined;
@@ -180,6 +198,10 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
       throw new SqliteOwnershipProofStoreError(
         "store_migrate_failed",
         `database schema_version ${meta.value} is newer than supported ${OWNERSHIP_STORE_SCHEMA_VERSION}`,
+      );
+    } else if (Number(meta.value) < OWNERSHIP_STORE_SCHEMA_VERSION) {
+      db.prepare("UPDATE prism_store_meta SET value = ? WHERE key = 'schema_version'").run(
+        String(OWNERSHIP_STORE_SCHEMA_VERSION),
       );
     }
   }
@@ -193,6 +215,7 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
         )
         .run({
           schemaVersion: record.schemaVersion,
+          chainId: record.chainId,
           challengeId: record.challengeId,
           nonce: record.nonce,
           domain: record.domain,

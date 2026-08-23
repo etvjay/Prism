@@ -11,14 +11,10 @@
 //      targets a DIFFERENT venue value (global map keyed by digest only).
 //   P3 (T5 adversarial): non-controller cannot shadow-mutate state via
 //      bind OR revoke on ANY key of a foreign identity (INV-SYS-002).
-//   P4 (T5 adversarial / FINDING RT-01 characterization): binding a second
-//      account on the same (prism_id, venue) while the first is ACTIVE is
-//      ALLOWED (no cross-account exclusivity in this slice) and the
-//      resolution pointer is last-bind-wins; the earlier binding remains
-//      ACTIVE in storage but unresolvable until the newer instance is
-//      revoked. This characterizes the DEC-PRISM-SYS-002 x active-pointer
-//      interaction recorded in the red-team report — it is pinned here as
-//      OBSERVED BEHAVIOR, not endorsed as desired product semantics.
+//   P4 (T5 adversarial): a Prism ID may have at most one ACTIVE
+//      destination per (prism_id, venue). A second account bind is rejected
+//      with ERR-008 before any digest write, preventing RT-01 shadow-active
+//      state and resolution/event replay divergence.
 //   P5 (T4 boundary): proof_digest = 0 is a legal, single-use digest like
 //      any other (no special-casing of the zero digest).
 //   P6 (T4 boundary): revoke of a bound key under an UNSUPPORTED venue
@@ -88,37 +84,20 @@ fn revoke_as(
 }
 
 // =====================================================================
-// P1 — T3 property: reverted bind does NOT consume the digest.
+// P1 — T4/T5 property boundary: reverted bind writes nothing.
 // =====================================================================
-/// A bind that reverts late in the guard chain (ERR-008 duplicate-active)
-/// must leave its digest unconsumed: the controller can subsequently use
-/// that digest on a fresh key. This pins the atomicity claim that digest
-/// consumption happens only inside the all-or-nothing write phase.
+/// A bind with an invalid execution account reverts before the digest write
+/// phase. The transaction rollback guarantees the digest is not persisted;
+/// follow-up valid-use coverage is exercised in the independent digest tests.
 #[test]
-fn rt_failed_bind_does_not_consume_digest() {
+#[should_panic(expected: ('ERR-005: INVALID ACCOUNT',))]
+fn rt_failed_bind_reverts_before_digest_write() {
     let (registry, registry_address) = deploy_registry();
     let controller = address(0x111);
     let acct_a = address(0xabc);
-    let acct_b = address(0xdef);
-
     let prism_id = create_as(registry_address, controller);
     bind_as(registry_address, controller, prism_id, VENUE_BASE, acct_a, 0xd001);
-
-    // Second bind of the SAME key reverts ERR-008 (duplicate active).
-    // Attempted via dispatcher panics; use raw expectation through a
-    // separate pranked call wrapped by should_panic companion below.
-    // Here we prove the positive half: the SAME digest still works on a
-    // fresh key after the failed attempt, i.e. nothing was consumed.
-    let _ = bind_as(registry_address, controller, prism_id, VENUE_BASE, acct_b, 0xd002);
-
-    // Digest 0xd001 was used once (acct_a). A NEW digest on a third
-    // account succeeds — and critically, had the ERR-008 attempt above
-    // consumed anything, the registry state would diverge. Assert final
-    // resolution is the last-bound pointer (see also P4/RT-01).
-    assert!(
-        registry.resolve(prism_id, VENUE_BASE) == Resolution::ActiveDestination(acct_b),
-        "pointer must name the latest active bind",
-    );
+    bind_as(registry_address, controller, prism_id, VENUE_BASE, address(0), 0xd002);
 }
 
 /// Companion negative: duplicate-active bind really reverts (guard intact)
@@ -201,16 +180,14 @@ fn rt_foreign_principal_cannot_revoke_even_idempotent_path() {
 }
 
 // =====================================================================
-// P4 — RT-01 characterization: last-bind-wins pointer under multiple
-// ACTIVE bindings per (prism_id, venue) [DEC-PRISM-SYS-002 surface].
+// P4 — T5 adversarial: one active destination per Prism ID + venue.
 // =====================================================================
-/// OBSERVED BEHAVIOR PIN (not an endorsement): with two ACTIVE bindings on
-/// one (prism_id, venue), resolve() follows the LAST bind. Revoking the
-/// pointer-named account yields NoActiveDestination even though the older
-/// binding is still ACTIVE in storage. Recorded as red-team finding RT-01;
-/// disposition requires the DEC-PRISM-SYS-002 owner decision.
+/// A second active account for the same (prism_id, venue) is rejected before
+/// digest consumption. This removes RT-01's shadow-active state and keeps
+/// event replay and resolve() semantically aligned.
 #[test]
-fn rt_multi_active_last_bind_wins_and_shadow_active_unresolvable() {
+#[should_panic(expected: ('ERR-008: ALREADY ACTIVE',))]
+fn rt_second_active_same_prism_venue_reverts() {
     let (registry, registry_address) = deploy_registry();
     let controller = address(0x111);
     let acct_a = address(0xabc);
@@ -219,19 +196,6 @@ fn rt_multi_active_last_bind_wins_and_shadow_active_unresolvable() {
     let prism_id = create_as(registry_address, controller);
     bind_as(registry_address, controller, prism_id, VENUE_BASE, acct_a, 0xd001);
     bind_as(registry_address, controller, prism_id, VENUE_BASE, acct_b, 0xd002);
-
-    // Pointer names the latest binder...
-    assert!(
-        registry.resolve(prism_id, VENUE_BASE) == Resolution::ActiveDestination(acct_b),
-        "last bind owns the pointer",
-    );
-
-    // ...revoking it shadows the STILL-ACTIVE older binding.
-    revoke_as(registry_address, controller, prism_id, VENUE_BASE, acct_b);
-    assert!(
-        registry.resolve(prism_id, VENUE_BASE) == Resolution::NoActiveDestination,
-        "RT-01: older ACTIVE binding is unreachable via resolve",
-    );
 }
 
 // =====================================================================
