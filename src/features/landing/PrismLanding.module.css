@@ -287,7 +287,12 @@
 }
 
 .satinLine {
+  --line-stagger: 0ms;
   min-height: 0.98em;
+}
+
+.satinLineDelayed {
+  --line-stagger: 48ms;
 }
 
 .satinWords,
@@ -306,48 +311,43 @@
 }
 
 .satinWord {
+  --word-stagger: 0ms;
   display: inline-block;
   white-space: nowrap;
 }
 
 .satinOutgoing .satinWord {
-  animation: satinWordLift 520ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: satinWordLift 740ms cubic-bezier(0.32, 0, 0.18, 1) both;
+  animation-delay: calc(var(--line-stagger) + var(--word-stagger));
 }
 
 .satinIncoming .satinWord {
-  animation: satinWordResolve 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: satinWordResolve 740ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(36ms + var(--line-stagger) + var(--word-stagger));
 }
 
 .satinOutgoing .satinWord:nth-child(2) {
-  animation-delay: 34ms;
+  --word-stagger: 46ms;
 }
 
 .satinOutgoing .satinWord:nth-child(3) {
-  animation-delay: 62ms;
+  --word-stagger: 64ms;
 }
 
 .satinIncoming .satinWord:nth-child(2) {
-  animation-delay: 30ms;
+  --word-stagger: 46ms;
 }
 
 .satinIncoming .satinWord:nth-child(3) {
-  animation-delay: 58ms;
+  --word-stagger: 64ms;
 }
 
 .satinBlockOutgoing {
-  animation: satinBlockLift 500ms cubic-bezier(0.4, 0, 0.2, 1) 80ms both;
+  animation: satinBlockLift 740ms cubic-bezier(0.32, 0, 0.18, 1) 90ms both;
 }
 
 .satinBlockIncoming {
-  animation: satinBlockResolve 590ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
-}
-
-.eyebrow .satinBlockOutgoing {
-  animation-delay: 20ms;
-}
-
-.eyebrow .satinBlockIncoming {
-  animation-delay: 60ms;
+  animation: satinBlockResolve 740ms cubic-bezier(0.22, 1, 0.36, 1) 126ms both;
 }
 
 .satinSettled {
@@ -570,10 +570,13 @@
 }
 
 .routeSignal {
-  fill: #18181a;
-  stroke: #ffffff;
-  stroke-width: 1.3;
+  fill: none;
+  stroke: #18181a;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
   opacity: 0;
+  animation: routeSignalSettle 820ms cubic-bezier(0.22, 1, 0.36, 1) both;
   vector-effect: non-scaling-stroke;
 }
 
@@ -977,20 +980,48 @@
     transform: translate3d(0, 0, 0);
   }
 
+  52% {
+    opacity: 0.78;
+    filter: blur(0.12px);
+    letter-spacing: -0.052em;
+    transform: translate3d(0.008em, -1px, 0);
+  }
+
+  76% {
+    opacity: 0.32;
+    filter: blur(0.26px);
+    letter-spacing: -0.046em;
+    transform: translate3d(0.014em, -3px, 0);
+  }
+
   100% {
     opacity: 0;
-    filter: blur(0.8px);
-    letter-spacing: 0.006em;
-    transform: translate3d(0.035em, -9px, 0);
+    filter: blur(0.35px);
+    letter-spacing: -0.042em;
+    transform: translate3d(0.018em, -4px, 0);
   }
 }
 
 @keyframes satinWordResolve {
   0% {
-    opacity: 0;
-    filter: blur(0.9px);
-    letter-spacing: 0.004em;
-    transform: translate3d(-0.025em, 9px, 0);
+    opacity: 0.04;
+    filter: blur(0.35px);
+    letter-spacing: -0.042em;
+    transform: translate3d(-0.018em, 4px, 0);
+  }
+
+  42% {
+    opacity: 0.28;
+    filter: blur(0.24px);
+    letter-spacing: -0.047em;
+    transform: translate3d(-0.01em, 2px, 0);
+  }
+
+  68% {
+    opacity: 0.76;
+    filter: blur(0.1px);
+    letter-spacing: -0.054em;
+    transform: translate3d(-0.004em, 1px, 0);
   }
 
   100% {
@@ -1008,18 +1039,42 @@
     transform: translate3d(0, 0, 0);
   }
 
+  52% {
+    opacity: 0.78;
+    filter: blur(0.1px);
+    transform: translate3d(0, -1px, 0);
+  }
+
+  76% {
+    opacity: 0.32;
+    filter: blur(0.2px);
+    transform: translate3d(0, -2px, 0);
+  }
+
   100% {
     opacity: 0;
-    filter: blur(0.65px);
-    transform: translate3d(0, -6px, 0);
+    filter: blur(0.3px);
+    transform: translate3d(0, -3px, 0);
   }
 }
 
 @keyframes satinBlockResolve {
   0% {
-    opacity: 0;
-    filter: blur(0.75px);
-    transform: translate3d(0, 7px, 0);
+    opacity: 0.04;
+    filter: blur(0.3px);
+    transform: translate3d(0, 3px, 0);
+  }
+
+  42% {
+    opacity: 0.28;
+    filter: blur(0.2px);
+    transform: translate3d(0, 2px, 0);
+  }
+
+  68% {
+    opacity: 0.76;
+    filter: blur(0.08px);
+    transform: translate3d(0, 1px, 0);
   }
 
   100% {
@@ -1029,12 +1084,35 @@
   }
 }
 
+@keyframes routeSignalSettle {
+  0% {
+    opacity: 0;
+    stroke-width: 2.2;
+  }
+
+  28% {
+    opacity: 0.56;
+  }
+
+  68% {
+    opacity: 0.24;
+    stroke-width: 1.5;
+  }
+
+  100% {
+    opacity: 0;
+    stroke-width: 1.1;
+  }
+}
+
 @media (max-width: 1360px) {
   .heroContent {
     grid-template-columns: minmax(0, 1fr);
-    gap: 44px;
+    grid-template-rows: auto auto;
+    align-content: start;
+    gap: clamp(52px, 5vw, 72px);
     min-height: calc(100svh - 156px);
-    padding: 42px clamp(44px, 7vw, 76px) 72px;
+    padding: clamp(64px, 12svh, 180px) clamp(44px, 7vw, 76px) 72px;
   }
 
   .heroCopy {
@@ -1110,7 +1188,7 @@
   .heroContent {
     display: flex;
     flex-direction: column;
-    min-height: calc(100svh - 94px);
+    min-height: auto;
     gap: 34px;
     padding: 36px 18px 34px;
     text-align: center;
@@ -1126,7 +1204,7 @@
 
   .heroMessage h1 {
     margin: 0 auto;
-    font-size: clamp(39px, 10.7vw, 50px);
+    font-size: clamp(32px, 8.5vw, 46px);
     line-height: 0.99;
   }
 
@@ -1258,7 +1336,7 @@
   }
 
   .heroMessage h1 {
-    font-size: 38px;
+    font-size: 32px;
   }
 }
 
@@ -1272,7 +1350,7 @@
   }
 
   .heroMessage h1 {
-    font-size: clamp(41px, 12.8vw, 49px);
+    font-size: clamp(32px, 8.5vw, 44px);
   }
 
   .heroSupport {

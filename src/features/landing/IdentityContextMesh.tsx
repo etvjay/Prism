@@ -85,22 +85,7 @@ export default function IdentityContextMesh({
             preserveAspectRatio="none"
             viewBox="0 0 560 390"
           >
-            <circle className={styles.routeSignal} cx="0" cy="0" r="3.2">
-              <animateMotion
-                begin="0s"
-                dur="700ms"
-                fill="freeze"
-                path={signalRoutes[state]}
-              />
-              <animate
-                attributeName="opacity"
-                begin="0s"
-                dur="700ms"
-                fill="freeze"
-                keyTimes="0;0.08;0.78;1"
-                values="0;1;1;0"
-              />
-            </circle>
+            <path className={styles.routeSignal} d={signalRoutes[state]} />
           </svg>
         ) : null}
 

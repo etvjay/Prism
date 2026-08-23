@@ -8,7 +8,6 @@ import styles from "./PrismLanding.module.css";
 type HeroNarrativeState = {
   holdMs: number;
   id: IdentityContextMeshState;
-  label: string;
   support: string;
   title: readonly [string, string];
 };
@@ -17,28 +16,24 @@ const heroNarrative: readonly HeroNarrativeState[] = [
   {
     holdMs: 3000,
     id: "promise",
-    label: "Promise",
     support: "One Prism ID for your identity, assets, relationships, and activity across networks.",
     title: ["Your Home", "Across Chains."],
   },
   {
     holdMs: 3200,
     id: "identity-anchor",
-    label: "Identity anchor",
     support: "Starknet is your canonical identity root and native execution network.",
     title: ["Anchored on", "Starknet."],
   },
   {
     holdMs: 3900,
     id: "native-context",
-    label: "Native contexts",
     support: "Your accounts stay native. Your identity stays coherent.",
     title: ["Native where", "you act."],
   },
   {
     holdMs: 0,
     id: "resolved-identity",
-    label: "Persistent identity",
     support: "One Prism ID. One persistent identity across the accounts you use.",
     title: ["Your Home,", "Wherever You Act."],
   },
@@ -65,15 +60,16 @@ function SatinWords({ className, text }: SatinLayerProps) {
 
 type SatinLineProps = {
   activeText: string;
+  delayed?: boolean;
   previousText: string;
   transitionCycle: number;
 };
 
-function SatinLine({ activeText, previousText, transitionCycle }: SatinLineProps) {
+function SatinLine({ activeText, delayed = false, previousText, transitionCycle }: SatinLineProps) {
   const transitioning = transitionCycle > 0 && activeText !== previousText;
 
   return (
-    <span className={styles.satinLine}>
+    <span className={`${styles.satinLine} ${delayed ? styles.satinLineDelayed : ""}`}>
       {transitioning ? (
         <SatinWords
           className={`${styles.satinWords} ${styles.satinOutgoing}`}
@@ -265,16 +261,7 @@ export default function PrismLanding() {
         <div className={styles.heroContent} id="hero-sequence">
           <div className={styles.heroCopy}>
             <div className={styles.heroMessage}>
-              <p
-                aria-label={`Prism identity · ${activeState.label}`}
-                className={styles.eyebrow}
-              >
-                <SatinBlock
-                  activeText={`Prism identity · ${activeState.label}`}
-                  previousText={`Prism identity · ${previousState.label}`}
-                  transitionCycle={transitionCycle}
-                />
-              </p>
+              <p className={styles.eyebrow}>Prism</p>
               <h1 aria-label={`${activeState.title[0]} ${activeState.title[1]}`} id="hero-title">
                 <SatinLine
                   activeText={activeState.title[0]}
@@ -283,6 +270,7 @@ export default function PrismLanding() {
                 />
                 <SatinLine
                   activeText={activeState.title[1]}
+                  delayed
                   previousText={previousState.title[1]}
                   transitionCycle={transitionCycle}
                 />
