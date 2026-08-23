@@ -11,6 +11,7 @@
 // behavior against a dead endpoint.
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { Pool } from "pg";
 import {
   PostgresOwnershipProofStore,
   PostgresOwnershipProofStoreError,
@@ -46,6 +47,15 @@ beforeAll(async () => {
     connectionString: TEST_URL,
     max: 10,
   });
+  // This database is dedicated to the gated integration suite. Reset only its
+  // challenge rows so repeated local runs remain independent without adding a
+  // destructive operation to the production adapter.
+  const cleanup = new Pool({ connectionString: TEST_URL, max: 1 });
+  try {
+    await cleanup.query("TRUNCATE TABLE ownership_challenges");
+  } finally {
+    await cleanup.end();
+  }
 });
 
 afterAll(async () => {
