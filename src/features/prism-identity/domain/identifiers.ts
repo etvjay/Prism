@@ -19,6 +19,13 @@ export type EvmAddress = `0x${string}`;
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
+/** EIP-155 chain ids are positive integers. The target network is server-side
+ * configuration (never client input), so structural validity here protects the
+ * digest against issuer-side wiring corruption only. */
+export function isValidChainId(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
 export function normalizeEvmAddress(value: string): EvmAddress | null {
   const lowered = value.trim().toLowerCase();
   if (!EVM_ADDRESS_PATTERN.test(lowered)) return null;

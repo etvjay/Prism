@@ -11,6 +11,7 @@ import { PrismChallengeService } from "../application/challenge-service";
 import {
   buildHarness,
   issueForAccount,
+  CHALLENGE_CHAIN_ID,
   CHALLENGE_DOMAIN,
   PRISM_ID,
 } from "./harness";
@@ -137,14 +138,14 @@ describe("malformed and unsupported signatures", () => {
       crypto: viemChallengeCrypto,
       checker: harness.checker,
       store: harness.store,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     const failingReadService = new PrismChallengeService({
       clock: harness.clock,
       crypto: viemChallengeCrypto,
       checker: harness.checker,
       store: BROKEN_STORE,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
 
     const signer = makeEoaSigner();

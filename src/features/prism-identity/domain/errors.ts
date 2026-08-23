@@ -147,6 +147,7 @@ export class PrismError extends Error {
 }
 
 export type AlteredField =
+  | "chain_id"
   | "domain"
   | "venue"
   | "execution_account"

@@ -22,6 +22,7 @@ import {
   assertSupportedVenue,
   assertValidExecutionAccount,
   assertValidPrismId,
+  isValidChainId,
   type EvmAddress,
 } from "./identifiers";
 import type { Hex } from "./hex";
@@ -51,6 +52,7 @@ function diffPresentedFields(
   presented: PresentedChallengeFields,
 ): AlteredField[] {
   const altered: AlteredField[] = [];
+  if (presented.chainId !== stored.chainId) altered.push("chain_id");
   if (presented.domain !== stored.domain) altered.push("domain");
   if (presented.venue !== stored.venue) altered.push("venue");
   if (presented.executionAccount.toLowerCase() !== stored.executionAccount) altered.push("execution_account");
@@ -81,6 +83,9 @@ export function assertPresentedFaithful(
   ) {
     throw alteredMessageError(["expiry"]);
   }
+  if (typeof input.presented.chainId !== "number") {
+    throw alteredMessageError(["chain_id"]);
+  }
 
   const alteredFields = diffPresentedFields(input.stored, input.presented);
   if (alteredFields.length > 0) {
@@ -95,6 +100,11 @@ export function assertPresentedFaithful(
   assertSupportedVenue(input.presented.venue);
   const expected = assertValidExecutionAccount(input.presented.executionAccount);
   assertValidPrismId(input.presented.prismId);
+  if (!isValidChainId(input.presented.chainId)) {
+    // A structurally invalid chain id cannot match any well-formed issued
+    // challenge; it is tamper evidence, not a user-input error.
+    throw new PrismError(PRISM_ERROR_CODE.ALTERED_MESSAGE, "altered_fields:chain_id");
+  }
   return expected;
 }
 
@@ -119,6 +129,7 @@ export async function verifyChallengeSignature(
   });
 
   const message = renderSignableMessage({
+    chainId: input.stored.chainId,
     domain: input.stored.domain,
     venue: input.stored.venue,
     executionAccount: input.stored.executionAccount,

@@ -53,7 +53,9 @@ export interface SmartWalletSignatureChecker {
 // OwnershipProof record + store (OBJ-PRISM-005, INV-SYS-010 enforcement point)
 // ---------------------------------------------------------------------------
 
-export const CHALLENGE_SCHEMA_VERSION = 1;
+/** v2: adds `chainId` to the canonical field set (F-1/S1 — the signature is
+ * cryptographically bound to the target network; v1 challenges are invalid). */
+export const CHALLENGE_SCHEMA_VERSION = 2;
 
 export type ChallengeState = "ISSUED" | "VERIFIED" | "REJECTED" | "EXPIRED";
 
@@ -61,6 +63,9 @@ export type NonceState = "UNUSED" | "CONSUMED";
 
 export interface OwnershipChallengeFields {
   schemaVersion: number;
+  /** EIP-155 chain id of the network the execution account lives on.
+   * Bound into the digest and the signable message (cross-network replay). */
+  chainId: number;
   domain: string;
   venue: Venue;
   executionAccount: EvmAddress;

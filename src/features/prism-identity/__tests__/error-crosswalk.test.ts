@@ -18,6 +18,7 @@ import type { OwnershipProofStore } from "../domain/ports";
 import {
   buildHarness,
   issueForAccount,
+  CHALLENGE_CHAIN_ID,
   CHALLENGE_DOMAIN,
   PRISM_ID,
 } from "./harness";
@@ -28,7 +29,7 @@ const IN_SCOPE_CODES: Array<{ code: string; scenario: string }> = [
   { code: "ERR-003", scenario: "wrong signer over intact message" },
   { code: "ERR-005", scenario: "zero/malformed execution account" },
   { code: "ERR-006", scenario: "nonce consumed (replay/concurrency)" },
-  { code: "ERR-012", scenario: "altered echo / unknown challenge" },
+  { code: "ERR-012", scenario: "altered echo incl. swapped chain_id / unknown challenge" },
   { code: "ERR-013", scenario: "ttl exceeded pre-verify" },
   { code: "ERR-014", scenario: "malformed + unsupported signature classes" },
   { code: "ERR-021", scenario: "clock/store/checker dependency failure" },
@@ -104,6 +105,18 @@ describe("error/test crosswalk (scoped to V8.1–V8.2)", () => {
       ),
     );
 
+    // Schema v2: swapping the echoed chain id is tamper evidence too.
+    await expect(
+      service.submitProof({
+        challengeId: view.challengeId,
+        presented: { ...presented, chainId: 8453 },
+        signature,
+      }),
+    ).rejects.toMatchObject({
+      code: PRISM_ERROR_CODE.ALTERED_MESSAGE,
+      detail: "altered_fields:chain_id",
+    });
+
     // Fresh challenge for the remaining lifecycle codes.
     const view2 = await issueForAccount(service, account);
     const signature2 = await signer.signMessage({ message: view2.messageToSign });
@@ -169,7 +182,7 @@ describe("error/test crosswalk (scoped to V8.1–V8.2)", () => {
       crypto: viemChallengeCrypto,
       checker: harness.checker,
       store: BROKEN_STORE_SINGLETON,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     observed.set(
       PRISM_ERROR_CODE.RPC_UNAVAILABLE,

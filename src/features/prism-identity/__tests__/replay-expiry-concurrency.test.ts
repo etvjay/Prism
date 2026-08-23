@@ -89,6 +89,36 @@ describe("single-use nonce (TEST-8-1-2, INV-SYS-010)", () => {
     const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
     expect(fulfilled).toHaveLength(1);
   });
+
+  it("rejects a signature minted over another chain's message with ERR-003", async () => {
+    // Schema v2 chain binding (audit F-1): the same account signing on a
+    // different network produces different personal_sign bytes. The server
+    // re-renders the message from its stored authoritative copy (Base
+    // Sepolia), so a signature over the Base-mainnet rendering cannot verify.
+    const { service, store } = buildHarness();
+    const signer = makeEoaSigner();
+
+    const view = await issueForAccount(service, signer.address.toLowerCase());
+    const crossChainMessage = view.messageToSign.replace(
+      `Chain ID: ${view.chainId}`,
+      "Chain ID: 8453",
+    );
+    expect(crossChainMessage).not.toBe(view.messageToSign);
+    const signature = await signer.signMessage({ message: crossChainMessage });
+
+    await expect(
+      service.submitProof({
+        challengeId: view.challengeId,
+        presented: presentedFromIssued(view),
+        signature,
+      }),
+    ).rejects.toMatchObject({ code: PRISM_ERROR_CODE.INVALID_SIGNER });
+
+    // The failed attempt consumes the nonce (consume-on-attempt) — the proof
+    // was bound to the wrong chain and is dead, not retryable elsewhere.
+    const stored = await store.getById(view.challengeId);
+    expect(stored?.state).toBe("REJECTED");
+  });
 });
 
 describe("expiry (TEST-8-1-3)", () => {

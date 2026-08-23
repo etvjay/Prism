@@ -1,6 +1,6 @@
 // TEST-8-2-4 — mutation matrix: altering any bound field of the presented
-// challenge fails verification with ERR-012 (altered_message), each with a
-// distinct, recorded detail (INV-SYS-011 / A8-3).
+// challenge (including chain_id at schema v2) fails verification with ERR-012
+// (altered_message), each with a distinct, recorded detail (INV-SYS-011 / A8-3).
 
 import { describe, expect, it } from "vitest";
 import { PRISM_ERROR_CODE } from "../domain/errors";
@@ -22,7 +22,10 @@ describe("mutation matrix (TEST-8-2-4)", () => {
 
     // The venue enum has one member; the mutation substitutes an unsupported
     // value to prove even enum-invalid echoes are caught as tamper evidence.
+    // chain_id is mutated to Base mainnet (8453) against the harness's Base
+    // Sepolia (84532): the cross-network swap is tamper evidence at v2.
     const mutations: Array<{ field: string; patch: Record<string, unknown>; expectedDetail: string }> = [
+      { field: "chain_id", patch: { chainId: 8453 }, expectedDetail: "altered_fields:chain_id" },
       { field: "prism_id", patch: { prismId: "prism:ZZZZ99" }, expectedDetail: "altered_fields:prism_id" },
       { field: "execution_account", patch: { executionAccount: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, expectedDetail: "altered_fields:execution_account" },
       { field: "domain", patch: { domain: "evil.example" }, expectedDetail: "altered_fields:domain" },

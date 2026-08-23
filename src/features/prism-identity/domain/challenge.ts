@@ -1,10 +1,10 @@
 // Canonical typed challenge construction (OBJ-PRISM-005 / CMD-B-01).
 //
 // SD-005 envelope: the challenge is a typed structured message carrying
-// {domain, venue, execution_account, prism_id, nonce, expiry}; its digest is
-// keccak256 over a canonical serialization. The exact wire format inside that
-// envelope is an implementation detail; this module defines it once and tests
-// pin its determinism (TEST-8-1-1, INV-SYS-011).
+// {chain_id, domain, venue, execution_account, prism_id, nonce, expiry}; its
+// digest is keccak256 over a canonical serialization. The exact wire format
+// inside that envelope is an implementation detail; this module defines it
+// once and tests pin its determinism (TEST-8-1-1, INV-SYS-011).
 
 import {
   CHALLENGE_SCHEMA_VERSION,
@@ -21,7 +21,7 @@ export const CHALLENGE_TTL_BOUNDS = {
   minSeconds: 30,
 } as const;
 
-const CANONICAL_HEADER = "PRISM-OWNERSHIP-CHALLENGE v1";
+const CANONICAL_HEADER = "PRISM-OWNERSHIP-CHALLENGE v2";
 
 /**
  * Deterministic canonical encoding of one full challenge (fields + nonce +
@@ -37,6 +37,7 @@ export function serializeCanonicalChallenge(
   },
 ): string {
   const ordered: Array<[string, string | number]> = [
+    ["chain_id", fields.chainId],
     ["domain", fields.domain],
     ["execution_account", fields.executionAccount],
     ["expires_at", fields.expiresAt],
@@ -57,6 +58,7 @@ export function serializeCanonicalChallenge(
  * field is visible; wallets sign exactly these bytes via personal_sign.
  */
 export function renderSignableMessage(challenge: {
+  chainId: number;
   domain: string;
   venue: string;
   executionAccount: string;
@@ -70,6 +72,7 @@ export function renderSignableMessage(challenge: {
     "",
     `Domain: ${challenge.domain}`,
     `Venue: ${challenge.venue}`,
+    `Chain ID: ${challenge.chainId}`,
     `Execution account: ${challenge.executionAccount}`,
     `Prism ID: ${challenge.prismId}`,
     `Nonce: ${challenge.nonce}`,

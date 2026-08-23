@@ -23,6 +23,7 @@ import {
   assertSupportedVenue,
   assertValidExecutionAccount,
   assertValidPrismId,
+  isValidChainId,
 } from "../domain/identifiers";
 import {
   CHALLENGE_SCHEMA_VERSION,
@@ -43,6 +44,8 @@ export interface ChallengeServicePolicy {
   /** Default challenge TTL in seconds; hard-capped at 600 (SM-PRISM-001). */
   defaultTtlSeconds: number;
   defaultDomain: string;
+  /** EIP-155 chain id bound into every issued challenge (schema v2). */
+  defaultChainId: number;
   nonceByteLength?: number;
 }
 
@@ -65,6 +68,7 @@ export interface IssuedChallengeView {
   challengeId: Hex;
   digest: Hex;
   schemaVersion: number;
+  chainId: number;
   domain: string;
   venue: string;
   executionAccount: string;
@@ -118,6 +122,11 @@ export class PrismChallengeService {
       // domain is a wiring defect, surfaced as an invariant violation.
       throw new Error("invariant_violation: policy.defaultDomain must be configured");
     }
+    if (!isValidChainId(deps.policy.defaultChainId)) {
+      // Same wiring-defect class: an invalid chain id must never reach a
+      // signed challenge (it would silently un-bind the network).
+      throw new Error("invariant_violation: policy.defaultChainId must be a positive integer");
+    }
     this.deps = deps;
   }
 
@@ -132,6 +141,7 @@ export class PrismChallengeService {
     const record = buildChallenge(
       {
         schemaVersion: CHALLENGE_SCHEMA_VERSION,
+        chainId: this.deps.policy.defaultChainId,
         domain: this.deps.policy.defaultDomain.trim().toLowerCase(),
         venue,
         executionAccount,
@@ -189,6 +199,7 @@ export class PrismChallengeService {
     // Step 4: verification ladder (EOA → EIP-1271 → ERC-6492).
     try {
       const message = renderSignableMessage({
+        chainId: stored.chainId,
         domain: stored.domain,
         venue: stored.venue,
         executionAccount: stored.executionAccount,
@@ -254,6 +265,7 @@ function toIssuedView(record: StoredOwnershipChallenge): IssuedChallengeView {
     challengeId: record.challengeId,
     digest: record.digest,
     schemaVersion: record.schemaVersion,
+    chainId: record.chainId,
     domain: record.domain,
     venue: record.venue,
     executionAccount: record.executionAccount,
@@ -262,6 +274,7 @@ function toIssuedView(record: StoredOwnershipChallenge): IssuedChallengeView {
     issuedAt: record.issuedAt,
     expiresAt: record.expiresAt,
     messageToSign: renderSignableMessage({
+      chainId: record.chainId,
       domain: record.domain,
       venue: record.venue,
       executionAccount: record.executionAccount,

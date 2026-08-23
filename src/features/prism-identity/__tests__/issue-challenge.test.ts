@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PRISM_ERROR_CODE, PrismError, PRISM_ERROR_DETAIL } from "../domain/errors";
 import { viemChallengeCrypto } from "../adapters/viem-crypto";
 import {
+  CHALLENGE_CHAIN_ID,
   CHALLENGE_DOMAIN,
   PRISM_ID,
   buildHarness,
@@ -30,6 +31,7 @@ describe("IssueChallenge (CMD-B-01)", () => {
 
     for (const view of [first, second]) {
       expect(view.domain).toBe(CHALLENGE_DOMAIN);
+      expect(view.chainId).toBe(CHALLENGE_CHAIN_ID);
       expect(view.venue).toBe("BASE");
       expect(view.executionAccount).toBe(signer.address.toLowerCase());
       expect(view.prismId).toBe(PRISM_ID);
@@ -85,6 +87,24 @@ describe("IssueChallenge (CMD-B-01)", () => {
     });
   });
 
+  it("rejects an invalid configured chain id as a wiring defect", async () => {
+    const harness = buildHarness();
+    const { PrismChallengeService: ServiceCtor } = await import("../application/challenge-service");
+
+    for (const badChainId of [0, -84_532, 1.5, Number.NaN]) {
+      expect(
+        () =>
+          new ServiceCtor({
+            clock: harness.clock,
+            crypto: viemChallengeCrypto,
+            checker: harness.checker,
+            store: harness.store,
+            policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: badChainId },
+          }),
+      ).toThrow("invariant_violation: policy.defaultChainId must be a positive integer");
+    }
+  });
+
   it("fails explicitly when the clock port fails", async () => {
     const harness = buildHarness();
     const brokenClock: Clock = {
@@ -98,7 +118,7 @@ describe("IssueChallenge (CMD-B-01)", () => {
       crypto: viemChallengeCrypto,
       checker: harness.checker,
       store: harness.store,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     const { signer } = makeOwnerWithAccount();
 
@@ -134,7 +154,7 @@ describe("IssueChallenge (CMD-B-01)", () => {
       crypto: viemChallengeCrypto,
       checker: harness.checker,
       store: breakingStore,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     const { signer } = makeOwnerWithAccount();
 
@@ -167,7 +187,7 @@ describe("IssueChallenge (CMD-B-01)", () => {
       crypto: fixedRandomCrypto,
       checker: harness.checker,
       store: harness.store,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
 
     await service.issueChallenge({

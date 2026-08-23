@@ -113,6 +113,7 @@ export function wrapAsUndeployed6492(input: {
 export function presentedFromIssued(view: IssuedChallengeView): PresentedChallengeFields {
   return {
     schemaVersion: view.schemaVersion,
+    chainId: view.chainId,
     domain: view.domain,
     venue: view.venue as PresentedChallengeFields["venue"],
     executionAccount: view.executionAccount as PresentedChallengeFields["executionAccount"],

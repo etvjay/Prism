@@ -14,6 +14,8 @@ import type { IssuedChallengeView } from "../application/challenge-service";
 
 export const CHALLENGE_DOMAIN = "prism.example";
 export const PRISM_ID = "prism:P7F21";
+/** Base Sepolia — the fixture network the suite binds every challenge to. */
+export const CHALLENGE_CHAIN_ID = 84_532;
 
 export interface Harness {
   clock: FixedClock;
@@ -31,7 +33,7 @@ export function buildHarness(startAtEpochSeconds = 1_789_000_000): Harness {
     crypto: viemChallengeCrypto,
     checker,
     store,
-    policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+    policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
   });
   return { clock, store, checker, service };
 }

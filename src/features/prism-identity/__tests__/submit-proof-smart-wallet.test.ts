@@ -19,6 +19,7 @@ import {
   buildHarness,
   issueForAccount,
   makeOwnerWithAccount,
+  CHALLENGE_CHAIN_ID,
   CHALLENGE_DOMAIN,
   PRISM_ID,
 } from "./harness";
@@ -106,7 +107,7 @@ describe("SubmitProof — smart-wallet classes", () => {
       crypto: viemChallengeCrypto,
       checker: new UndeterminedChecker("sequencer timeout"),
       store: harness.store,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     const { signer, smartAccount } = makeOwnerWithAccount();
 
@@ -136,7 +137,7 @@ describe("SubmitProof — smart-wallet classes", () => {
       crypto: viemChallengeCrypto,
       checker: new ThrowingChecker(new Error("connection reset")),
       store: harness.store,
-      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN },
+      policy: { defaultTtlSeconds: 600, defaultDomain: CHALLENGE_DOMAIN, defaultChainId: CHALLENGE_CHAIN_ID },
     });
     const { signer, smartAccount } = makeOwnerWithAccount();
 
