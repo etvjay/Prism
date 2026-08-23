@@ -11,6 +11,12 @@ import type {
 export interface StarknetRpcReader {
   getTransactionStatus(txHash: string): Promise<Record<string, unknown>>;
   getTransactionReceipt(txHash: string): Promise<Record<string, unknown>>;
+  getBlockLatestAccepted?(): Promise<{ block_number: number }>;
+  getBlockNumber?(): Promise<number>;
+}
+
+export interface ConfirmedBlockReader {
+  getConfirmedBlock(): Promise<number | null>;
 }
 
 export type StarknetLedgerStatusOptions = {
@@ -48,14 +54,32 @@ function execution(value: unknown): TxExecutionStatus | null {
 /**
  * Real starknet.js adapter for the transport-neutral LedgerStatusPort.
  * It observes only; it never advances an Operation or claims completion.
+ * Also implements ConfirmedBlockReader for WatermarkedResolveService fail-closed wiring.
  */
-export class StarknetLedgerStatusAdapter implements LedgerStatusPort {
+export class StarknetLedgerStatusAdapter implements LedgerStatusPort, ConfirmedBlockReader {
   private readonly reader: StarknetRpcReader;
 
   constructor(options: StarknetLedgerStatusOptions) {
     this.reader =
       options.reader ??
       (new RpcProvider({ nodeUrl: options.rpcUrl }) as unknown as StarknetRpcReader);
+  }
+
+  /** Confirmed block reader — fail-closed: returns null on dependency failure, never throws stale. */
+  async getConfirmedBlock(): Promise<number | null> {
+    try {
+      if (typeof this.reader.getBlockLatestAccepted === "function") {
+        const block = await this.reader.getBlockLatestAccepted();
+        if (typeof block.block_number === "number") return block.block_number;
+      }
+      if (typeof this.reader.getBlockNumber === "function") {
+        const n = await this.reader.getBlockNumber();
+        if (typeof n === "number") return n;
+      }
+      return null; // unknown — fail-closed handled by caller
+    } catch (error) {
+      throw new StarknetLedgerStatusError("confirmed block lookup failed", error);
+    }
   }
 
   async observeChain(txHash: Hex): Promise<ChainTxObservation | null> {

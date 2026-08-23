@@ -8,6 +8,16 @@ import type { RegistryReadPort } from "../../../application/ports";
 import { isStaleProjection, resolveBinding, type ProjectionState } from "./event-indexer";
 import { isWatermarkStale } from "./recovery";
 
+/**
+ * Confirmed-block port — ledger "confirmed block" reader.
+ * In production wired to StarknetLedgerStatusAdapter.getConfirmedBlock or
+ * RpcProvider.getBlockLatestAccepted. Fail-closed on unknown: if the port
+ * returns null or throws, stale ACTIVE is refused.
+ */
+export interface ConfirmedBlockPort {
+  getConfirmedBlock(): Promise<number | null>;
+}
+
 export type ResolveServingResult = {
   /** Active destination or null = NO_ACTIVE_DESTINATION */
   executionAccount: string | null;
@@ -33,10 +43,12 @@ export type ResolveServiceOptions = {
   staleBoundK?: number;
   /**
    * Confirmed block provider — returns latest Starknet confirmed block number.
-   * In production, wired to StarknetLedgerStatusAdapter or provider.getBlock.
-   * If unavailable, stale checks are skipped (fail-open for liveness, but stale ACTIVE is still refused when watermark known).
+   * In production, wired to StarknetLedgerStatusAdapter/ConfirmedBlockPort or provider.getBlock.
+   * Fail-closed: if unavailable or throws, stale/unknown ACTIVE is refused.
    */
   getConfirmedBlock?: () => Promise<number | null>;
+  /** Ledger-backed confirmed-block port (preferred over raw function). */
+  confirmedBlockPort?: ConfirmedBlockPort;
 };
 
 export class WatermarkedResolveService {
@@ -45,6 +57,7 @@ export class WatermarkedResolveService {
   private readonly getProjection: (() => ProjectionState) | null;
   private readonly staleBoundK: number;
   private readonly getConfirmedBlock: (() => Promise<number | null>) | null;
+  private readonly confirmedBlockPort: ConfirmedBlockPort | null;
 
   constructor(
     registry: RegistryReadPort,
@@ -54,6 +67,26 @@ export class WatermarkedResolveService {
     this.getProjection = options.getProjection ?? null;
     this.staleBoundK = options.staleBoundK ?? 5;
     this.getConfirmedBlock = options.getConfirmedBlock ?? null;
+    this.confirmedBlockPort = options.confirmedBlockPort ?? null;
+  }
+
+  private async resolveConfirmedBlock(explicit: number | null | undefined): Promise<number | null> {
+    if (explicit !== undefined && explicit !== null) return explicit;
+    if (this.confirmedBlockPort) {
+      try {
+        return await this.confirmedBlockPort.getConfirmedBlock();
+      } catch {
+        return null; // fail-closed: treat port failure as unknown confirmed block
+      }
+    }
+    if (this.getConfirmedBlock) {
+      try {
+        return await this.getConfirmedBlock();
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   /**
@@ -75,12 +108,23 @@ export class WatermarkedResolveService {
     try {
       const canonical = await this.registry.resolve(prismId, venue);
       const watermark = canonical.watermark;
-      // Stale check if we can determine confirmed block
-      const confirmedBlock = opts.confirmedBlock ?? (this.getConfirmedBlock ? await this.getConfirmedBlock() : null);
+      // Fail-closed: unknown watermark with ACTIVE is refused when confirmed block is known or when ledger is unknown
+      const confirmedBlock = await this.resolveConfirmedBlock(opts.confirmedBlock);
+      // If ledger/confirmed block is unknown (null) and we have ACTIVE, fail closed unless allowStale
+      if (confirmedBlock === null && canonical.executionAccount !== null && !allowStale) {
+        // Unknown confirmed block — cannot prove freshness, refuse stale ACTIVE
+        // Exception: if watermark is also null and caller explicitly allows unknown, we still refuse by default
+        // This is fail-closed per INV-SYS-007: never serve stale ACTIVE as active
+        return {
+          executionAccount: null,
+          watermark,
+          authoritativeSource: "stale_refused",
+          staleRefused: true,
+        };
+      }
       if (confirmedBlock !== null && watermark !== null) {
         const stale = isWatermarkStale(watermark, confirmedBlock, this.staleBoundK);
         if (stale && canonical.executionAccount !== null && !allowStale) {
-          // Stale ACTIVE refused: canonical ACTIVE is behind confirmed, do not serve as active
           return {
             executionAccount: null,
             watermark,
@@ -89,7 +133,6 @@ export class WatermarkedResolveService {
           };
         }
         if (stale && canonical.executionAccount !== null && allowStale) {
-          // Caller explicitly allows stale — serve but mark
           return {
             executionAccount: canonical.executionAccount,
             watermark,
@@ -98,12 +141,20 @@ export class WatermarkedResolveService {
           };
         }
       } else if (confirmedBlock !== null && watermark === null && canonical.executionAccount !== null && !allowStale) {
-        // No watermark but have ACTIVE — treat as stale-refused for safety when confirmed known
         return {
           executionAccount: null,
           watermark: null,
           authoritativeSource: "stale_refused",
           staleRefused: true,
+        };
+      }
+      if (canonical.executionAccount === null) {
+        // NO_ACTIVE_DESTINATION is always safe to serve, even when stale/unknown — it's fail-closed by definition
+        return {
+          executionAccount: null,
+          watermark,
+          authoritativeSource: "registry_canonical",
+          staleRefused: false,
         };
       }
       return {
@@ -112,25 +163,36 @@ export class WatermarkedResolveService {
         authoritativeSource: "registry_canonical",
         staleRefused: false,
       };
-    } catch {
+    } catch (cause) {
       // Canonical read failure — fallback to indexer projection if available and not stale
       if (this.getProjection) {
         const projection = this.getProjection();
         const watermark = projection.watermark;
-        const confirmedBlock = opts.confirmedBlock ?? (this.getConfirmedBlock ? await this.getConfirmedBlock() : null);
+        const confirmedBlock = await this.resolveConfirmedBlock(opts.confirmedBlock);
+        // Fail-closed on unknown confirmed block when projection contains ACTIVE
+        const execFromProjection = resolveBinding(projection, prismId, venue);
+        if (confirmedBlock === null && execFromProjection !== null && !allowStale) {
+          throw new StaleCacheError(`unknown_confirmed_block:watermark_${watermark}`);
+        }
         if (confirmedBlock !== null && watermark !== null) {
           if (isStaleProjection(watermark, confirmedBlock, this.staleBoundK) && !allowStale) {
             throw new StaleCacheError(`stale_projection:watermark_${watermark}_confirmed_${confirmedBlock}_K_${this.staleBoundK}`);
           }
+        } else if (confirmedBlock !== null && watermark === null && execFromProjection !== null && !allowStale) {
+          throw new StaleCacheError(`stale_projection:unknown_watermark`);
         }
-        const executionAccount = resolveBinding(projection, prismId, venue);
+        if (watermark === null && execFromProjection !== null && !allowStale) {
+          throw new StaleCacheError(`stale_projection:null_watermark_with_active`);
+        }
         return {
-          executionAccount,
+          executionAccount: execFromProjection,
           watermark,
           authoritativeSource: "indexer_projection",
           staleRefused: false,
         };
       }
+      // Preserve StaleCacheError if already thrown
+      if (cause instanceof StaleCacheError) throw cause;
       throw new StaleCacheError("registry_unavailable_and_no_projection");
     }
   }

@@ -4,6 +4,10 @@
 // Transport-neutral port boundary is preserved: this adapter is the only place
 // that imports starknet.js types, and failures are mapped to stable ERR codes
 // without leaking stack traces.
+//
+// Config validation is explicit via `validateStarknetSubmitConfig` /
+// `parseStarknetSubmitEnv` — the adapter never reads process.env on its own;
+// the caller supplies an env record. Tests use injected objects only (X2).
 
 import type { Hex } from "../domain/operation";
 import type { StarknetSubmitPort } from "../../../application/ports";
@@ -60,6 +64,78 @@ function mapRevertToCode(cause: unknown): string | null {
   return match ? match[0] : null;
 }
 
+// ---------------------------------------------------------------------------
+// Explicit env/config validation — no file/secret reads.
+// The adapter never reads `process.env`; the caller passes an env record.
+// Tests inject minimal objects, never secrets.
+// ---------------------------------------------------------------------------
+
+export type StarknetSubmitEnv = Record<string, string | undefined>;
+
+export type ValidatedStarknetSubmitConfig = {
+  rpcUrl: string;
+  registryAddress: string;
+  /** Optional account address for mismatch guard when env supplies it. */
+  accountAddress?: string;
+};
+
+export class StarknetSubmitConfigError extends Error {
+  readonly code = "ERR-023" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "StarknetSubmitConfigError";
+  }
+}
+
+export function validateStarknetSubmitConfig(input: {
+  registryAddress: string;
+  account: StarknetAccountLike;
+  rpcUrl?: string;
+}): ValidatedStarknetSubmitConfig {
+  if (!input.account || typeof input.account.execute !== "function") {
+    throw new StarknetSubmitConfigError("invariant_violation: account with execute() required");
+  }
+  const accountAddr = assertHexAddress(input.account.address);
+  const registryAddr = assertHexAddress(input.registryAddress);
+  if (accountAddr === registryAddr) {
+    throw new StarknetSubmitConfigError(`account_registry_address_mismatch: account ${accountAddr} must not equal registry ${registryAddr}`);
+  }
+  if (input.rpcUrl !== undefined) {
+    if (input.rpcUrl.trim().length === 0) throw new StarknetSubmitConfigError("missing_rpc_url");
+    try {
+      const u = new URL(input.rpcUrl);
+      if (!["http:", "https:"].includes(u.protocol)) throw new StarknetSubmitConfigError(`invalid_rpc_url_protocol:${input.rpcUrl}`);
+    } catch {
+      throw new StarknetSubmitConfigError(`invalid_rpc_url:${input.rpcUrl}`);
+    }
+  }
+  return { rpcUrl: input.rpcUrl ?? "", registryAddress: registryAddr, accountAddress: accountAddr };
+}
+
+export function parseStarknetSubmitEnv(env: StarknetSubmitEnv, overrides?: { account?: StarknetAccountLike }): ValidatedStarknetSubmitConfig {
+  const rpcUrl = (env.STARKNET_RPC_URL ?? env.NEXT_PUBLIC_STARKNET_RPC_URL ?? "").trim();
+  const registryAddress = (env.STARKNET_REGISTRY_ADDRESS ?? env.PRISM_REGISTRY_ADDRESS ?? "").trim();
+  if (!rpcUrl) throw new StarknetSubmitConfigError("missing STARKNET_RPC_URL");
+  if (!registryAddress) throw new StarknetSubmitConfigError("missing STARKNET_REGISTRY_ADDRESS");
+  assertHexAddress(registryAddress);
+  try {
+    const u = new URL(rpcUrl);
+    if (!["http:", "https:"].includes(u.protocol)) throw new StarknetSubmitConfigError(`invalid STARKNET_RPC_URL protocol:${rpcUrl}`);
+  } catch {
+    throw new StarknetSubmitConfigError(`invalid STARKNET_RPC_URL:${rpcUrl}`);
+  }
+  if (overrides?.account) {
+    return validateStarknetSubmitConfig({ registryAddress, account: overrides.account, rpcUrl });
+  }
+  return { rpcUrl, registryAddress: registryAddress.toLowerCase() };
+}
+
+function assertAccountMatchesController(accountAddr: string, controllerAddr: string): void {
+  if (accountAddr.toLowerCase() !== controllerAddr.toLowerCase()) {
+    throw new StarknetSubmitError("ERR-004", `account_controller_mismatch: account ${accountAddr} != controller ${controllerAddr}`);
+  }
+}
+
 /**
  * Concrete submit adapter — injected Account, no secret-file reads.
  * Each method produces a single contract invoke and returns the txHash.
@@ -74,13 +150,14 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
       throw new Error("invariant_violation: StarknetSubmitAdapter requires injected account with execute()");
     }
     if (!options.registryAddress) throw new Error("invariant_violation: registryAddress required");
-    assertHexAddress(options.registryAddress);
+    const validated = validateStarknetSubmitConfig({ registryAddress: options.registryAddress, account: options.account, rpcUrl: undefined });
     this.account = options.account;
-    this.registryAddress = options.registryAddress.toLowerCase();
+    this.registryAddress = validated.registryAddress;
   }
 
   async submitCreateIdentity(input: { operationId: string; controllerAddress: string }): Promise<{ txHash: Hex }> {
-    assertHexAddress(input.controllerAddress);
+    const ctrl = assertHexAddress(input.controllerAddress);
+    assertAccountMatchesController(this.account.address, ctrl);
     try {
       const result = await this.account.execute([
         { contractAddress: this.registryAddress, entrypoint: "create_identity", calldata: [] },
@@ -102,7 +179,8 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
     proofDigest: Hex;
     controllerAddress: string;
   }): Promise<{ txHash: Hex }> {
-    assertHexAddress(input.controllerAddress);
+    const ctrl = assertHexAddress(input.controllerAddress);
+    assertAccountMatchesController(this.account.address, ctrl);
     assertHexAddress(input.executionAccount);
     if (!/^0x[0-9a-fA-F]{64}$/.test(input.proofDigest)) {
       throw new StarknetSubmitError("ERR-023", `malformed_proof_digest:${input.proofDigest}`);
@@ -141,7 +219,8 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
     executionAccount: string;
     controllerAddress: string;
   }): Promise<{ txHash: Hex }> {
-    assertHexAddress(input.controllerAddress);
+    const ctrl = assertHexAddress(input.controllerAddress);
+    assertAccountMatchesController(this.account.address, ctrl);
     assertHexAddress(input.executionAccount);
     if (!input.prismId || input.prismId.trim().length === 0) throw new StarknetSubmitError("ERR-002", "missing_prism_id");
     if (input.venue.toUpperCase() !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);

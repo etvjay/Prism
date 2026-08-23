@@ -32,6 +32,12 @@ export type ReconciliationWorkerConfig = {
   sweepLimit?: number;
   /** Whether startup recovery should run on start(). Default true. */
   runStartupRecovery?: boolean;
+  /** Allow daemon start inside vitest / test env — X2 guard. Default false (tests must use tickAllOnce). */
+  allowDaemonInTests?: boolean;
+  /** Metrics hook called after each sweep (observability). */
+  onMetrics?: (metrics: WorkerMetrics) => void;
+  /** Escalation hook called when op escalates to requires_attention. */
+  onEscalation?: (operationId: string, metrics: WorkerMetrics) => void;
 };
 
 export type WorkerMetrics = {
@@ -55,7 +61,12 @@ const DEFAULTS: Required<ReconciliationWorkerConfig> = {
   staleWatermarkK: 5,
   sweepLimit: 100,
   runStartupRecovery: true,
+  allowDaemonInTests: false,
+  onMetrics: () => undefined,
+  onEscalation: () => undefined,
 };
+
+let globalWorkerRunning = false;
 
 export class ReconciliationWorker {
   private readonly store: OperationStore;
@@ -148,6 +159,11 @@ export class ReconciliationWorker {
             });
             escalated++;
             this.metrics.escalatedToRequiresAttention++;
+            try {
+              this.config.onEscalation(op.id, { ...this.metrics });
+            } catch {
+              // escalation hook best-effort
+            }
             continue; // escalated op will be retried next sweep after backoff
           } catch (cause) {
             if (String((cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "").startsWith("stale_version")) {
@@ -198,6 +214,12 @@ export class ReconciliationWorker {
     this.metrics.staleConflicts += staleConflicts;
     this.metrics.reverted += reverted;
 
+    try {
+      this.config.onMetrics({ ...this.metrics });
+    } catch {
+      // metrics hook is best-effort, never fails sweep
+    }
+
     return { swept: ops.length, advanced, noops, dependencyFailures, staleConflicts, escalated, reverted };
   }
 
@@ -209,6 +231,16 @@ export class ReconciliationWorker {
   /** Start polling loop with startup recovery. Returns immediately; loop runs in background. */
   async start(): Promise<void> {
     if (this.running) return;
+    // X2 guard: no daemon should start in tests unless explicitly allowed
+    const isTestEnv = typeof process !== "undefined" && (process.env.VITEST === "true" || process.env.NODE_ENV === "test");
+    if (isTestEnv && !this.config.allowDaemonInTests) {
+      throw new Error("invariant_violation: ReconciliationWorker daemon must not start in tests — use tickAllOnce()");
+    }
+    // Process-safe guard: only one worker daemon per process
+    if (globalWorkerRunning) {
+      throw new Error("invariant_violation: ReconciliationWorker already running in this process");
+    }
+    globalWorkerRunning = true;
     this.running = true;
     if (this.config.runStartupRecovery) {
       try {
@@ -225,7 +257,9 @@ export class ReconciliationWorker {
         // Fail-closed: loop continues
       }
       if (!this.running) return;
-      this.timer = setTimeout(() => void loop(), this.config.pollIntervalMs);
+      const jitterMs = Math.floor(Math.random() * Math.min(500, this.config.pollIntervalMs * 0.1));
+      const interval = this.config.pollIntervalMs + jitterMs;
+      this.timer = setTimeout(() => void loop(), interval);
       // Allow process to exit without waiting for timer in tests
       if (this.timer && typeof (this.timer as unknown as { unref?: () => void }).unref === "function") {
         (this.timer as unknown as { unref: () => void }).unref();
@@ -239,6 +273,7 @@ export class ReconciliationWorker {
 
   stop(): void {
     this.running = false;
+    if (globalWorkerRunning) globalWorkerRunning = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;

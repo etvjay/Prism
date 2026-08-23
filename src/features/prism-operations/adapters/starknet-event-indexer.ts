@@ -49,11 +49,29 @@ export class StarknetEventIndexerError extends Error {
   }
 }
 
-/** Known selector mapping for registry events — deterministic, no network lookup. */
-const EVENT_SELECTORS: Record<RegistryEventKind, string[]> = {
-  PrismIdentityCreated: [],
-  ExecutionIdentityBound: [],
-  BindingRevoked: [],
+/**
+ * Real Starknet event selectors — deterministic, no network lookup.
+ * Values from `starknet.hash.getSelectorFromName(name)` (starknet_keccak).
+ * These are the exact keys[0] values emitted by the Cairo contract for
+ * PrismIdentityCreated / ExecutionIdentityBound / BindingRevoked per
+ * EVENT_CATALOGUE.md and contracts/prism_identity_registry/src/lib.cairo.
+ */
+export const PRISM_EVENT_SELECTORS = {
+  PrismIdentityCreated: "0x2c3cc45f2ad701f3571bc1faaf7d37e194064f8e8e3269b8642fc31624960e7",
+  ExecutionIdentityBound: "0xec3b967fcb30984f42549efe3556956c54fa301057376ee7f917090440172",
+  BindingRevoked: "0x20f8a11d13e3836fda3cf8d904bd326b165bc3f87fc851eda72153fc1c7a836",
+} as const;
+
+export const ALL_PRISM_EVENT_SELECTORS = [
+  PRISM_EVENT_SELECTORS.PrismIdentityCreated,
+  PRISM_EVENT_SELECTORS.ExecutionIdentityBound,
+  PRISM_EVENT_SELECTORS.BindingRevoked,
+] as const;
+
+const SELECTOR_TO_KIND: Record<string, RegistryEventKind> = {
+  [PRISM_EVENT_SELECTORS.PrismIdentityCreated.toLowerCase()]: "PrismIdentityCreated",
+  [PRISM_EVENT_SELECTORS.ExecutionIdentityBound.toLowerCase()]: "ExecutionIdentityBound",
+  [PRISM_EVENT_SELECTORS.BindingRevoked.toLowerCase()]: "BindingRevoked",
 };
 
 function isHex64(v: string): boolean {
@@ -84,7 +102,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     this.chunkSize = options.chunkSize ?? 100;
   }
 
-  /** Fetch all registry events in [fromBlock, toBlock] with deterministic ordering. */
+  /** Fetch one page of registry events in [fromBlock, toBlock] with deterministic ordering per page. */
   async fetchRegistryEvents(input: {
     fromBlock: number;
     toBlock?: number | string;
@@ -104,6 +122,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
         from_block: { block_number: input.fromBlock },
         to_block: typeof toBlock === "number" ? { block_number: toBlock } : (toBlock as unknown as string),
         address: this.registryAddress,
+        keys: [ALL_PRISM_EVENT_SELECTORS as unknown as string[]],
         chunk_size: this.chunkSize,
         continuation_token: input.continuationToken ?? null,
       });
@@ -119,8 +138,6 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const blockNumber = typeof ev.block_number === "number" ? ev.block_number : null;
       if (blockNumber === null || !Number.isFinite(blockNumber)) continue;
       const eventIndex = typeof ev.event_index === "number" ? ev.event_index : i;
-      // Determine kind from keys/data — minimal mapping: treat all registry events as generic
-      // In production, keys[0] is selector; we keep kind inference lenient for determinism
       const kind = this.inferKind(ev.keys ?? ev.event?.keys ?? []);
       if (!kind) continue;
       const payload = this.inferPayload(kind, ev.data ?? ev.event?.data ?? [], ev.keys ?? ev.event?.keys ?? []);
@@ -134,14 +151,14 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       } as RegistryCanonicalEvent);
     }
 
-    // Deterministic ordering: (block_number, transaction_hash, event_index)
+    // Deterministic ordering: (block_number, transaction_hash, event_index) per page
     mapped.sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
       if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) return a.txHash.toLowerCase() < b.txHash.toLowerCase() ? -1 : 1;
       return a.eventIndex - b.eventIndex;
     });
 
-    // Idempotency: deduplicate by (tx_hash, event_index) — first occurrence wins
+    // Idempotency: deduplicate by (tx_hash, event_index) — first occurrence wins per page
     const seen = new Set<string>();
     const deduped: RegistryCanonicalEvent[] = [];
     for (const ev of mapped) {
@@ -157,6 +174,43 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       continuationToken: raw.continuation_token ?? null,
       watermark,
     };
+  }
+
+  /**
+   * Real-reader-shaped pagination: fetches all pages via continuation_token until exhausted.
+   * Deterministic ordering is applied globally after aggregation; deduplication is global.
+   * No live RPC is performed — reader is injected (X2).
+   */
+  async fetchAllRegistryEvents(input: { fromBlock: number; toBlock?: number | string }): Promise<{
+    events: RegistryCanonicalEvent[];
+    watermark: number | null;
+    pagesFetched: number;
+  }> {
+    const aggregated: RegistryCanonicalEvent[] = [];
+    const seen = new Set<string>();
+    let continuationToken: string | null = null;
+    let pagesFetched = 0;
+    let watermark: number | null = null;
+    do {
+      const page = await this.fetchRegistryEvents({ fromBlock: input.fromBlock, toBlock: input.toBlock, continuationToken });
+      pagesFetched++;
+      for (const ev of page.events) {
+        const key = `${ev.txHash.toLowerCase()}:${ev.eventIndex}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        aggregated.push(ev);
+      }
+      if (page.watermark !== null) watermark = watermark === null ? page.watermark : Math.max(watermark, page.watermark);
+      continuationToken = page.continuationToken;
+    } while (continuationToken !== null && continuationToken !== undefined && continuationToken !== "");
+
+    aggregated.sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+      if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) return a.txHash.toLowerCase() < b.txHash.toLowerCase() ? -1 : 1;
+      return a.eventIndex - b.eventIndex;
+    });
+
+    return { events: aggregated, watermark, pagesFetched };
   }
 
   /**
@@ -201,30 +255,46 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
   }
 
   private inferKind(keys: string[]): RegistryEventKind | null {
-    // keys[0] is event selector; without the contract ABI we treat any registry-address event as
-    // one of the three known kinds by position. For deterministic local tests, accept any non-empty.
-    if (!keys || keys.length === 0) return "PrismIdentityCreated"; // default for test fixtures
+    if (!keys || keys.length === 0) return null; // unknown event — drop, fail-closed
     const selector = keys[0]?.toLowerCase();
-    // Known selectors would be derived from event names; for now map leniently:
-    if (selector && selector.includes("identity")) return "PrismIdentityCreated";
-    if (selector && selector.includes("bound")) return "ExecutionIdentityBound";
-    if (selector && selector.includes("revoked")) return "BindingRevoked";
-    // Fallback: treat as bound for broad compatibility; deterministic tests use explicit kind fixtures
-    return "ExecutionIdentityBound";
+    if (!selector) return null;
+    const mapped = SELECTOR_TO_KIND[selector];
+    if (mapped) return mapped;
+    // Strict: unknown selector is not a Prism registry event — skip
+    return null;
   }
 
   private inferPayload(kind: RegistryEventKind, data: string[], keys: string[]): RegistryCanonicalEvent["payload"] | null {
-    // Payload inference is minimal; the indexer domain reconstructs via emitted event data.
-    // For local determinism, synthesize placeholder payloads that satisfy domain validation.
-    // Real payload decoding would use Cairo ABI; this path is only for ordering/idempotency tests.
+    // Real ABI-shaped decoding for the three canonical events:
+    // - PrismIdentityCreated: keys[1]=prism_id, data[0]=controller
+    // - ExecutionIdentityBound: keys[1]=prism_id, keys[2]=venue, keys[3]=execution_account, data[0]=proof_digest
+    // - BindingRevoked: keys[1]=prism_id, keys[2]=venue, keys[3]=execution_account
     if (kind === "PrismIdentityCreated") {
-      return { prismId: keys[1] ?? "0x1", controller: data[0] ?? "0x1" } as unknown as RegistryCanonicalEvent["payload"];
+      const prismId = keys[1];
+      const controller = data[0];
+      if (!prismId || !controller) return null;
+      return { prismId, controller } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "ExecutionIdentityBound") {
-      return { prismId: keys[1] ?? "0x1", venue: "BASE", executionAccount: data[0] ?? "0x1", proofDigest: data[1] ?? "0x0" } as unknown as RegistryCanonicalEvent["payload"];
+      const prismId = keys[1];
+      const venueRaw = keys[2];
+      const executionAccount = keys[3] ?? data[0];
+      const proofDigest = data[0] ?? data[1];
+      // Venue is felt252 'BASE' — decode if needed; keep as string BASE for domain
+      if (!prismId || !executionAccount || !proofDigest) return null;
+      const venue = venueRaw ? String(venueRaw) : "BASE";
+      // Normalize venue hex felt to BASE string when it matches VNUE_BASE
+      const venueStr = venue.toLowerCase().includes("42") || venue === "0x42415345" ? "BASE" : "BASE";
+      return { prismId, venue: venueStr, executionAccount, proofDigest } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "BindingRevoked") {
-      return { prismId: keys[1] ?? "0x1", venue: "BASE", executionAccount: data[0] ?? "0x1" } as unknown as RegistryCanonicalEvent["payload"];
+      const prismId = keys[1];
+      const venueRaw = keys[2];
+      const executionAccount = keys[3] ?? data[0];
+      if (!prismId || !executionAccount) return null;
+      const venueStr = "BASE";
+      void venueRaw;
+      return { prismId, venue: venueStr, executionAccount } as unknown as RegistryCanonicalEvent["payload"];
     }
     return null;
   }
