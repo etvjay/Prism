@@ -17,6 +17,7 @@ export default function PrismLanding() {
   const enterTimerRef = useRef<number | null>(null);
   const [coreState, setCoreState] = useState<RefractedCoreState>("PRISM");
   const [entering, setEntering] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -50,10 +51,30 @@ export default function PrismLanding() {
 
           <div className={styles.navActions}>
             <a className={styles.signInLink} href="#top">Sign in</a>
-            <button className={styles.darkButton} type="button" onClick={enterPrism}>
-              Enter Prism <span aria-hidden="true">›</span>
+            <button
+              aria-controls="mobile-menu"
+              aria-expanded={menuOpen}
+              aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+              className={styles.menuButton}
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span className={styles.menuIcon} aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
             </button>
           </div>
+
+          {menuOpen ? (
+            <div className={styles.mobileMenu} id="mobile-menu" role="menu">
+              <a href="#top" role="menuitem" onClick={() => setMenuOpen(false)}>Home</a>
+              <a href="#top" role="menuitem" onClick={() => setMenuOpen(false)}>ID</a>
+              <a href="#top" role="menuitem" onClick={() => setMenuOpen(false)}>Explore</a>
+              <a href="#top" role="menuitem" onClick={() => setMenuOpen(false)}>Sign in</a>
+            </div>
+          ) : null}
         </nav>
 
         <div className={styles.heroContent}>
@@ -73,10 +94,11 @@ export default function PrismLanding() {
           </div>
 
           <div className={styles.heroObject} aria-live="polite">
-            <div className={styles.heroAura} aria-hidden="true" />
-            <RefractedCore className={styles.heroCore} state={coreState} variant="living" />
-            <div className={styles.plinth} aria-hidden="true">
-              <span />
+            <div className={styles.heroAssembly}>
+              <RefractedCore className={styles.heroCore} state={coreState} variant="living" />
+              <div className={styles.plinth} aria-hidden="true">
+                <span />
+              </div>
             </div>
           </div>
         </div>

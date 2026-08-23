@@ -37,31 +37,31 @@ export default function RefractedCore({
       <defs>
         <linearGradient id="prism-ivory" x1="0" x2="1" y1="0" y2="1">
           <stop offset="0" stopColor="#fffdfa" />
-          <stop offset="0.52" stopColor="#e5ddd0" />
-          <stop offset="1" stopColor="#b9aa98" />
+          <stop offset="0.52" stopColor="#dfe0e5" />
+          <stop offset="1" stopColor="#96989e" />
         </linearGradient>
-        <linearGradient id="prism-warm" x1="0" x2="0.9" y1="0" y2="1">
-          <stop offset="0" stopColor="#f2ece3" />
-          <stop offset="0.48" stopColor="#cdbda8" />
-          <stop offset="1" stopColor="#9b8975" />
+        <linearGradient id="prism-neutral-facet" x1="0" x2="0.9" y1="0" y2="1">
+          <stop offset="0" stopColor="#f6f6f7" />
+          <stop offset="0.48" stopColor="#c5c6cb" />
+          <stop offset="1" stopColor="#777980" />
         </linearGradient>
         <linearGradient id="prism-graphite" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#8f9090" />
-          <stop offset="0.5" stopColor="#515253" />
-          <stop offset="1" stopColor="#242526" />
+          <stop offset="0" stopColor="#a4a5aa" />
+          <stop offset="0.5" stopColor="#5d5f64" />
+          <stop offset="1" stopColor="#1f1e24" />
         </linearGradient>
         <linearGradient id="prism-pearl" x1="0" x2="1" y1="0" y2="1">
           <stop offset="0" stopColor="#ffffff" />
-          <stop offset="0.55" stopColor="#e8e2da" />
-          <stop offset="1" stopColor="#b8ab9c" />
+          <stop offset="0.55" stopColor="#dedfe4" />
+          <stop offset="1" stopColor="#8f9198" />
         </linearGradient>
         <radialGradient id="prism-core" cx="38%" cy="28%" r="75%">
-          <stop offset="0" stopColor="#fffefb" />
-          <stop offset="0.68" stopColor="#e9e1d6" />
-          <stop offset="1" stopColor="#b9aa98" />
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.68" stopColor="#e1e2e6" />
+          <stop offset="1" stopColor="#95979e" />
         </radialGradient>
         <filter id="prism-soft-shadow" x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="4" floodColor="#5b4c3d" floodOpacity="0.2" stdDeviation="3" />
+          <feDropShadow dx="0" dy="4" floodColor="#101010" floodOpacity="0.2" stdDeviation="3" />
         </filter>
       </defs>
 
