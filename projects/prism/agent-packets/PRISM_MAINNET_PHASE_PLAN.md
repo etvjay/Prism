@@ -16,9 +16,16 @@ Band A — Identity MVP mainnet
 Band B — Pause-enabled Prism mainnet
   Band A + Prism Pause as a pre-settlement control boundary
 
-Band C — Full Prism vision
-  social principals, claims, channels, portfolio, continuity/delegation,
-  and broader private relationship capabilities
+Band C — Full Prism vision after the first release
+  social principals, claims, portfolio, continuity/delegation,
+  and broader private financial capabilities
+
+Explicit exclusion from the current MVP/mainnet phases:
+
+```text
+PrismChannel is not a mainnet requirement and has no implementation phase
+in this release plan. No PrismChannel UI, contract, storage, or messaging
+surface should be built as part of the current release.
 ```
 
 **Band A** is the minimum credible Prism mainnet.  
@@ -383,9 +390,11 @@ responsive/accessibility/reduced-motion QA passes
 
 ---
 
-# Phase M7 — Prism Pause, if included in mainnet promise
+# Phase M7 — Prism Pause pre-settlement gate
 
-**Purpose:** add the pre-settlement control layer described in `PRISM_PAUSE_PHASE_PLAN.md`.
+**Purpose:** place Prism Pause between authorization and any real STRK20/Send settlement path. It is not a post-mainnet add-on when Pause is part of Prism’s mainnet promise.
+
+**Placement:** begin after M2/M3 identity and authority foundations are stable; complete P0–P4 before M4/M6 release-capable user actions; complete P5–P8 before M8 testnet acceptance.
 
 Required subphases:
 
@@ -401,11 +410,11 @@ P7 Security/red-team/observability
 P8 Testnet Pause evidence
 ```
 
-### Mainnet requirement
-
-If Prism markets Pause as a core mainnet capability, all of M7/P0–P8 must pass before M9. If Pause is explicitly deferred from the first mainnet product, it may follow M9 under a recorded scope decision.
+**Mainnet requirement:** if Pause is included in the product promise, all P0–P8 must pass before M9. Pause must govern at least one consequential user action; it must never claim post-finality rollback.
 
 **Current state:** phase plan only; no Pause implementation.
+
+**PrismChannel boundary:** no PrismChannel implementation, messaging surface, or channel phase is included in this release.
 
 ---
 
@@ -512,7 +521,6 @@ These should not block a bounded first release unless they are explicitly includ
 
 ```text
 second social provider
-full PrismChannel messenger
 advanced claim variants
 multiple claim/refund policies
 guardians
