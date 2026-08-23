@@ -282,3 +282,70 @@ Keeps authority with keys the user controls; consistent with DEC-PRISM-001 (Star
 - Evidence shows backend-verifier trust breaks a protected invariant (INV-PRISM-* / INV-SYS-*).
 
 Superseding this decision requires a new append-only record; history is not rewritten.
+
+---
+
+## DEC-PRISM-SYS-003 — ChainId-v2 challenge hardening (SD-008)
+
+**Layer:** System/Security  
+**Status:** Accepted  
+**Decision ID:** DEC-PRISM-SYS-003  
+**Decided by:** Jason  
+**Decided at:** 2026-08-23T18:27:26Z  
+**Selected option:** Option 1 — ACCEPT
+
+**Decision**  
+Accept the chainId-v2 challenge hardening implemented by `e8886af` as a mandatory pre-deployment security gate. The Base `chain_id` is the first ordered field in the schema-v2 challenge envelope and signable message. The expected chain ID is environment-scoped and must be supplied by the accepted target-network manifest; there is no silent global fallback.
+
+**Companion work accepted**
+- amend SD-005 and its YAML companion to include `chain_id`;
+- amend INV-SYS-011 tamper-evidence fields;
+- update OBJ-PRISM-005 persisted fields;
+- regenerate schema-v2 signing fixtures;
+- retain cross-network mismatch coverage (`ERR-003`/`ERR-012`);
+- invalidate legacy schema-v1 persisted challenges rather than reinterpret them.
+
+**Rationale**  
+Without chain binding, a proof minted for Base Sepolia could be replayed against a Base-mainnet-era bind if the backend or controller were compromised. The red-team assessment identifies this as a mandatory gate before the first multi-environment deployment.
+
+**Evidence boundary**  
+Acceptance is a local X2 security/spec decision. It is not live deployment, runtime, testnet, or mainnet evidence.
+
+**Reopen conditions**  
+Reopen if environment-scoped chain configuration cannot be enforced, if live fixtures reveal an incompatibility, or if a new trust-model decision supersedes Option A.
+
+---
+
+## DEC-PRISM-OPS-001 — Target-network acceptance for testnet closeout
+
+**Layer:** System/Ops  
+**Status:** Accepted  
+**Decision ID:** DEC-PRISM-OPS-001  
+**Decided by:** Jason  
+**Decided at:** 2026-08-23T18:27:26Z  
+**Selected option:** Option 1 — accept the testnet default and retain the mainnet release gate  
+**Selected environment:** `testnet`  
+**ChainId-v2 disposition:** `ACCEPT`
+
+**Decision**  
+Accept `SN_SEPOLIA` + Base Sepolia (`chain_id: 84532`) as the default environment for the next Prism deployment and decisive-workflow phase. Retain `SN_MAIN` + Base Mainnet (`chain_id: 8453`) as a separate explicit release-gated environment; this decision does not authorize mainnet activity.
+
+**Consequences**
+- testnet deployment preparation and the funded SN_SEPOLIA/Base Sepolia decisive workflow may proceed after the remaining operational readiness checks;
+- every challenge must use the accepted environment's chain ID;
+- testnet evidence remains X2 until live receipts and independent reads are recorded;
+- testnet evidence may not write or promote `strk20.json`;
+- mainnet remains blocked by its separate release gate, funding, and evidence requirements.
+
+**Required remaining gates**
+- funded Base Sepolia EOA proof ladder;
+- funded/deployed Starknet account;
+- dry-run and live deployment verification;
+- independent RPC/explorer readback for every decisive receipt;
+- no promotion of EVD-PRISM-004..007 until those observations exist.
+
+**Evidence boundary**  
+Acceptance is a target-network decision. It is not deployment evidence and does not promote maturity beyond X2.
+
+**Reopen conditions**  
+Reopen if SN_SEPOLIA/Base Sepolia becomes unavailable, chain IDs or protocol semantics change, or the decisive workflow requires a different environment.
