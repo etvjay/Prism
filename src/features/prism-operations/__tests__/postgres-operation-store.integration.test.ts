@@ -11,6 +11,19 @@ import type { Hex } from "../domain/operation";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
+const TEST_SCHEMA = `prism_wp4b_${process.pid}`;
+
+function storeOptions(extra: Record<string, unknown> = {}) {
+  return {
+    connectionString: TEST_URL,
+    options: `-c search_path=${TEST_SCHEMA}`,
+    ...extra,
+  };
+}
+
+function createStore(extra: Record<string, unknown> = {}) {
+  return PostgresOperationStore.create(storeOptions(extra));
+}
 
 const TX_HASH: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TX_HASH_2: Hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -22,16 +35,23 @@ function uniqueSuffix(): string {
 
 let store: PostgresOperationStore;
 let cleanupPool: Pool;
+let adminPool: Pool;
 
 beforeAll(async () => {
-  store = await PostgresOperationStore.create({ connectionString: TEST_URL, max: 10 });
-  cleanupPool = new Pool({ connectionString: TEST_URL, max: 1 });
-  await cleanupPool.query("DELETE FROM prism_operations");
+  if (!TEST_URL) return;
+  adminPool = new Pool({ connectionString: TEST_URL, max: 1 });
+  await adminPool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
+  store = await createStore({ max: 10 });
+  cleanupPool = new Pool({ ...storeOptions(), max: 1 });
 });
 
 afterAll(async () => {
   if (cleanupPool) await cleanupPool.end().catch(() => undefined);
   if (store) await store.close().catch(() => undefined);
+  if (adminPool) {
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`).catch(() => undefined);
+    await adminPool.end().catch(() => undefined);
+  }
 });
 
 suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
@@ -95,7 +115,7 @@ suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
 
     const contenders = await Promise.all(
       Array.from({ length: 6 }, async () => {
-        return PostgresOperationStore.create({ connectionString: TEST_URL, max: 2 });
+        return createStore({ max: 2 });
       }),
     );
     try {
@@ -181,7 +201,7 @@ suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
     expect(op.txHash).toBe(TX_HASH_2);
 
     await store.close();
-    const reopened = await PostgresOperationStore.create({ connectionString: TEST_URL });
+    const reopened = await createStore();
     try {
       const back = await reopened.getById(op.id);
       expect(back).toMatchObject({ state: "submitted", txHash: TX_HASH_2, version: 3 });
@@ -194,7 +214,7 @@ suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
       );
     } finally {
       await reopened.close();
-      store = await PostgresOperationStore.create({ connectionString: TEST_URL });
+      store = await createStore();
     }
   });
 
