@@ -1,0 +1,100 @@
+# Prism state machines v0.1 (proposed) — authority: STATE_MACHINES.md
+state_machines:
+  - state_machine_id: SM-PRISM-001
+    object_ref: OBJ-PRISM-005
+    initial_state: ISSUED
+    terminal_states: [CONSUMED, EXPIRED, REJECTED]
+    states:
+      - {name: ISSUED, authoritative_meaning: nonce live server-side, challenge unproven,
+         visible_meaning: confirm in your Base wallet, retryable: false, timeout: challenge_ttl}
+      - {name: VERIFIED, authoritative_meaning: ladder-valid signature, digest unconsumed,
+         visible_meaning: verified, awaiting Starknet bind, retryable: bind_step_only, timeout: until_expiry}
+      - {name: CONSUMED, authoritative_meaning: digest burned onchain, visible_meaning: bound,
+         retryable: false, timeout: terminal}
+      - {name: EXPIRED, authoritative_meaning: ttl passed unused, visible_meaning: restart,
+         retryable: restart_only, timeout: terminal}
+      - {name: REJECTED, authoritative_meaning: verification failed with specific ERR,
+         visible_meaning: specific honest error, retryable: new_challenge_only, timeout: terminal}
+    transitions:
+      - {transition_id: TR-P1, from: ISSUED, to: VERIFIED, command_ref: CMD-B-02,
+         actor: base_wallet_signature, authorization: ladder_valid,
+         failure_codes: [ERR-003, ERR-006, ERR-012, ERR-013, ERR-014]}
+      - {transition_id: TR-P2, from: ISSUED, to: REJECTED, command_ref: CMD-B-02,
+         actor: base_wallet_signature, authorization: ladder_invalid}
+      - {transition_id: TR-P3, from: ISSUED, to: EXPIRED, command_ref: null,
+         actor: ttl_sweeper, authorization: system}
+      - {transition_id: TR-P4, from: VERIFIED, to: CONSUMED, command_ref: CMD-8-01,
+         actor: controller, authorization: controller_signature_plus_fresh_digest,
+         emitted_events: [EVT-EXECUTION-IDENTITY-BOUND],
+         failure_codes: [ERR-001, ERR-002, ERR-004, ERR-005, ERR-007, ERR-008, ERR-020, ERR-021, ERR-022]}
+    invalid_transitions: [REVOKED_to_ACTIVE, VERIFIED_treated_as_ACTIVE, CONSUMED_reuse]
+
+  - state_machine_id: SM-PRISM-002
+    object_ref: OBJ-PRISM-003
+    initial_state: ACTIVE          # binding comes into existence only via acceptance
+    terminal_states: [REVOKED]
+    states:
+      - {name: ACTIVE, authoritative_meaning: registry binding row status ACTIVE,
+         visible_meaning: connected account, retryable: n_a, timeout: none}
+      - {name: REVOKED, authoritative_meaning: registry binding row status REVOKED,
+         visible_meaning: disconnected, parent identity unchanged, retryable: no,
+         timeout: terminal}
+    transitions:
+      - transition_id: TR-8-01
+        from: null
+        to: ACTIVE
+        command_ref: CMD-8-01
+        actor: controller
+        authorization: caller==identity.controller AND verified proof AND digest unconsumed
+        preconditions: [identity_exists, proof_verified_within_expiry,
+                        proof_digest_unconsumed_onchain, venue_supported]
+        idempotency: digest_single_use
+        retry: same_signed_tx_retry_only
+        reversibility: forward_only_via_TR-8-02
+        emitted_events: [EVT-EXECUTION-IDENTITY-BOUND]
+        failure_codes: [ERR-001, ERR-002, ERR-004, ERR-005, ERR-007, ERR-008, ERR-010]
+        compensation: none_required_failed_tx_leaves_no_state
+      - transition_id: TR-8-02
+        from: ACTIVE
+        to: REVOKED
+        command_ref: CMD-8-02
+        actor: controller
+        authorization: caller==identity.controller
+        preconditions: [binding_exists, status_ACTIVE]
+        idempotency: revoke_of_revoked_returns_existing_fact_ERR-011_semantics
+        retry: safe
+        reversibility: irreversible_no_reactivation_entrypoint
+        emitted_events: [EVT-BINDING-REVOKED]
+        failure_codes: [ERR-002, ERR-004, ERR-009, ERR-011]
+        compensation: n_a
+    invalid_transitions:
+      - REVOKED → ACTIVE via any path
+      - ACTIVE → ACTIVE duplicate bind with same digest
+      - any transition where caller ≠ controller
+
+  - state_machine_id: SM-PRISM-003
+    object_ref: Operation
+    initial_state: created
+    terminal_states: [completed, failed_terminal, cancelled, expired]
+    states:
+      - {name: created, authoritative_source: backend_op_row}
+      - {name: awaiting_authorization, authoritative_source: backend_op_row}
+      - {name: ready, authoritative_source: backend_op_row}
+      - {name: submitted, authoritative_source: starknet_rpc_tx_status}
+      - {name: processing, authoritative_source: starknet_rpc_tx_status}
+      - {name: confirming, authoritative_source: starknet_rpc_tx_status}
+      - {name: confirmed, authoritative_source: execution_status_succeeded}
+      - {name: indexed, authoritative_source: indexer_event_observed}
+      - {name: reconciled, authoritative_source: reconciliation_match}
+      - {name: completed, authoritative_source: receipt_issued}
+      - {name: failed_retryable, authoritative_source: op_policy}
+      - {name: failed_terminal, authoritative_source: op_policy}
+      - {name: reverted, authoritative_source: tx_receipt_revert_code}
+      - {name: expired, authoritative_source: ttl_policy}
+      - {name: cancelled, authoritative_source: user_or_operator}
+      - {name: requires_attention, authoritative_source: timeout_escalation}
+    transitions:
+      - {transition_id: TR-O1, from: created, to: completed, path: created→awaiting_authorization→ready→submitted→processing→confirming→confirmed→indexed→reconciled→completed}
+      - {transition_id: TR-O2, from: any_active, to: reverted, rule: tx_executed_but_reverted_maps_to_ERR}
+      - {transition_id: TR-O3, from: submitted, to: requires_attention, rule: timeout_never_reported_as_onchain_failure}
+    invariants_enforced: [INV-SYS-005]

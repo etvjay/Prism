@@ -1,0 +1,147 @@
+# Prism operations v0.1 (proposed) — authority: CONTRACT_SPEC.md
+operations:
+  # ---------- PRISM-7 registry surface ----------
+  - operation_id: OP-7-01
+    name: create_identity
+    layer: starknet_contract
+    purpose: create persistent PrismIdentity owned by caller
+    caller: any_starknet_account
+    authorization: caller_becomes_controller
+    storage_reads: ["id_counter"]
+    storage_writes: ["identities[new_prism_id]", "id_counter_increment"]
+    asset_movements: none
+    outputs: [prism_id]
+    events: [EVT-PRISM-IDENTITY-CREATED]
+    revert_codes: []
+    replay_protection: fresh_key_per_call
+    uniqueness: prism_id_globally_unique_by_counter
+    privacy_behavior: no_metadata_beyond_controller_and_block
+    pause_behavior: none_in_scope
+    upgrade_impact: immutable_deployment
+    migration_impact: none
+    slice: PRISM-7
+
+  - operation_id: OP-7-02
+    name: get_identity
+    layer: starknet_contract_view
+    purpose: deterministic identity read
+    caller: anyone
+    authorization: public_read
+    storage_reads: ["identities[prism_id]"]
+    storage_writes: []
+    outputs: [controller, created_at_block, identity_version]   # or NOT_FOUND flag
+    events: []
+    errors: [ERR-010]
+    idempotency: pure_read_no_replay_surface
+    slice: PRISM-7
+
+  # ---------- PRISM-8 binding lifecycle ----------
+  - operation_id: OP-8-01
+    name: bind_execution_identity
+    layer: starknet_contract
+    purpose: accept verified Base ownership proof as canonical ACTIVE binding
+    caller: identity_controller            # DECISION_REQUIRED DEC-PRISM-SYS-001 (PROPOSED)
+    authorization: require_caller_eq_controller AND proof_verified_offchain AND digest_unconsumed
+    storage_reads: ["identities[prism_id]", "bindings[(prism_id,venue,execution_account)]", "consumed_digests[proof_digest]"]
+    storage_writes: ["bindings[key]=ACTIVE", "consumed_digests[proof_digest]=true"]
+    asset_movements: none
+    outputs: [success_event]
+    events: [EVT-EXECUTION-IDENTITY-BOUND]
+    errors: [ERR-001, ERR-002, ERR-004, ERR-005, ERR-007, ERR-008, ERR-010]
+    replay_protection: onchain_digest_single_use_plus_server_nonce_store
+    uniqueness: key_unique_while_ACTIVE_rebind_after_revoke_with_fresh_digest_allowed
+    cross_id_exclusivity: NOT_ENFORCED     # DECISION_REQUIRED DEC-PRISM-SYS-002
+    privacy_behavior: fields_limited_to_INV-SYS-008_list
+    upgrade_impact: immutable
+    slice: PRISM-8
+
+  - operation_id: OP-8-02
+    name: resolve
+    layer: starknet_contract_view
+    purpose: authoritative resolution to ACTIVE destination
+    caller: anyone
+    authorization: public_read
+    storage_reads: ["bindings[(prism_id,venue)]"]
+    storage_writes: []
+    outputs: [execution_account_OR_NO_ACTIVE_DESTINATION]
+    events: []
+    errors: []                              # never reverts for missing/revoked; sentinel semantics
+    idempotency: pure_read_sentinel_semantics_no_replay_surface
+    multiplicity_rule: if_multiple_ACTIVE_returns_first_by_binding_order_list_variant_observable
+    slice: PRISM-8
+
+  - operation_id: OP-8-03
+    name: revoke_binding
+    layer: starknet_contract
+    purpose: terminate ACTIVE binding preserving parent identity
+    caller: identity_controller
+    authorization: require_caller_eq_controller
+    storage_reads: ["bindings[key]", "identities[prism_id]"]
+    storage_writes: ["bindings[key].status=REVOKED", "revoked_at_block"]
+    asset_movements: none
+    outputs: [success_OR_already_revoked_fact]
+    events: [EVT-BINDING-REVOKED]
+    errors: [ERR-002, ERR-004, ERR-009, ERR-011]
+    idempotency: revoke_of_revoked_non_failing
+    slice: PRISM-8
+
+  # ---------- Backend commands ----------
+  - operation_id: CMD-7-01
+    name: CreateIdentity_backend_flow
+    layer: backend_application
+    actor: user_wallet_signed
+    target_object: OBJ-PRISM-001
+    irreversible: true_existence
+    idempotency_key: client_request_id_dedupe_before_broadcast
+    async_operation: SM-PRISM-003
+    errors: [ERR-020, ERR-021, ERR-022]
+    audit_requirements: op_record_plus_tx_hash_correlation
+    slice: PRISM-7
+
+  - operation_id: CMD-B-01
+    name: IssueChallenge
+    layer: backend_service
+    actor: authenticated_app_user_session          # distinct from signing authority CON-PRISM-006
+    target_object: OBJ-PRISM-005
+    inputs: [prism_id, venue_BASE, execution_account]
+    preconditions: [identity_exists_read, execution_account_well_formed]
+    idempotency: intentionally_not_idempotent_new_nonce_per_call
+    state_transition: to_ISSUED_ttl_bound
+    errors: [ERR-010, ERR-005]
+    privacy_note: issuance_log_minimizes_session_prism_id_linkage
+    slice: PRISM-8
+
+  - operation_id: CMD-B-02
+    name: SubmitProof
+    layer: backend_service
+    actor: base_wallet_signature_via_app
+    target_object: OBJ-PRISM-005
+    verification_ladder: [EOA_ecrecover, EIP-1271_isValidSignature, ERC-6492_unwrap]
+    preconditions: [nonce_UNUSED, unexpired]
+    idempotency_key: nonce_single_use_INV-SYS-010
+    state_transition: ISSUED_to_VERIFIED_or_REJECTED
+    records_signature_class: true
+    errors: [ERR-003, ERR-006, ERR-012, ERR-013, ERR-014]
+    decision_refs: [DEC-PRISM-SYS-001_PROPOSED]
+    slice: PRISM-8
+
+  # ---------- Queries ----------
+queries:
+  - query_id: QRY-7-01
+    name: GetIdentity
+    actor: anyone
+    freshness: watermark_bounded_or_canonical_read
+    authoritative_fields: [controller, created_at_block, identity_version]
+    errors: [ERR-010]
+    slice: PRISM-7
+
+  - query_id: QRY-8-01
+    name: ResolveDestination
+    actor: anyone
+    target: binding_projection
+    freshness: bounded_staleness_confirmed_block_minus_K_stale_active_forbidden
+    consistency: read_your_writes_for_user_ops_cache_bypass
+    cache_policy: key_identifier_venue_invalidate_on_BIND_REVOKED_events_watermark_every_serve
+    authoritative_fields: [execution_account, status]
+    errors: [ERR-010_distinction_unknown_identifier_preserved_internally]
+    slice: PRISM-8

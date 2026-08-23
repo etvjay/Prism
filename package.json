@@ -6,7 +6,9 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "6.0.3",
@@ -15,6 +17,7 @@
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "starknet": "10.4.0",
+    "viem": "2.55.19",
     "zustand": "^5.0.9"
   },
   "devDependencies": {
@@ -22,6 +25,7 @@
     "@types/node": "24.10.2",
     "@types/react": "19.2.7",
     "@types/react-dom": "^19.2.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "4.1.11"
   }
 }

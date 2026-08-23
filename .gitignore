@@ -33,3 +33,6 @@ pnpm-debug.log*
 coverage/
 .tmp/
 tmp/
+
+# typescript incremental build info
+tsconfig.tsbuildinfo
