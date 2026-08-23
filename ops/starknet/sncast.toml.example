@@ -1,0 +1,53 @@
+# sncast provider + account template — SECRET-FREE, EVIDENCE-PREPARATION ONLY
+# Copy to:  contracts/prism_identity_registry/snfoundry.toml  (for local snforge defaults)
+#            OR to  $HOME/.starknet-accounts  /  env-specific sncast profile
+#            DO NOT commit any file containing RPC URLs with keys, account private keys,
+#            keystore paths with secrets, or deployed addresses.
+#
+# This template is consumed by ops/starknet/validate.mjs — it asserts:
+#   - no hard-coded RPC URL containing a key/secret appears in repo
+#   - every profile references an env var for the RPC URL / account
+#   - no mainnet profile is marked as default without owner release gate
+#
+# Real values live in the environment (STARKNET_RPC_URL, BASE_RPC_URL, etc.).
+# See ops/target-network/manifest.yaml for per-environment expected values.
+
+# --- Starknet Foundry project defaults (committed, but still secret-free) ---
+# contracts/prism_identity_registry/snfoundry.toml should keep these commented defaults
+# until the owner funds a deployer account; uncomment only with env-driven values.
+
+# --- Example sncast account profile: SEPOLIA (testnet default) ---
+# Place in:  ~/.starknet-accounts/starknet-accounts.json  OR  sncast's accounts-file
+# {
+#   "sepolia-deployer": {
+#     "address": "0x<SEPOLIA_DEPLOYER_ADDRESS>",
+#     "private_key_env_var": "STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY",
+#     "keystore_env_var": "STARKNET_SEPOLIA_KEYSTORE_PATH",
+#     "note": "Value is an ENV VAR NAME, not a secret. No secret is committed."
+#   }
+# }
+
+# --- Example sncast provider profile: SEPOLIA ---
+# File: sncast.toml (or snfoundry.toml [sncast.sepolia] section)
+#
+# [sncast.sepolia]
+# url_env_var = "STARKNET_SEPOLIA_RPC_URL"   # expected: https://.../v0_7 without embedded key
+# account = "sepolia-deployer"
+# accounts-file = "~/.starknet-accounts/starknet-accounts.json"
+# keystore_env_var = "STARKNET_SEPOLIA_KEYSTORE_PATH"  # never a literal path with secret
+# wait-params = { timeout = 300, retry-interval = 10 }
+# show-explorer-links = true
+
+# --- Example sncast provider profile: MAINNET (release-gated, not default) ---
+# [sncast.mainnet]
+# url_env_var = "STARKNET_MAINNET_RPC_URL"
+# account = "mainnet-deployer"
+# accounts-file = "~/.starknet-accounts/starknet-accounts.json"
+# keystore_env_var = "STARKNET_MAINNET_KEYSTORE_PATH"
+# wait-params = { timeout = 300, retry-interval = 10 }
+# show-explorer-links = true
+# # This profile MUST NOT be used until DEC-PRISM-OPS-001 is ACCEPTED for mainnet
+# # and a live-network evidence envelope exists in ops/target-network/mainnet/
+
+# Validation: run `node ops/starknet/validate.mjs` — checks this template and the live
+# snfoundry.toml for hard-coded secrets and missing env-var references.
