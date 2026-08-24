@@ -80,7 +80,7 @@ no unresolved contradiction in the selected MVP path
 all deferred features explicitly labeled
 ```
 
-**Current state:** Product/system material exists; release-band choice is not yet recorded as a dedicated decision.
+**Current state:** Product/system material exists; the M5 helper route is now recorded in `DEC-PRISM-M5-001`, but the overall Band A vs Band B release choice and Pause-as-mainnet-promise decision remain open.
 
 ---
 
@@ -122,7 +122,7 @@ get_identity second read
 indexed event + watermark
 ```
 
-**Current state:** account and registry deployment are observed on SN_SEPOLIA; live `create_identity` and independent identity read remain open.
+**Current state:** account and registry deployment are observed on SN_SEPOLIA; the M1 live-read harness is integration-ready at X2, but live `create_identity`, event indexing, and independent identity read remain open.
 
 **Exit maturity:** X3 testnet identity evidence.
 
@@ -167,7 +167,7 @@ T12 failure/recovery
 real runtime smoke test on testnet
 ```
 
-**Current state:** strong X2 implementation; no deployed HTTP runtime or live reconciliation process has completed the decisive flow.
+**Current state:** REST/API, SDK, and MCP boundary contracts are integration-ready at X2; real HTTP/PostgreSQL runtime, live indexer/reconciliation, and testnet smoke remain open.
 
 ---
 
@@ -217,7 +217,7 @@ reconciliation watermark
 failure/retry results
 ```
 
-**Current state:** wallets funded; no live proof/bind/resolve/revoke sequence observed.
+**Current state:** wallets funded and Starknet infrastructure deployed; no live Base proof/bind/resolve/revoke sequence has been observed.
 
 **Exit maturity:** X3 testnet decisive identity evidence.
 
@@ -280,7 +280,7 @@ maturity is represented honestly
 privacy claim is action-specific
 ```
 
-**Current state:** capability-detection scaffold exists; shield, private balance, private transfer, maturity, and receipt route are not implemented.
+**Current state:** provider-injected Wallet API consumer route is integration-ready at X2 with a 12-state machine and privacy guards; no live funded-wallet STRK20 trace has been observed.
 
 ---
 
@@ -322,7 +322,7 @@ privacy boundary record
 declared Prism contract involvement
 ```
 
-**Current state:** local helper X2 only; no live helper/claim deployment or pool transaction.
+**Current state:** `PrismVesuLendingHelper` is u256-hardened, deployed to SN_SEPOLIA, and has a narrow real helper→Vesu X3 probe; the complete STRK20 pool-invoked transaction and private-note readback remain open. PrismClaim is preserved as a future re-entry route.
 
 ---
 
@@ -386,7 +386,7 @@ wallet authority and app authentication remain distinct
 responsive/accessibility/reduced-motion QA passes
 ```
 
-**Current state:** public landing exists; authenticated Home, Connections, Send, Receive, Activity, and Profile are not implemented. The current “Enter Prism” action is a preview only.
+**Current state:** public landing exists; authenticated Home, Connections, Send, Receive, Activity, and Profile remain owner-led and are intentionally excluded from delegation. The current “Enter Prism” action is a preview only.
 
 ---
 
@@ -412,9 +412,9 @@ P8 Testnet Pause evidence
 
 **Mainnet requirement:** if Pause is included in the product promise, all P0–P8 must pass before M9. Pause must govern at least one consequential user action; it must never claim post-finality rollback.
 
-**Current state:** phase plan only; no Pause implementation.
+**Current state:** Pause P0–P4 foundation is integration-ready at X2; P0 owner canonicalization, P5 settlement adapters, P6 product/API, P7 observability/red-team, and P8 testnet evidence remain open.
 
-**PrismChannel boundary:** no PrismChannel implementation, messaging surface, or channel phase is included in this release.
+**PrismChannel boundary:** minimal C1/S4 PrismChannel domain slice is integration-ready at X2 for the testnet path; it remains non-blocking for first mainnet unless explicitly promised. No Phase 8 messaging surface is delegated.
 
 ---
 
