@@ -14,6 +14,9 @@ import { PrismChallengeService } from "../features/prism-identity/application/ch
 import { InMemoryOperationStore } from "../features/prism-operations/adapters/memory-operation-store";
 import { PostgresOperationStore } from "../features/prism-operations/adapters/postgres-operation-store";
 import { PostgresPrismEventsStore } from "../features/prism-operations/adapters/postgres-prism-events-store";
+import { PostgresEventProjectionCheckpointStore } from "../features/prism-operations/domain/event-projection-checkpoint";
+import type { EventProjectionCheckpointStore } from "../features/prism-operations/domain/event-projection-checkpoint";
+import { EventProjectionCoordinator } from "../features/prism-operations/domain/event-projection-coordinator";
 import type { OwnershipProofStore } from "../features/prism-identity/domain/ports";
 import type { OperationStore } from "../features/prism-operations/domain/operation-store";
 import type { PauseStore } from "../features/prism-pause/ports/pause-store";
@@ -76,6 +79,9 @@ export interface AppFactory {
   receiptService: ReceiptService;
   challengeService: PrismChallengeService;
   prismEventsStore?: PostgresPrismEventsStore | null;
+  /** Durable canonical-event projection; constructed only with Postgres + configured Starknet read. */
+  eventProjectionCoordinator?: EventProjectionCoordinator | null;
+  projectionCheckpointStore?: EventProjectionCheckpointStore | null;
   /** Real read-only Starknet ports when STARKNET_RPC_URL+REGISTRY_ADDRESS present; null in dev/test fallback. */
   ledgerStatusAdapter?: (LedgerStatusPort & { getConfirmedBlock(): Promise<number | null> }) | null;
   eventIndexerAdapter?: EventIndexerPort | null;
@@ -140,6 +146,13 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string }
   if (!isStarknetRpcUrlValid(rpcUrl)) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_rpc_url");
   if (!/^0x[0-9a-f]{1,64}$/i.test(registryAddress.trim())) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_address");
   return { rpcUrl, registryAddress };
+}
+
+function getProjectionStartBlock(): number {
+  const raw = (process.env.PRISM_STARKNET_INDEXER_START_BLOCK ?? "0").trim();
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_indexer_start_block");
+  return value;
 }
 
 function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["starknetReadProvider"] {
@@ -280,6 +293,8 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
     receiptService,
     challengeService,
     prismEventsStore: null,
+    eventProjectionCoordinator: null,
+    projectionCheckpointStore: null,
     ledgerStatusAdapter,
     eventIndexerAdapter,
     starknetReadProvider,
@@ -300,15 +315,17 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const operationStore = new PostgresOperationStore({ connectionString: url });
   const pauseStore = new PostgresPauseStore({ connectionString: url });
   const prismEventsStore = new PostgresPrismEventsStore({ connectionString: url });
+  const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore({ connectionString: url });
 
   try {
     await ownershipStore.migrate();
     await operationStore.migrate();
     await pauseStore.migrate();
     await prismEventsStore.migrate();
+    await projectionCheckpointStore.migrate();
   } catch (cause) {
     // Close any pools that were opened before rethrowing fail-closed
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
     if (cause instanceof AppError) throw cause;
     // Wrap driver error as stable 503 without leaking URL
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_connect_or_migrate_failed:${(cause as Error)?.message?.slice(0, 80) ?? "unknown"}`);
@@ -323,7 +340,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     starknetError = e as Error;
   }
   if (starknetError) {
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
     throw starknetError;
   }
   const registry = new InMemoryRegistry(); // Fallback registry for test helpers; real read path uses registryReadPort
@@ -332,6 +349,16 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
+  const eventProjectionCoordinator = starknetPorts
+    ? new EventProjectionCoordinator({
+        registryAddress: getStarknetRegistryAddress()!,
+        network: "SN_SEPOLIA",
+        initialFromBlock: getProjectionStartBlock(),
+        checkpointStore: projectionCheckpointStore,
+        eventsStore: prismEventsStore,
+        indexer: starknetPorts.indexer,
+      })
+    : null;
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
   const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
@@ -394,6 +421,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
       operationStore.close().catch(() => undefined),
       pauseStore.close?.().catch(() => undefined),
       prismEventsStore.close().catch(() => undefined),
+      projectionCheckpointStore.close().catch(() => undefined),
     ]);
   };
   return {
@@ -411,6 +439,8 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     receiptService,
     challengeService,
     prismEventsStore,
+    eventProjectionCoordinator,
+    projectionCheckpointStore,
     ledgerStatusAdapter,
     eventIndexerAdapter,
     starknetReadProvider,
@@ -532,6 +562,7 @@ export function resetFactory() {
       (s.operationStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       (s.pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.prismEventsStore?.close().catch(() => undefined),
+      s.projectionCheckpointStore?.close().catch(() => undefined),
       s.reconciliationWorker?.stop(),
     ]);
     // also shutdown worker
@@ -556,6 +587,7 @@ export async function closeFactory(): Promise<void> {
       (s.operationStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       (s.pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.prismEventsStore?.close().catch(() => undefined),
+      s.projectionCheckpointStore?.close().catch(() => undefined),
       s.shutdown?.().catch(() => undefined),
     ]);
   }

@@ -122,7 +122,7 @@ get_identity second read
 indexed event + watermark
 ```
 
-**Current state:** account/registry deployment, live create/read, `PrismIdentityCreated` event scan, independent PublicNode/Alchemy readback, and current scan watermark are observed at X3; durable event projection/reconciliation and the M3 cross-chain sequence remain open.
+**Current state:** account/registry deployment, live create/read, `PrismIdentityCreated` event scan, independent PublicNode/Alchemy readback, current scan watermark, and one live factory→Postgres event projection/checkpoint run are observed at X3 subgate; repeated durable reconciliation and the M3 cross-chain sequence remain open.
 
 **Exit maturity:** X3 testnet identity evidence.
 
@@ -167,7 +167,7 @@ T12 failure/recovery
 real runtime smoke test on testnet
 ```
 
-**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, shared read/indexer provider, pagination/dedup, K=5 stale refusal, reconciliation/recovery, and HTTP smoke are parent-integrated at X2; the dedicated local Postgres ownership/operation subgate is observed 14/14, while live Starknet RPC/submit/readback, Pause-store durability, and testnet smoke remain open.
+**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, shared read/indexer provider, pagination/dedup, durable event projection/checkpoint CAS, K=5 stale refusal, reconciliation/recovery, and HTTP smoke are parent-integrated at X2; local Postgres persistence is observed 16/16 and one live Alchemy→factory→Postgres projection is observed, while repeated daemon/restart reconciliation, live submit/receipt tail, Pause-store durability, and testnet smoke remain open.
 
 ---
 

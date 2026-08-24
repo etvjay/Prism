@@ -1,7 +1,7 @@
 # M1 Live Identity Evidence — SN_SEPOLIA
 
-**Status:** Observed testnet evidence; live M1 read/event/scan closeout with durable projection still open
-**Evidence maturity:** X3 for live create/read/event/scan; X2 for durable indexer projection/reconciliation
+**Status:** Observed testnet evidence; live M1 read/event/scan and one durable factory projection run complete; repeated reconciliation remains open
+**Evidence maturity:** X3 for live create/read/event/scan + one durable projection; X2 for repeated/restart reconciliation
 **Date:** 2026-08-24 UTC
 
 ## Deployment
@@ -79,8 +79,8 @@ The read-only event scan from the registry deployment block found the canonical 
 ## Remaining M1 gates
 
 ```text
-durable event indexer projection/read-model persistence
-reconciliation worker consuming the live event scan
+durable projection is wired and one live read→index→Postgres run is observed
+repeated daemon/reconciliation and restart-after-live-scan
 full independent explorer + RPC evidence envelope
 M3 Base proof/bind/resolve/revoke sequence
 ```

@@ -84,6 +84,16 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     expect(res.events[0].txHash).toBe(TX_B);
   });
 
+  it("normalizes Starknet.js short-form transaction hashes without dropping events", async () => {
+    const reader = readerWithEvents([
+      { block_number: 10, transaction_hash: "0x457a43d908da21e8acd723ba94639d6009c123ec4c4d944175f2bbfa05e3a6f", event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1"] },
+    ]);
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY });
+    const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].txHash).toBe("0x0457a43d908da21e8acd723ba94639d6009c123ec4c4d944175f2bbfa05e3a6f");
+  });
+
   it("computes watermark as max blockNumber", async () => {
     const reader = readerWithEvents([
       { block_number: 7, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] },

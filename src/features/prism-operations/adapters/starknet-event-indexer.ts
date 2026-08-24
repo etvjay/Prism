@@ -76,8 +76,10 @@ const SELECTOR_TO_KIND: Record<string, RegistryEventKind> = {
   [PRISM_EVENT_SELECTORS.BindingRevoked.toLowerCase()]: "BindingRevoked",
 };
 
-function isHex64(v: string): boolean {
-  return /^0x[0-9a-fA-F]{64}$/.test(v);
+function normalizeTxHash(value: string): Hex | null {
+  const raw = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,64}$/.test(raw)) return null;
+  return `0x${raw.slice(2).padStart(64, "0")}` as Hex;
 }
 
 /**
@@ -119,15 +121,23 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     }
     const toBlock = input.toBlock ?? "latest";
     let raw: Awaited<ReturnType<StarknetEventReader["getEvents"]>>;
+    const filter: {
+      from_block: { block_number: number };
+      to_block: { block_number: number } | string;
+      address: string;
+      keys: string[][];
+      chunk_size: number;
+      continuation_token?: string;
+    } = {
+      from_block: { block_number: input.fromBlock },
+      to_block: typeof toBlock === "number" ? { block_number: toBlock } : (toBlock as string),
+      address: this.registryAddress,
+      keys: [ALL_PRISM_EVENT_SELECTORS as unknown as string[]],
+      chunk_size: this.chunkSize,
+    };
+    if (input.continuationToken) filter.continuation_token = input.continuationToken;
     try {
-      raw = await this.reader.getEvents({
-        from_block: { block_number: input.fromBlock },
-        to_block: typeof toBlock === "number" ? { block_number: toBlock } : (toBlock as unknown as string),
-        address: this.registryAddress,
-        keys: [ALL_PRISM_EVENT_SELECTORS as unknown as string[]],
-        chunk_size: this.chunkSize,
-        continuation_token: input.continuationToken ?? null,
-      });
+      raw = await this.reader.getEvents(filter);
     } catch (cause) {
       throw new StarknetEventIndexerError("getEvents failed", cause);
     }
@@ -135,8 +145,8 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     const mapped: RegistryCanonicalEvent[] = [];
     for (let i = 0; i < raw.events.length; i++) {
       const ev = raw.events[i];
-      const txHash = ev.transaction_hash?.toLowerCase();
-      if (!txHash || !isHex64(txHash)) continue; // malformed skipped, not fabricated
+      const txHash = normalizeTxHash(ev.transaction_hash ?? "");
+      if (!txHash) continue; // malformed skipped, not fabricated
       const blockNumber = typeof ev.block_number === "number" ? ev.block_number : null;
       if (blockNumber === null || !Number.isFinite(blockNumber)) continue;
       const eventIndex = typeof ev.event_index === "number" ? ev.event_index : i;
@@ -233,7 +243,8 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
    * Used by recovery tick (confirmed -> indexed transition).
    */
   async observeIndexer(txHash: Hex): Promise<IndexerObservation | null> {
-    if (!isHex64(txHash)) throw new StarknetEventIndexerError(`malformed_tx_hash:${txHash}`);
+    const canonicalTxHash = normalizeTxHash(txHash);
+    if (!canonicalTxHash) throw new StarknetEventIndexerError(`malformed_tx_hash:${txHash}`);
     // For per-tx observe, we query without block range optimization and filter locally.
     // In production this would be a cache/projection lookup; here we delegate to reader.
     // To avoid expensive full scan, we attempt a targeted fetch — if reader supports tx filter,
@@ -243,13 +254,13 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
         address: this.registryAddress,
         chunk_size: this.chunkSize,
       });
-      const match = raw.events.find((e) => e.transaction_hash?.toLowerCase() === txHash.toLowerCase());
-      if (!match) return { txHash, eventObserved: false, blockNumber: null, eventIndex: null };
+      const match = raw.events.find((e) => normalizeTxHash(e.transaction_hash ?? "") === canonicalTxHash);
+      if (!match) return { txHash: canonicalTxHash, eventObserved: false, blockNumber: null, eventIndex: null };
       const blockNumber = typeof match.block_number === "number" ? match.block_number : null;
       const eventIndex = typeof match.event_index === "number" ? match.event_index : 0;
       const eventName = this.inferKind(match.keys ?? match.event?.keys ?? []) ?? "Unknown";
       return {
-        txHash,
+        txHash: canonicalTxHash,
         eventObserved: true,
         eventName,
         blockNumber,

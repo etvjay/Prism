@@ -40,6 +40,8 @@ AppFactory {
   resolveService: WatermarkedResolveService  // K=5, confirmedBlockPort = ledger when configured
   reconciliationWorker: ReconciliationWorker // store+ledger+indexer, K=5, sweepLimit 100
   prismEventsStore: PostgresPrismEventsStore | null // PG when PRISM_POSTGRES_TEST_URL, else null
+  projectionCheckpointStore: PostgresEventProjectionCheckpointStore | null
+  eventProjectionCoordinator: EventProjectionCoordinator | null // constructed only when PG + Starknet read are configured
   isPostgres: boolean
   isStarknetConfigured: boolean
   shutdown(): Promise<void>             // worker.stop + pool end
@@ -110,6 +112,14 @@ new ReconciliationWorker({ store: operationStore, ledger: fallbackLedger, indexe
 - `tickReconciliation` double-guard `if to===completed && from in [submitted,processing,confirming,confirmed] → noop`;
 - `decideReconciliationStep` advances stepwise `submitted→processing→confirming→confirmed→indexed→reconciled→completed`; no shortcut even when port fabricates matched facts.
 
+### 2.7 Durable event projection/checkpoint
+
+- `EventProjectionCoordinator` enforces fetch → canonical event persistence → checkpoint CAS ordering.
+- `PostgresEventProjectionCheckpointStore` and its in-memory test double persist registry/network identity, next scan block, scan watermark, event watermark, version, and updated timestamp.
+- Replays are safe via `(tx_hash,event_index)` upsert; a failed event write never advances the checkpoint; concurrent initial/update writers use expected-version CAS.
+- The Postgres factory constructs this path only when both Postgres and Starknet read configuration are present; no daemon auto-start was added to tests.
+- The live gated factory test observed one SN_SEPOLIA Alchemy event scan projected into Postgres with a current scan watermark; repeated daemon/restart reconciliation remains open.
+
 ---
 
 ## 3. Tests added
@@ -135,8 +145,10 @@ From the parent closeout run against the dedicated local `prism_test` database:
 
 - `postgres-ownership-proof-store.integration.test.ts` — **6 passed**.
 - `postgres-operation-store.integration.test.ts` — **8 passed**.
-- Real Postgres integration total — **14 passed** via peer-authenticated Unix socket; the connection value was not persisted or exposed.
-- The normal parent shell did not retain `PRISM_POSTGRES_TEST_URL`; the integration runner injected a temporary local socket URL for this run only.
+- `postgres-event-projection.integration.test.ts` — **2 passed**.
+- Real Postgres integration total — **16 passed** via peer-authenticated Unix socket; the connection value was not persisted or exposed.
+- Live gated factory projection — **1 passed**: Alchemy SN_SEPOLIA → shared Starknet provider → canonical event mapper → Postgres event store + checkpoint CAS.
+- The normal parent shell did not retain `PRISM_POSTGRES_TEST_URL`; integration runners injected temporary local socket URLs for these runs only.
 - The remaining full-suite Postgres tiers are still skipped when the test URL is not injected.
 - `npm run typecheck` — `tsc --noEmit` **0 errors**.
 - `npm run build` — `next build --webpack` **Compiled successfully**, `18` routes, no errors.
@@ -147,9 +159,9 @@ From the parent closeout run against the dedicated local `prism_test` database:
 
 ## 5. Remaining live gates (not inflated)
 
-1. **Live Postgres integration (T7 X3 subgate)** — the dedicated local `prism_test` run now passes the ownership/operation integration suites (14/14). A managed/runtime Postgres environment, Pause-store integration coverage, and repeat-after-schema-change run remain open before claiming full production durability.
+1. **Durable projection/reconciliation follow-on (X3)** — one live factory read→index→Postgres checkpoint run is now observed and the local 16-test Postgres tier passes. Repeated daemon liveness, restart after a live scan, multi-worker checkpoint contention under process failure, and operation receipt reconciliation remain open.
 
-2. **Real Starknet readback (X3)** — with `STARKNET_RPC_URL=https://...` + `STARKNET_REGISTRY_ADDRESS=0x...` against `SN_SEPOLIA`, observe `get_identity`/`resolve` + `get_events` pagination + `getTransactionStatus`/`getTransactionReceipt` for a real `txHash` (e.g., `EVD-PRISM-004` shape) and record `txHash+block`, `hub_validator` where applicable; `create P → bind B → resolve=B → revoke → resolve=null → P persists` tail.
+2. **Real Starknet readback (X3)** — live `get_identity`/`get_events`/scan-watermark evidence is now observed for EVD-PRISM-004 through the user-provided Alchemy endpoint plus an independent RPC path. The full `getTransactionStatus`/`getTransactionReceipt` operation tail and `create P → bind B → resolve=B → revoke → resolve=null → P persists` sequence remain open.
 
 3. **Ledger submit (P5/T9 X5)** — real `StarknetSubmitAdapter` with injected `Account`+`RpcProvider` for `create_identity`/`bind`/`revoke` remains out of this lane (private keys not touched). Current `submitPort` is `InMemoryRegistry` (X2 read-only).
 
@@ -172,15 +184,15 @@ WATERMARK K=5:      PASS — stale ACTIVE refused (90 vs 100), fresh within K pa
 RECONCILIATION:     PASS — tick/recovery never submitted→completed, reverted with stable code, unknown stays submitted, retry/backoff deterministic, startup recovery via listNonTerminal
 DUPLICATE:          PASS — prism_events ON CONFLICT DO NOTHING + domain seenKeys; no double-apply
 INVARIANTS:         PASS — AUTHORITY_MATRIX / INV-SYS-005 / SM-PRISM-003 preserved; double-guard
-T7/T8/T12:          T7 wiring complete, live off (14 skipped honest); T8 local PASS; T9/T12 ledger/indexer X2 PASS, X3 blocked
-BUILD:              PASS — typecheck 0, build 18 routes, diff --check clean
-X MATURITY:         X2 — local controlled (no live RPC tx hash, no real receipt/readback observed)
-POSTGRES LIVE:      NOT RUN — PRISM_POSTGRES_TEST_URL absent (blocker: no DB URL in env)
+T7/T8/T12:      T7 local Postgres 16/16 + live factory projection PASS; T8 local PASS; T9/T12 ledger/operation tail X2, X3 follow-ons open
+BUILD:          PASS — typecheck 0, build 18 routes, diff --check clean
+X MATURITY:     X3 subgates observed for live read/event/scan + one durable projection; full M2 runtime remains X2/live-gated
+POSTGRES LIVE: 16 real integration tests passed; production/runtime DB lifecycle and repeated reconciliation remain open
 ```
 
 ### Verdict: **M2_RUNTIME_X2_COMPLETE_LEDGER_RECONCILIATION_WIRED — LIVE_GATED**
 
-Count as `M2_BLOCKED_BY_RUNTIME_ENVIRONMENT` for `X3` purposes until `PRISM_POSTGRES_TEST_URL` + live `SN_SEPOLIA` readback are observed. This lane must **not** be credited toward `G0/G4–G8` or `X3+` ledger evidence; those remain `OPEN` per §5.
+Count the local Postgres/projection subgates as observed evidence. Keep `M2_RUNTIME_X2_COMPLETE_LEDGER_RECONCILIATION_WIRED — LIVE_GATED` for the overall lane until repeated daemon/restart reconciliation, real operation receipt tail, and live submit are observed. This lane must not be credited toward G0/G4–G8 or X3+ submission evidence without those follow-ons.
 
 ---
 
