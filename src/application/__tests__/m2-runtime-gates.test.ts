@@ -216,7 +216,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
         return { events: page.events as never[], continuation_token: page.continuation_token };
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, registryVersion: "v1", chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([

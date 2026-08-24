@@ -51,7 +51,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 10, transaction_hash: TX_A, event_index: 2, keys: prismCreatedKeys("0x4"), data: ["0x2222"] },
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x5"), data: ["0x3333"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([
       [5, TX_C, 0],
@@ -67,7 +67,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] },
       { block_number: 10, transaction_hash: TX_A, event_index: 1, keys: prismCreatedKeys("0x2"), data: ["0x2222"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.events).toHaveLength(2);
     expect(res.events.map((e) => e.eventIndex)).toEqual([0, 1]);
@@ -78,7 +78,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 10, transaction_hash: "bad-hash", event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1"] },
       { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: prismCreatedKeys("0x9"), data: ["0x9999"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.events).toHaveLength(1);
     expect(res.events[0].txHash).toBe(TX_B);
@@ -88,17 +88,28 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     const reader = readerWithEvents([
       { block_number: 10, transaction_hash: "0x457a43d908da21e8acd723ba94639d6009c123ec4c4d944175f2bbfa05e3a6f", event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(result.events).toHaveLength(1);
     expect(result.events[0].txHash).toBe("0x0457a43d908da21e8acd723ba94639d6009c123ec4c4d944175f2bbfa05e3a6f");
+  });
+
+  it("rejects foreign event origins in strict production mode", async () => {
+    const reader: StarknetEventReader = {
+      async getEvents() {
+        return { events: [{ from_address: "0xdead", block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] }], continuation_token: null } as never;
+      },
+    };
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    expect((await adapter.fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+    expect((await adapter.observeIndexer(TX_A))?.eventObserved).toBe(false);
   });
 
   it("reconstructs exact V2 u256 digest from low/high event limbs", async () => {
     const reader = readerWithEvents([
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: [SEL_BOUND, "0x1", "0x42415345", "0xabc"], data: ["0x42", "0x1234"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v2" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v2", requireEventOrigin: false });
     const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(result.events).toHaveLength(1);
     expect((result.events[0].payload as { proofDigest: string }).proofDigest).toBe(`0x${(0x1234n << 128n | 0x42n).toString(16).padStart(64, "0")}`);
@@ -111,8 +122,8 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     const missingAccount = readerWithEvents([
       { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: [SEL_BOUND, "0x1", "0x42415345"], data: ["0x42", "0x1234"] },
     ]);
-    expect((await new StarknetEventIndexerAdapter({ reader: unsupported, registryAddress: REGISTRY, registryVersion: "v2" }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
-    expect((await new StarknetEventIndexerAdapter({ reader: missingAccount, registryAddress: REGISTRY, registryVersion: "v2" }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+    expect((await new StarknetEventIndexerAdapter({ reader: unsupported, registryAddress: REGISTRY, registryVersion: "v2", requireEventOrigin: false }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+    expect((await new StarknetEventIndexerAdapter({ reader: missingAccount, registryAddress: REGISTRY, registryVersion: "v2", requireEventOrigin: false }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
   });
 
   it("computes watermark as max blockNumber", async () => {
@@ -121,35 +132,35 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 12, transaction_hash: TX_B, event_index: 0, keys: prismCreatedKeys("0x2"), data: ["0x2222"] },
       { block_number: 3, transaction_hash: TX_C, event_index: 0, keys: prismCreatedKeys("0x3"), data: ["0x3333"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.watermark).toBe(12);
   });
 
   it("observeIndexer returns eventObserved=false when tx not found (missed event)", async () => {
     const reader = readerWithEvents([{ block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] }]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const obs = await adapter.observeIndexer(TX_B);
     expect(obs?.eventObserved).toBe(false);
   });
 
   it("observeIndexer rejects a tx containing only unknown registry events", async () => {
     const reader = readerWithEvents([{ block_number: 42, transaction_hash: TX_A, event_index: 0, keys: ["0xdead"], data: [] }]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const obs = await adapter.observeIndexer(TX_A);
     expect(obs?.eventObserved).toBe(false);
   });
 
   it("observeIndexer returns eventObserved=true with block/eventIndex when found", async () => {
     const reader = readerWithEvents([{ block_number: 42, transaction_hash: TX_A, event_index: 3, keys: prismCreatedKeys("0x1"), data: ["0x1111"] }]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const obs = await adapter.observeIndexer(TX_A);
     expect(obs).toMatchObject({ eventObserved: true, blockNumber: 42, eventIndex: 3 });
   });
 
   it("observeReconciliation matches when event observed", async () => {
     const reader = readerWithEvents([{ block_number: 42, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] }]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const r = await adapter.observeReconciliation(TX_A);
     expect(r.chainReceiptMatched).toBe(true);
     expect(r.eventMatchedToOperation).toBe(true);
@@ -161,13 +172,13 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
         throw new Error("rpc_unavailable");
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     await expect(adapter.fetchRegistryEvents({ fromBlock: 0 })).rejects.toThrow(/getEvents failed/);
     await expect(adapter.observeIndexer(TX_A)).rejects.toThrow(/observeIndexer failed/);
   });
 
   it("injected reader only — constructor rejects missing reader", () => {
-    expect(() => new StarknetEventIndexerAdapter({ reader: null as unknown as StarknetEventReader, registryAddress: REGISTRY, registryVersion: "v1" })).toThrow(
+    expect(() => new StarknetEventIndexerAdapter({ reader: null as unknown as StarknetEventReader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false })).toThrow(
       /injected reader/,
     );
   });
@@ -180,7 +191,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] },
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.events).toHaveLength(1); // deduped
     for (const ev of res.events) {
@@ -211,7 +222,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
         continuation_token: null,
       },
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([
@@ -230,7 +241,7 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
       { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: ["0xdead"], data: ["0x1"] }, // unknown
       { block_number: 10, transaction_hash: TX_B, event_index: 1, keys: [], data: ["0x1"] }, // empty keys
     ]);
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(res.events).toHaveLength(3);
     expect(res.events.map((e) => e.kind).sort()).toEqual(["BindingRevoked", "ExecutionIdentityBound", "PrismIdentityCreated"].sort());

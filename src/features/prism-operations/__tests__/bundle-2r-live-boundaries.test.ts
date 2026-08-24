@@ -140,7 +140,7 @@ describe("Bundle 2R Live — getEvents pagination/continuation (T9, SC-27)", () 
         return { events: [], continuation_token: "next-token" };
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1" });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 5, continuationToken: "prev" });
     expect(capturedKeys?.[0]).toEqual(expect.arrayContaining(ALL_PRISM_EVENT_SELECTORS as unknown as string[]));
     expect(capturedToken).toBe("prev");
@@ -172,7 +172,7 @@ describe("Bundle 2R Live — getEvents pagination/continuation (T9, SC-27)", () 
         return { events: p.events as never[], continuation_token: p.continuation_token } as never;
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([

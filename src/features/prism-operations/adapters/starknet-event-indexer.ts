@@ -27,6 +27,7 @@ export interface StarknetEventReader {
       event?: { data?: string[]; keys?: string[] };
       // Some shapes carry event_index inside
       event_index?: number | null;
+      from_address?: string;
     }>;
     continuation_token?: string | null;
   }>;
@@ -43,6 +44,8 @@ export type StarknetEventIndexerOptions = {
   registryAddress: string;
   /** ABI version controls ExecutionIdentityBound digest decoding. */
   registryVersion: StarknetRegistryVersion;
+  /** Require every provider event to identify this exact registry address. Defaults true. */
+  requireEventOrigin?: boolean;
   /** Chunk size for getEvents pagination. Defaults to 100. */
   chunkSize?: number;
 };
@@ -121,6 +124,14 @@ function combineU256Limbs(lowRaw: string | undefined, highRaw: string | undefine
   return `0x${(low + (high << 128n)).toString(16).padStart(64, "0")}` as Hex;
 }
 
+function sameContractAddress(a: string | undefined, b: string): boolean {
+  if (!a || !isNonZeroContractAddress(a)) return false;
+  try {
+    return BigInt(a) === BigInt(b);
+  } catch {
+    return false;
+  }
+}
 function decodeBaseVenue(value: string | undefined): "BASE" | null {
   if (!value || !/^0x[0-9a-fA-F]+$/.test(value)) return null;
   try {
@@ -141,6 +152,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
   private readonly reader: StarknetEventReader;
   private readonly registryAddress: string;
   private readonly registryVersion: StarknetRegistryVersion;
+  private readonly requireEventOrigin: boolean;
   private readonly chunkSize: number;
 
   constructor(options: StarknetEventIndexerOptions) {
@@ -156,6 +168,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     this.reader = options.reader;
     this.registryAddress = options.registryAddress.toLowerCase();
     this.registryVersion = options.registryVersion;
+    this.requireEventOrigin = options.requireEventOrigin ?? true;
     this.chunkSize = options.chunkSize ?? 100;
   }
 
@@ -200,12 +213,13 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const ev = raw.events[i];
       const txHash = normalizeTxHash(ev.transaction_hash ?? "");
       if (!txHash) continue; // malformed skipped, not fabricated
+      if (ev.from_address === undefined ? this.requireEventOrigin : !sameContractAddress(ev.from_address, this.registryAddress)) continue;
       const eventKeys = ev.keys ?? ev.event?.keys ?? [];
       const eventData = ev.data ?? ev.event?.data ?? [];
       const blockNumber = typeof ev.block_number === "number" ? ev.block_number : null;
-      if (blockNumber === null || !Number.isInteger(blockNumber) || blockNumber < 0) continue;
+      if (blockNumber === null || !Number.isSafeInteger(blockNumber) || blockNumber < 0) continue;
       const eventIndex = ev.event_index;
-      if (typeof eventIndex !== "number" || !Number.isInteger(eventIndex) || eventIndex < 0) continue;
+      if (typeof eventIndex !== "number" || !Number.isSafeInteger(eventIndex) || eventIndex < 0) continue;
       const kind = this.inferKind(eventKeys);
       if (!kind) continue;
       const payload = this.inferPayload(kind, eventData, eventKeys);
@@ -279,9 +293,10 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     if (typeof this.reader.getBlockNumber === "function") {
       try {
         const scannedThrough = await this.reader.getBlockNumber();
-        if (Number.isFinite(scannedThrough)) watermark = scannedThrough;
-      } catch {
-        // Preserve the event watermark; the caller remains fail-closed if it is stale.
+        if (!Number.isSafeInteger(scannedThrough) || scannedThrough < 0) throw new Error("invalid_scan_watermark");
+        watermark = scannedThrough;
+      } catch (cause) {
+        throw new StarknetEventIndexerError("getBlockNumber failed", cause);
       }
     }
 
@@ -312,6 +327,8 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       });
       const match = raw.events.find((event) => {
         if (normalizeTxHash(event.transaction_hash ?? "") !== canonicalTxHash) return false;
+        if (this.requireEventOrigin && event.from_address === undefined) return false;
+        if (event.from_address !== undefined && !sameContractAddress(event.from_address, this.registryAddress)) return false;
         const keys = event.keys ?? event.event?.keys ?? [];
         const data = event.data ?? event.event?.data ?? [];
         const kind = this.inferKind(keys);
