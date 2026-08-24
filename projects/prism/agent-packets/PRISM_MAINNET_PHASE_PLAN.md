@@ -167,7 +167,7 @@ T12 failure/recovery
 real runtime smoke test on testnet
 ```
 
-**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, and HTTP smoke are parent-integrated at X2; live ledger/indexer/reconciliation and testnet smoke remain open.
+**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, shared read/indexer provider, pagination/dedup, K=5 stale refusal, reconciliation/recovery, and HTTP smoke are parent-integrated at X2; live Postgres/RPC/submit/readback and testnet smoke remain open.
 
 ---
 
@@ -217,7 +217,7 @@ reconciliation watermark
 failure/retry results
 ```
 
-**Current state:** wallets funded and Starknet infrastructure deployed; M3 digest and Prism ID boundary fixes are X2-tested, but the live Base proof/bind/resolve/revoke sequence remains open.
+**Current state:** wallets funded and Starknet infrastructure deployed; M3 digest/Prism-ID boundaries and a parent-executable dry-run/live-gated sequence runner are X2-tested, but the live Base proof/bind/resolve/revoke sequence remains open.
 
 **Exit maturity:** X3 testnet decisive identity evidence.
 
@@ -280,7 +280,7 @@ maturity is represented honestly
 privacy claim is action-specific
 ```
 
-**Current state:** provider-injected Wallet API consumer route is integration-ready at X2 with a 12-state machine and privacy guards; no live funded-wallet STRK20 trace has been observed.
+**Current state:** provider-injected Wallet API action port is integration-ready at X2 with capability, SN_SEPOLIA, simulate/proof, proving, screening, receipt, and privacy guards; no live funded-wallet STRK20 trace has been observed.
 
 ---
 
@@ -322,7 +322,7 @@ privacy boundary record
 declared Prism contract involvement
 ```
 
-**Current state:** `PrismVesuLendingHelper` is u256-hardened, deployed to SN_SEPOLIA, and has a narrow real helper→Vesu X3 probe; the complete STRK20 pool-invoked transaction and private-note readback remain open. PrismClaim is preserved as a future re-entry route.
+**Current state:** `PrismVesuLendingHelper` is u256-hardened, deployed to SN_SEPOLIA, and has a narrow real helper→Vesu X3 probe; the provider-injected M5 E2E runner is X2-ready, while the complete STRK20 pool-invoked transaction, private-note readback, independent receipt, and validator parity remain open. PrismClaim is preserved as a future re-entry route.
 
 ---
 
@@ -386,7 +386,7 @@ wallet authority and app authentication remain distinct
 responsive/accessibility/reduced-motion QA passes
 ```
 
-**Current state:** public landing exists; authenticated Home, Connections, Send, Receive, Activity, and Profile remain owner-led and are intentionally excluded from delegation. The current “Enter Prism” action is a preview only.
+**Current state:** public landing plus a truthful Home/Activity/Connections/Send/Receive/Profile workspace preview are implemented at X2; authenticated live product state, observed balances/receipts, and backend operation wiring remain open. The current “Enter Prism” action remains a preview only.
 
 ---
 
@@ -412,9 +412,9 @@ P8 Testnet Pause evidence
 
 **Mainnet requirement:** if Pause is included in the product promise, all P0–P8 must pass before M9. Pause must govern at least one consequential user action; it must never claim post-finality rollback.
 
-**Current state:** Pause P0–P7 foundations are parent-integrated at X2; detailed P0 canonicalization, live settlement adapters, Postgres/runtime evidence, and P8 testnet evidence remain open and block Band B M9.
+**Current state:** Pause P0–P7 runtime and adversarial closeout are parent-integrated at X2; detailed P0 canonicalization, live settlement adapters, Postgres/runtime evidence, and P8 testnet evidence remain open and block Band B M9.
 
-**PrismChannel boundary:** minimal C1/S4 PrismChannel domain slice is integration-ready at X2 for the testnet path; it remains non-blocking for first mainnet unless explicitly promised. No Phase 8 messaging surface is delegated.
+**PrismChannel boundary:** minimal C1/S4 PrismChannel domain slice is integration-ready at X2 for the testnet path; durable storage, real crypto/publisher, and independent live read remain open. It remains non-blocking for first mainnet unless explicitly promised. No full messenger surface is implied.
 
 ---
 
@@ -613,18 +613,18 @@ They require their own Product/System phases and should not be implied by the fi
 # Current phase status
 
 ```text
-M0  Product/release contract       partially governed; needs release-band decision
-M1  Starknet identity root          infrastructure deployed; live identity workflow open
-M2  Backend runtime                 X2 implementation; live service/reconciliation open
-S1  REST/API runtime                handlers exist; real service open
-S2  SDK                             not implemented
-S3  MCP adapter                     not implemented; conditional on agent/Pause promise
-M3  Base decisive proof             wallets funded; live bind sequence open
-M7  Prism Pause                     proposed plan only; before M4/M6 settlement actions
-M4  STRK20 consumer route           capability scaffold only
-M5  Prism-owned action/Claim        helper X2; live route not deployed
-M6  Home/product surfaces           landing only; app surfaces open
-C1  PrismChannel testnet slice      included in M8; not implemented
+M0  Product/release contract       Band B accepted; detailed Pause P0 decisions open
+M1  Starknet identity root          X2 read/index/watermark runtime; live X3 evidence open
+M2  Backend runtime                 X2 Postgres/ledger/reconciliation wiring; live runtime open
+S1  REST/API runtime                handlers, HTTP smoke, and fail-closed factory X2; live service open
+S2  SDK                             typed REST/operation/Pause surface X2; live negotiation/evidence open
+S3  MCP adapter                     thin adapter X2; live agent/Pause transport conditional/open
+M3  Base decisive proof             X2 parent runner; live bind sequence/signing open
+M7  Prism Pause                     P0–P7 runtime X2; P0 decisions, live adapters, and P8 open
+M4  STRK20 consumer route           provider-injected action port X2; live wallet/prover open
+M5  Prism-owned action/Claim        u256 helper + E2E runner X2; narrow helper probe X3; full pool route open
+M6  Home/product surfaces           truthful landing/workspace preview X2; live product states remain open
+C1  PrismChannel testnet slice      minimal domain slice X2; durable/live channel evidence open
 M8  Testnet rehearsal               open
 M9  Mainnet release                 blocked
 ```
@@ -646,7 +646,7 @@ Product Truth
 = Prism mainnet release
 ```
 
-The current system has the identity/backend foundation and testnet registry infrastructure, but it is not yet through M3–M8. The next highest-value vertical slice is:
+The current system has an integrated X2 backend/runtime foundation and a truthful X2 landing/workspace preview, but it is not yet through live M3–M8 gates. The next highest-value vertical slice is:
 
 ```text
 live create/read Prism ID
