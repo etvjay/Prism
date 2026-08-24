@@ -131,12 +131,15 @@ Preserved existing suites: `factory-postgres-gating` 11 tests, `runtime-http-smo
 
 ## 4. Observed results
 
-From `/home/ubuntu/prism-work/phase-backend-m2-ledger-runtime`:
+From the parent closeout run against the dedicated local `prism_test` database:
 
-- `npm test` — **50 passed | 2 skipped (52)** · **518 passed | 14 skipped (532)** · covers `m2-runtime-gates` 16/16 green; integration tiers (`postgres-*.integration` 14 skipped) remain honest `NOT RUN` because `PRISM_POSTGRES_TEST_URL` absent — blocker documented.
-  - `PRISM_POSTGRES_TEST_URL` **ABSENT** at test time (`env | grep PRISM` shows none, `isStarknetReadConfigured=false`), so Postgres integration not executed, as required.
+- `postgres-ownership-proof-store.integration.test.ts` — **6 passed**.
+- `postgres-operation-store.integration.test.ts` — **8 passed**.
+- Real Postgres integration total — **14 passed** via peer-authenticated Unix socket; the connection value was not persisted or exposed.
+- The normal parent shell did not retain `PRISM_POSTGRES_TEST_URL`; the integration runner injected a temporary local socket URL for this run only.
+- The remaining full-suite Postgres tiers are still skipped when the test URL is not injected.
 - `npm run typecheck` — `tsc --noEmit` **0 errors**.
-- `npm run build` — `next build --webpack` **Compiled successfully**, `18` routes (`/` + `/_not-found` + `17` `/api/v1/...`), no errors.
+- `npm run build` — `next build --webpack` **Compiled successfully**, `18` routes, no errors.
 - `git diff --check` — **clean**.
 - No connection string appears in `npm test` output or `git diff`; all error messages sanitized `≤80` chars, `store_unavailable` shape.
 
@@ -144,7 +147,7 @@ From `/home/ubuntu/prism-work/phase-backend-m2-ledger-runtime`:
 
 ## 5. Remaining live gates (not inflated)
 
-1. **Live Postgres integration (T7 X3)** — run `PRISM_POSTGRES_TEST_URL=postgresql://… npm test -- postgres-*.integration.test.ts` against real server; expect `migrates idempotent`, `nonce race exactly one winner`, `CAS race`, `restart durability`, `unreachable → store_connect_failed`. Currently blocked: `PRISM_POSTGRES_TEST_URL` not set in this environment (see blocker §4). No memory fallback in production — future run must be green to claim `X3`.
+1. **Live Postgres integration (T7 X3 subgate)** — the dedicated local `prism_test` run now passes the ownership/operation integration suites (14/14). A managed/runtime Postgres environment, Pause-store integration coverage, and repeat-after-schema-change run remain open before claiming full production durability.
 
 2. **Real Starknet readback (X3)** — with `STARKNET_RPC_URL=https://...` + `STARKNET_REGISTRY_ADDRESS=0x...` against `SN_SEPOLIA`, observe `get_identity`/`resolve` + `get_events` pagination + `getTransactionStatus`/`getTransactionReceipt` for a real `txHash` (e.g., `EVD-PRISM-004` shape) and record `txHash+block`, `hub_validator` where applicable; `create P → bind B → resolve=B → revoke → resolve=null → P persists` tail.
 

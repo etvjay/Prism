@@ -167,7 +167,7 @@ T12 failure/recovery
 real runtime smoke test on testnet
 ```
 
-**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, shared read/indexer provider, pagination/dedup, K=5 stale refusal, reconciliation/recovery, and HTTP smoke are parent-integrated at X2; live Postgres/RPC/submit/readback and testnet smoke remain open.
+**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, shared read/indexer provider, pagination/dedup, K=5 stale refusal, reconciliation/recovery, and HTTP smoke are parent-integrated at X2; the dedicated local Postgres ownership/operation subgate is observed 14/14, while live Starknet RPC/submit/readback, Pause-store durability, and testnet smoke remain open.
 
 ---
 
