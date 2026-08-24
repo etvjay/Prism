@@ -358,7 +358,7 @@ export class PostgresOperationStore implements OperationStore {
           if (watermarkChanged || metadataChanged) {
             try {
               const upd = await this.pool.query(
-                `UPDATE prism_operations SET reconciliation_watermark = $2, reconciliation_metadata = $3, updated_at = $4 WHERE id = $1 AND version = $5`,
+                `UPDATE prism_operations SET reconciliation_watermark = $2, reconciliation_metadata = $3, updated_at = $4, version = version + 1 WHERE id = $1 AND version = $5`,
                 [
                   id,
                   watermark,

@@ -660,6 +660,36 @@ describe("reconciliation port — pure policy", () => {
     expect(d.reason).toContain("awaiting_chain");
   });
 
+  it("requires_attention recovers into processing when chain facts become available", () => {
+    let op = createOperation({ id: "op-rec-recover", now: NOW });
+    op = advance(op, "awaiting_authorization");
+    op = advance(op, "ready");
+    op = advance(op, "submitted", { txHash: TX_HASH });
+    op = advance(op, "requires_attention", { errorCode: "ERR-022" });
+    const d = decideReconciliationStep(op, {
+      chain: { txHash: TX_HASH, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 },
+      indexer: null,
+      reconciliation: null,
+    });
+    expect(d.nextState).toBe("processing");
+    expect(d.reason).toBe("requires_attention_recovered_chain");
+  });
+
+  it("requires_attention can resume at reconciled only with an exact receipt/event match", () => {
+    let op = createOperation({ id: "op-rec-reconciled", now: NOW });
+    op = advance(op, "awaiting_authorization");
+    op = advance(op, "ready");
+    op = advance(op, "submitted", { txHash: TX_HASH });
+    op = advance(op, "requires_attention", { errorCode: "ERR-022" });
+    const d = decideReconciliationStep(op, {
+      chain: { txHash: TX_HASH, finality: "ACCEPTED_ON_L1", execution: "SUCCEEDED", blockNumber: 100 },
+      indexer: null,
+      reconciliation: { chainReceiptMatched: true, eventMatchedToOperation: true, matchedTxHash: TX_HASH },
+    });
+    expect(d.nextState).toBe("reconciled");
+    expect(d.authoritativeSource).toBe(AUTHORITATIVE_SOURCE.reconciled);
+  });
+
   it("submitted with SUCCEEDED ACCEPTED_ON_L2 advances to processing", () => {
     let op = createOperation({ id: "op-rec2", now: NOW });
     op = advance(op, "awaiting_authorization");

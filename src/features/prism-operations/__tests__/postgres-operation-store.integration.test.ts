@@ -141,6 +141,38 @@ suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
     }
   });
 
+  it("idempotent reconciliation metadata update increments version with CAS", async () => {
+    const suffix = uniqueSuffix();
+    let op = await store.create({
+      id: `op-meta-cas-${suffix}`,
+      idempotencyKey: `idem-meta-cas-${suffix}`,
+      requestFingerprint: `fp-meta-cas-${suffix}`,
+      now: NOW,
+    });
+    op = await store.transition(op.id, { to: "awaiting_authorization", now: NOW + 1, expectedVersion: 0 });
+    op = await store.transition(op.id, { to: "ready", now: NOW + 2, expectedVersion: 1 });
+    op = await store.transition(op.id, { to: "submitted", now: NOW + 3, expectedVersion: 2, txHash: TX_HASH });
+    const contenders = await Promise.all([createStore({ max: 1 }), createStore({ max: 1 })]);
+    try {
+      const results = await Promise.allSettled(contenders.map((c) => c.transition(op.id, {
+        to: "submitted",
+        now: NOW + 4,
+        expectedVersion: op.version,
+        txHash: TX_HASH,
+        reconciliationWatermark: 100,
+        reconciliationMetadata: { eventIndex: 0 },
+      })));
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+      const final = await store.getById(op.id);
+      expect(final?.version).toBe(op.version + 1);
+      expect(final?.reconciliationWatermark).toBe(100);
+      expect(final?.reconciliationMetadata).toEqual({ eventIndex: 0 });
+    } finally {
+      await Promise.all(contenders.map((c) => c.close()));
+    }
+  });
+
   it("never marks submitted as completed (INV-SYS-005)", async () => {
     const suffix = uniqueSuffix();
     let op = await store.create({

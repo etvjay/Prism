@@ -96,6 +96,25 @@ export function decideReconciliationStep(
   }
 
   // No chain facts yet => remain in current workflow state, caller should retry.
+  if (operation.state === "requires_attention") {
+    if (!facts.chain || facts.chain.txHash !== operation.txHash) {
+      return { nextState: null, reason: "awaiting_chain_observation", authoritativeSource: null };
+    }
+    if (facts.chain.execution === "REVERTED") {
+      return { nextState: "reverted" as OperationState, reason: `tx_reverted:${facts.chain.revertCode ?? "unknown"}`, authoritativeSource: AUTHORITATIVE_SOURCE.reverted };
+    }
+    if (facts.chain.execution === "SUCCEEDED" && (facts.chain.finality === "ACCEPTED_ON_L2" || facts.chain.finality === "ACCEPTED_ON_L1")) {
+      if (reconciliationMatchesOperation(operation, facts.reconciliation)) {
+        return { nextState: "reconciled", reason: "requires_attention_recovered_reconciliation_match", authoritativeSource: AUTHORITATIVE_SOURCE.reconciled };
+      }
+      return { nextState: "processing", reason: "requires_attention_recovered_chain", authoritativeSource: AUTHORITATIVE_SOURCE.processing };
+    }
+    if (facts.chain.execution === "RECEIVED" && facts.chain.finality === "RECEIVED") {
+      return { nextState: null, reason: "tx_in_mempool", authoritativeSource: null };
+    }
+    return { nextState: null, reason: "awaiting_next_chain_status", authoritativeSource: null };
+  }
+
   if (operation.state === "submitted" || operation.state === "processing" || operation.state === "confirming") {
     if (!facts.chain || facts.chain.txHash !== operation.txHash) {
       return { nextState: null, reason: "awaiting_chain_observation", authoritativeSource: null };
