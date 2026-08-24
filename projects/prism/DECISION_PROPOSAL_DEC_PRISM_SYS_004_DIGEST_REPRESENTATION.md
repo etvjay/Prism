@@ -68,25 +68,9 @@ runbook.
    available but unnecessary given option 1 preserves all invariants without
    touching System Foundry truth.
 
-## What owner acceptance would require (append-only)
+## Historical V1 proposal record
 
-```yaml
-decision_id: DEC-PRISM-SYS-004        # next free id after SYS-003
-layer: System/Data-Representation
-status: <ACCEPTED | REJECTED>
-subject: field-bounded (250-bit masked) proof_digest representation for felt252 calldata
-decided_by: Jason
-decided_at: <date>
-companion_work:
-  - amend DOMAIN_MODEL.md OBJ-PRISM-005 note with the named mapping (EXTEND-class)
-  - amend CONTRACT_SPEC.md OP-8-01 with calldata representation note
-  - add TEST_ARCHITECTURE.md row for felt-boundary tests (in/out-of-range/collision)
-```
-
-No artifact in this worktree fills this template. Until accepted, the mapping
-ships as implementation with this proposal attached; if rejected, the registry
-interface must change first (option 3) and M3 remains blocked by interface.
-
+The felt-mask alternative in this section is superseded for V2 by accepted `DEC-PRISM-SYS-004`. It remains only as historical analysis of the V1 boundary; it is not the active representation and does not authorize any deployment.
 ---
 
 # ADDENDUM — M3-X2 second boundary: prismId `prism:<decimal>` → felt252

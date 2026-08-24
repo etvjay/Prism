@@ -20,7 +20,7 @@
 
 - V2 has no class hash, address, declaration receipt, deployment receipt, or live identity evidence yet.
 - The V2 adapter is not a live submission path until a V2 address and user-controlled signer are provisioned.
-- The existing `DEC-PRISM-SYS-004/005` proposals remain derived decision text until canonical acceptance is recorded.
+- The accepted `DEC-PRISM-SYS-004/005` records now authorize the V2 design/cutover direction; they do not constitute deployment or live M3 evidence.
 - V1 masked digest records cannot be reconstructed into exact full digests; V1 remains legacy evidence.
 - V2 event catalogue/evidence must be updated with the actual V2 deployment/class hash after deployment.
 
