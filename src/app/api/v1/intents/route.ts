@@ -19,7 +19,15 @@ export async function POST(req: Request): Promise<Response> {
   const idempotencyKey = parsed.idempotencyKey ?? (body.idempotencyKey as string | undefined) ?? null;
   if (!idempotencyKey) return jsonError(parsed.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 409, "missing_idempotency_key");
 
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   try {
     const intent = await factory.pauseService.createIntent({
       prismId,

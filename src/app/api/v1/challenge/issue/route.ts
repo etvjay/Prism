@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, toHttpResponse, readJson, requireSession } from "@/application/http-helpers";
+import { parseHeaders, toHttpResponse, readJson, requireSession, jsonError } from "@/application/http-helpers";
 
 // POST /v1/challenge/issue — wrapper for issuing ownership proof challenge (used by SDK)
 export async function POST(req: Request): Promise<Response> {
@@ -17,7 +17,15 @@ export async function POST(req: Request): Promise<Response> {
     const { jsonError } = await import("@/application/http-helpers");
     return jsonError(parsed.requestId, "ERR-005", 422, "missing_challenge_fields");
   }
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   const res = await factory.app.issueChallenge({ headers: { requestId: parsed.requestId }, session, payload: { prismId, venue, executionAccount, ttlSeconds } });
   return toHttpResponse(res, parsed);
 }

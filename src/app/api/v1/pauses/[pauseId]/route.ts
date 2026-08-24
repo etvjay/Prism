@@ -6,7 +6,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ pauseId: string
   const parsed = parseHeaders(req);
   const { pauseId } = await ctx.params;
   const decoded = decodeURIComponent(pauseId);
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   const pause = await factory.pauseService.getPause(decoded);
   if (!pause) return jsonError(parsed.requestId, "ERR-002", 404, `pause_not_found:${decoded}`);
   const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });

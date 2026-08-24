@@ -12,7 +12,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   const sessionOrErr = requireSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   const expectedVersion = parsed.expectedVersion ?? (body.expectedVersion as number | null | undefined) ?? null;
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   try {
     const pause = await factory.pauseService.cancelPause(decoded, expectedVersion);
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });

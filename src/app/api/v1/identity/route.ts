@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, toHttpResponse, readJson, requireSession } from "@/application/http-helpers";
+import {parseHeaders, toHttpResponse, readJson, requireSession, jsonError} from "@/application/http-helpers";
 
 // POST /v1/identity — create Prism ID on Starknet (OP-7-01)
 // Semantics: idempotency required, correlation propagated, submitted != completed.
@@ -14,7 +14,15 @@ export async function POST(req: Request): Promise<Response> {
   const kind = (body.kind as string | undefined) ?? "create_identity";
   const headers = { requestId: parsed.requestId ?? null, idempotencyKey: parsed.idempotencyKey ?? (body.idempotencyKey as string | null) ?? null, correlationId: parsed.correlationId ?? (body.correlationId as string | null) ?? null, expectedVersion: parsed.expectedVersion };
 
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   const res = await factory.app.createIdentity({ headers, session, payload: { controllerAddress, kind } });
   return toHttpResponse(res, parsed);
 }

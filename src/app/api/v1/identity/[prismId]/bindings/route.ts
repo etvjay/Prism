@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, toHttpResponse, readJson, requireSession } from "@/application/http-helpers";
+import {parseHeaders, toHttpResponse, readJson, requireSession, jsonError} from "@/application/http-helpers";
 
 // POST /v1/identity/:prismId/bindings — bind Base account (OP-8-01)
 export async function POST(req: Request, ctx: { params: Promise<{ prismId: string }> }): Promise<Response> {
@@ -28,7 +28,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ prismId: strin
     correlationId: parsed.correlationId ?? (body.correlationId as string | null) ?? null,
     expectedVersion: parsed.expectedVersion ?? (body.expectedVersion as number | null) ?? null,
   };
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   const res = await factory.app.bind({
     headers,
     session,

@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, toHttpResponse, readJson, requireSession } from "@/application/http-helpers";
+import { parseHeaders, toHttpResponse, readJson, requireSession, jsonError } from "@/application/http-helpers";
 
 // POST /v1/challenge/verify
 export async function POST(req: Request): Promise<Response> {
@@ -16,7 +16,15 @@ export async function POST(req: Request): Promise<Response> {
     const { jsonError } = await import("@/application/http-helpers");
     return jsonError(parsed.requestId, "ERR-012", 400, "missing_proof_fields");
   }
-  const factory = getAppFactory();
+  let factory;
+  try {
+    factory = await getAppFactory();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "store_unavailable";
+    // Never leak connection string; sanitize
+    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
+    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  }
   const res = await factory.app.submitProof({ headers: { requestId: parsed.requestId }, session, payload: { challengeId: challengeId as `0x${string}`, presented: presented as never, signature: signature as `0x${string}` } });
   return toHttpResponse(res, parsed);
 }

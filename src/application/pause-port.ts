@@ -76,6 +76,7 @@ export interface PauseService {
 
 import { AppError, APP_ERROR_CODE } from "./errors";
 import { InMemoryPauseStore } from "../features/prism-pause/adapters/memory-pause-store";
+import type { PauseStore } from "../features/prism-pause/ports/pause-store";
 import { PauseService as DomainPauseService } from "../features/prism-pause/application/pause-service";
 import type { ExecutionIntent as DomainIntent } from "../features/prism-pause/domain/intent";
 import type { ExecutionPlan as DomainPlan } from "../features/prism-pause/domain/execution-plan";
@@ -160,20 +161,20 @@ function unknownSources(): VerificationSources {
 }
 
 export class InMemoryPauseService implements PauseService {
-  private readonly domainStore: InMemoryPauseStore;
+  private readonly domainStore: PauseStore;
   private readonly domainService: DomainPauseService;
   private readonly restInputs = new Map<string, CreateIntentInput>();
   private readonly correlationByIntent = new Map<string, string | null>();
   private readonly correlationByPause = new Map<string, string | null>();
   private intentCounter = 1;
 
-  constructor(private readonly clock: { now(): number }) {
-    this.domainStore = new InMemoryPauseStore();
-    this.domainService = new DomainPauseService(this.domainStore, { store: this.domainStore, defaultPauseTtlMs: 3600 * 1000 });
+  constructor(private readonly clock: { now(): number }, store?: PauseStore) {
+    this.domainStore = store ?? new InMemoryPauseStore();
+    this.domainService = new DomainPauseService(this.domainStore as InMemoryPauseStore & PauseStore, { store: this.domainStore, defaultPauseTtlMs: 3600 * 1000 } as never);
   }
 
   // For testing: expose underlying store/service
-  getDomainStore(): InMemoryPauseStore { return this.domainStore; }
+  getDomainStore(): PauseStore { return this.domainStore; }
   getDomainService(): DomainPauseService { return this.domainService; }
 
   async createIntent(input: CreateIntentInput): Promise<ExecutionIntent> {
