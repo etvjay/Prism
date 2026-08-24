@@ -30,10 +30,32 @@ import { AppError, APP_ERROR_CODE } from "./errors";
 import { StarknetRegistryReader, getStarknetRpcUrl, getStarknetRegistryAddress, isStarknetReadConfigured, isStarknetRpcUrlValid } from "./adapters/starknet-registry-reader";
 import { StarknetLedgerStatusAdapter } from "../features/prism-operations/adapters/starknet-ledger-status";
 import { StarknetEventIndexerAdapter } from "../features/prism-operations/adapters/starknet-event-indexer";
+import type { StarknetEventReader } from "../features/prism-operations/adapters/starknet-event-indexer";
 import { WatermarkedResolveService } from "../features/prism-operations/domain/resolve-service";
 import { ReconciliationWorker } from "../features/prism-operations/domain/reconciliation-worker";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
 import type { LedgerStatusPort, EventIndexerPort } from "../features/prism-operations/domain/ports";
+import { RpcProvider } from "starknet";
+
+export type SubmitPortMode = "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
+
+export interface FactorySubmitOptions {
+  /** Injected submit port for controlled callers (e.g. tests with StarknetSubmitAdapter fake). If omitted, defaults to InMemoryRegistry TEST_DOUBLE. */
+  submitPort?: StarknetSubmitPort;
+}
+
+export interface FactoryStarknetOverrides {
+  /** Injected read provider shared across callContract + getEvents (for tests). If omitted, factory creates one RpcProvider. */
+  starknetReadProvider?: StarknetEventReader & {
+    callContract?(args: { contractAddress: string; entrypoint: string; calldata: string[] }, blockIdentifier?: string): Promise<string[]>;
+    call?(args: { contractAddress: string; entrypoint: string; calldata: string[] }): Promise<string[]>;
+    getTransactionStatus?(txHash: string): Promise<Record<string, unknown>>;
+    getTransactionReceipt?(txHash: string): Promise<Record<string, unknown>>;
+    getBlockNumber?(): Promise<number>;
+    getBlockLatestAccepted?(): Promise<{ block_number: number }>;
+  };
+  submitPort?: StarknetSubmitPort;
+}
 
 export interface AppFactory {
   handlers: ReturnType<typeof createPrismApiHandlers>;
@@ -41,8 +63,12 @@ export interface AppFactory {
   registry: InMemoryRegistry;
   /** Canonical read port — may be real Starknet reader when env configured, else in-memory fallback (dev/test). */
   registryReadPort: RegistryReadPort;
-  /** Submit port — currently in-memory until real Account wiring lands (no private keys in this lane). */
+  /** Submit port — TEST_DOUBLE_X2 by default; live Starknet only via explicit injection. */
   submitPort: StarknetSubmitPort;
+  /** Explicit mode label so callers never mistake TEST_DOUBLE for live submission. */
+  submitPortMode: SubmitPortMode;
+  /** True only when a real StarknetSubmitAdapter was injected via factory options. Never derived from env secrets. */
+  isStarknetSubmitConfigured: boolean;
   operationStore: OperationStore;
   ownershipStore: OwnershipProofStore;
   pauseService: InMemoryPauseService;
@@ -53,6 +79,8 @@ export interface AppFactory {
   /** Real read-only Starknet ports when STARKNET_RPC_URL+REGISTRY_ADDRESS present; null in dev/test fallback. */
   ledgerStatusAdapter?: (LedgerStatusPort & { getConfirmedBlock(): Promise<number | null> }) | null;
   eventIndexerAdapter?: EventIndexerPort | null;
+  /** Shared read provider when Starknet configured (single RpcProvider or injected fake). Null in dev fallback. */
+  starknetReadProvider?: FactoryStarknetOverrides["starknetReadProvider"] | null;
   /** Watermarked resolve with K=5 stale refusal, wired to ledger confirmed block when available. */
   resolveService: WatermarkedResolveService;
   /** Reconciliation worker bound to durable store + ledger/indexer fakes (X2) or real adapters when configured. */
@@ -61,6 +89,10 @@ export interface AppFactory {
   isStarknetConfigured: boolean;
   /** Graceful shutdown: stop worker, close stores/events. */
   shutdown(): Promise<void>;
+}
+
+export function isStarknetSubmitConfiguredForFactory(factory: AppFactory): boolean {
+  return factory.isStarknetSubmitConfigured;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,33 +142,40 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string }
   return { rpcUrl, registryAddress };
 }
 
-function createStarknetReadPorts(): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter } | null {
+function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["starknetReadProvider"] {
+  return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
+}
+
+export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null {
   const cfg = assertStarknetEnvOrThrow();
   if (!cfg) return null;
-  const reader = new StarknetRegistryReader({ rpcUrl: cfg.rpcUrl, registryAddress: cfg.registryAddress });
-  const ledger = new StarknetLedgerStatusAdapter({ rpcUrl: cfg.rpcUrl });
-  // Event indexer needs a reader: provide a minimal shim that delegates to ledger's provider getEvents if available.
-  // If ledger has no getEvents, indexer will fail-closed on fetch; for read-only lane we create adapter with a throw-on-call reader so fetch is fail-closed yet wiring is visible.
-  const indexerReader = {
-    async getEvents() {
-      throw new Error("indexer_getEvents_requires_explicit_reader_injection");
-    },
-  } as unknown as import("../features/prism-operations/adapters/starknet-event-indexer").StarknetEventReader;
+  // Share one read-only provider across callContract and getEvents — no dead shim.
+  const provider = overrides?.starknetReadProvider ?? createSharedRpcProvider(cfg.rpcUrl);
+  // Validate provider implements both surfaces fail-closed
+  const hasCall = typeof (provider as unknown as { callContract?: unknown }).callContract === "function" || typeof (provider as unknown as { call?: unknown }).call === "function";
+  const hasGetEvents = typeof (provider as unknown as { getEvents?: unknown }).getEvents === "function";
+  if (!hasCall) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_reader_missing_callContract");
+  }
+  if (!hasGetEvents) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_requires_getEvents");
+  }
+  const reader = new StarknetRegistryReader({ rpcUrl: cfg.rpcUrl, registryAddress: cfg.registryAddress, reader: provider as unknown as import("./adapters/starknet-registry-reader").StarknetRegistryReaderRpc });
+  const ledger = new StarknetLedgerStatusAdapter({ rpcUrl: cfg.rpcUrl, reader: provider as unknown as import("../features/prism-operations/adapters/starknet-ledger-status").StarknetRpcReader });
   let indexer: StarknetEventIndexerAdapter;
   try {
-    indexer = new StarknetEventIndexerAdapter({ reader: indexerReader, registryAddress: cfg.registryAddress, chunkSize: 100 });
+    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, chunkSize: 100 });
   } catch {
-    // If chunkSize/registry validation fails, fail-closed
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }
-  return { reader, ledger, indexer };
+  return { reader, ledger, indexer, provider };
 }
 
 // ---------------------------------------------------------------------------
 // Factory creators
 // ---------------------------------------------------------------------------
 
-function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))): AppFactory {
+function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): AppFactory {
   const ownershipStore = new InMemoryOwnershipProofStore();
   const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
@@ -149,10 +188,10 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
   const operationStore = new InMemoryOperationStore();
   const registry = new InMemoryRegistry();
   // Attempt Starknet read wiring — fail-closed on invalid env, else fallback to memory for dev/test
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter } | null = null;
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null = null;
   let starknetError: Error | null = null;
   try {
-    starknetPorts = createStarknetReadPorts();
+    starknetPorts = createStarknetReadPorts(overrides);
   } catch (e) {
     starknetError = e as Error;
   }
@@ -160,13 +199,23 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
   const registryReadPort: RegistryReadPort = starknetPorts ? starknetPorts.reader : registry;
   const ledgerStatusAdapter = starknetPorts ? starknetPorts.ledger : null;
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
+  const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
+  // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
+  const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
+  const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
+  const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
+  if (isStarknetConfigured && submitPortMode === "TEST_DOUBLE_X2") {
+    // Production with Starknet read config but test-double submit — expose as submit_unconfigured; callers must check mode.
+    // We do not secretly imply live submission; factory remains usable for read paths but submit is clearly test double.
+    void "submit_unconfigured: Starknet read configured but submitPort is TEST_DOUBLE_X2 — inject StarknetSubmitAdapter for live bind/revoke";
+  }
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
     operationStore,
     registry: registryReadPort,
-    submitPort: registry,
+    submitPort,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
@@ -221,7 +270,9 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
     app,
     registry,
     registryReadPort,
-    submitPort: registry,
+    submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
     operationStore,
     ownershipStore,
     pauseService,
@@ -231,6 +282,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
     prismEventsStore: null,
     ledgerStatusAdapter,
     eventIndexerAdapter,
+    starknetReadProvider,
     resolveService,
     reconciliationWorker,
     isPostgres: false,
@@ -239,7 +291,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
   };
 }
 
-async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(Date.now() / 1000))): Promise<AppFactory> {
+async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): Promise<AppFactory> {
   // Validate format synchronously before attempting network
   assertPostgresUrlOrThrow(url);
 
@@ -262,11 +314,11 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_connect_or_migrate_failed:${(cause as Error)?.message?.slice(0, 80) ?? "unknown"}`);
   }
 
-  // Starknet read wiring — fail-closed on invalid config, otherwise real adapters
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter } | null = null;
+  // Starknet read wiring — fail-closed on invalid config, otherwise real adapters sharing one provider
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null = null;
   let starknetError: Error | null = null;
   try {
-    starknetPorts = createStarknetReadPorts();
+    starknetPorts = createStarknetReadPorts(overrides);
   } catch (e) {
     starknetError = e as Error;
   }
@@ -278,7 +330,11 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const registryReadPort: RegistryReadPort = starknetPorts ? starknetPorts.reader : registry;
   const ledgerStatusAdapter = starknetPorts ? starknetPorts.ledger : null;
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
+  const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
+  const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
+  const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
+  const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
 
   const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
@@ -293,7 +349,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     challengeService,
     operationStore,
     registry: registryReadPort,
-    submitPort: registry,
+    submitPort,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
@@ -345,7 +401,9 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     app,
     registry,
     registryReadPort,
-    submitPort: registry,
+    submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
     operationStore,
     ownershipStore,
     pauseService,
@@ -355,6 +413,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     prismEventsStore,
     ledgerStatusAdapter,
     eventIndexerAdapter,
+    starknetReadProvider,
     resolveService,
     reconciliationWorker,
     isPostgres: true,
@@ -452,9 +511,15 @@ export function getAppFactoryLegacy(): AppFactory {
 }
 
 // For tests: create isolated factory with deterministic clock (always memory, never postgres)
-export function createIsolatedFactory(start = 1_789_000_000): AppFactory {
+export function createIsolatedFactory(start = 1_789_000_000, overrides?: FactoryStarknetOverrides): AppFactory {
   const clock = fixedClock(start);
-  return createMemoryFactory(clock);
+  return createMemoryFactory(clock, overrides);
+}
+
+// Explicit factory with injected Starknet read provider and/or submit port (for wiring tests)
+export function createIsolatedFactoryWithStarknet(start = 1_789_000_000, overrides: FactoryStarknetOverrides): AppFactory {
+  const clock = fixedClock(start);
+  return createMemoryFactory(clock, overrides);
 }
 
 export function resetFactory() {
