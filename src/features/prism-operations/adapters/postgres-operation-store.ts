@@ -439,7 +439,7 @@ export class PostgresOperationStore implements OperationStore {
     try {
       const placeholders = NON_TERMINAL_STATES.map((_, i) => `$${i + 1}`).join(", ");
       result = await this.pool.query<Row>(
-        `SELECT ${COLUMNS.join(", ")} FROM prism_operations WHERE state IN (${placeholders}) ORDER BY updated_at ASC LIMIT $${NON_TERMINAL_STATES.length + 1}`,
+        `SELECT ${COLUMNS.join(", ")} FROM prism_operations WHERE state IN (${placeholders}) ORDER BY updated_at ASC, id ASC LIMIT $${NON_TERMINAL_STATES.length + 1}`,
         [...NON_TERMINAL_STATES, bounded],
       );
     } catch (cause) {

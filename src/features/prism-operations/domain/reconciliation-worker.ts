@@ -52,6 +52,16 @@ export type WorkerMetrics = {
   currentWatermarkStale: number;
 };
 
+export type WorkerTickResult = {
+  swept: number;
+  advanced: number;
+  noops: number;
+  dependencyFailures: number;
+  staleConflicts: number;
+  escalated: number;
+  reverted: number;
+};
+
 const DEFAULTS: Required<ReconciliationWorkerConfig> = {
   pollIntervalMs: 5000,
   maxRetries: 5,
@@ -77,6 +87,7 @@ export class ReconciliationWorker {
   private readonly composite: OperationReconciliationPort;
   private running = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private tickInFlight: Promise<WorkerTickResult> | null = null;
   private metrics: WorkerMetrics = {
     sweeps: 0,
     ticks: 0,
@@ -109,15 +120,18 @@ export class ReconciliationWorker {
   }
 
   /** Deterministic single sweep — used by startup recovery and by tests. */
-  async tickAllOnce(now?: number): Promise<{
-    swept: number;
-    advanced: number;
-    noops: number;
-    dependencyFailures: number;
-    staleConflicts: number;
-    escalated: number;
-    reverted: number;
-  }> {
+  async tickAllOnce(now?: number): Promise<WorkerTickResult> {
+    if (this.tickInFlight) return this.tickInFlight;
+    const run = this.runTickAllOnce(now);
+    this.tickInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.tickInFlight === run) this.tickInFlight = null;
+    }
+  }
+
+  private async runTickAllOnce(now?: number): Promise<WorkerTickResult> {
     const at = now ?? this.clock.now();
     if (!Number.isFinite(at)) throw new Error("invalid_now_timestamp");
 
@@ -224,7 +238,7 @@ export class ReconciliationWorker {
   }
 
   /** Startup recovery: deterministic sweep over durable non-terminal rows. */
-  async recoverAtStartup(now?: number): Promise<ReturnType<ReconciliationWorker["tickAllOnce"]>> {
+  async recoverAtStartup(now?: number): Promise<WorkerTickResult> {
     return this.tickAllOnce(now);
   }
 

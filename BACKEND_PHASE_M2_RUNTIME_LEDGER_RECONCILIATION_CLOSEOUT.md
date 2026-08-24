@@ -155,11 +155,23 @@ From the parent closeout run against the dedicated local `prism_test` database:
 - `git diff --check` — **clean**.
 - No connection string appears in `npm test` output or `git diff`; all error messages sanitized `≤80` chars, `store_unavailable` shape.
 
+### 4.1 Local durable follow-on at verified HEAD `4c41910` (X2 only)
+
+This follow-on closes only deterministic local seams; it does **not** create live evidence or promote the lane beyond X2:
+
+- `ReconciliationWorker.tickAllOnce` coalesces overlapping calls per worker, and both memory/Postgres `listNonTerminal` paths order equal timestamps by `operation_id` for repeatable bounded sweeps.
+- `recoverAtStartup` reuses the durable non-terminal sweep; the Postgres integration now closes/reopens the operation store and drives the observed-receipt path through `submitted → processing → confirming → confirmed → indexed → reconciled → completed`, then reads the derived receipt.
+- `EventProjectionCoordinator.runOnce` coalesces overlapping calls per coordinator; replay after checkpoint/store reopen persists no duplicate event and advances from the durable `nextFromBlock`.
+- `InMemoryEventProjectionCheckpointStore` now models the Postgres key space per registry; local tests cover independent registries and CAS contention. Postgres tests cover initial and update contention with exactly one winner.
+- Receipt completion requires both reconciliation booleans **and** an explicit `matchedTxHash` equal to the durable operation hash. `StarknetEventIndexerAdapter` reports event correlation only; it never treats an event alone as a chain receipt. `StarknetLedgerStatusAdapter` withholds terminal execution/block facts when the receipt is missing or incomplete.
+
+The local PostgreSQL cluster run is controlled test evidence only: operation store `9/9` and event projection `3/3` passed through a local Unix socket. No external RPC, wallet, broadcast, deployment, or evidence-ledger movement was performed.
+
 ---
 
 ## 5. Remaining live gates (not inflated)
 
-1. **Durable projection/reconciliation follow-on (X3)** — one live factory read→index→Postgres checkpoint run is now observed and the local 16-test Postgres tier passes. Repeated daemon liveness, restart after a live scan, multi-worker checkpoint contention under process failure, and operation receipt reconciliation remain open.
+1. **Durable projection/reconciliation follow-on (X3)** — **local X2 follow-on closed** by deterministic tick coalescing, restart replay, per-registry checkpoint CAS, local Postgres contention, and submitted→observed receipt reconciliation tests. X3 remains blocked: repeated daemon/process failure against production-like Postgres/RPC, independent live readback, and owner-approved external evidence are not observed here.
 
 2. **Real Starknet readback (X3)** — live `get_identity`/`get_events`/scan-watermark evidence is now observed for EVD-PRISM-004 through the user-provided Alchemy endpoint plus an independent RPC path. The full `getTransactionStatus`/`getTransactionReceipt` operation tail and `create P → bind B → resolve=B → revoke → resolve=null → P persists` sequence remain open.
 

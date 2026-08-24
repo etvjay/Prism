@@ -50,6 +50,7 @@ export class EventProjectionCoordinator {
   private readonly eventsStore: PrismEventsStore;
   private readonly indexer: EventProjectionIndexer;
   private readonly now: () => number;
+  private runInFlight: Promise<EventProjectionRunResult> | null = null;
 
   constructor(options: EventProjectionCoordinatorOptions) {
     if (!/^0x[0-9a-fA-F]{1,64}$/.test(options.registryAddress)) throw new Error("event_projection_invalid_registry_address");
@@ -65,6 +66,17 @@ export class EventProjectionCoordinator {
   }
 
   async runOnce(): Promise<EventProjectionRunResult> {
+    if (this.runInFlight) return this.runInFlight;
+    const run = this.runOnceInternal();
+    this.runInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.runInFlight === run) this.runInFlight = null;
+    }
+  }
+
+  private async runOnceInternal(): Promise<EventProjectionRunResult> {
     const checkpoint = await this.checkpointStore.get(this.registryAddress);
     if (checkpoint && (checkpoint.network !== this.network || checkpoint.registryAddress !== this.registryAddress)) {
       throw new Error("event_projection_checkpoint_identity_mismatch");

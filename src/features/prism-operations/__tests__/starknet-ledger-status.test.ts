@@ -39,6 +39,32 @@ describe("StarknetLedgerStatusAdapter", () => {
     });
   });
 
+  it("does not promote a successful status without an observed receipt", async () => {
+    const statusOnly = reader({
+      getTransactionStatus: async () => ({ finality_status: "ACCEPTED_ON_L2", execution_status: "SUCCEEDED" }),
+      getTransactionReceipt: async () => {
+        throw new Error("TRANSACTION_HASH_NOT_FOUND");
+      },
+    });
+    await expect(new StarknetLedgerStatusAdapter({ rpcUrl: "http://rpc.invalid", reader: statusOnly }).observeChain(TX)).resolves.toMatchObject({
+      finality: "ACCEPTED_ON_L2",
+      execution: null,
+      blockNumber: null,
+    });
+  });
+
+  it("does not promote a receipt that lacks an explicit terminal execution field", async () => {
+    const incomplete = reader({
+      getTransactionStatus: async () => ({ finality_status: "ACCEPTED_ON_L2", execution_status: "SUCCEEDED" }),
+      getTransactionReceipt: async () => ({ finality_status: "ACCEPTED_ON_L2", block_number: 42 }),
+    });
+    await expect(new StarknetLedgerStatusAdapter({ rpcUrl: "http://rpc.invalid", reader: incomplete }).observeChain(TX)).resolves.toMatchObject({
+      finality: "ACCEPTED_ON_L2",
+      execution: null,
+      blockNumber: 42,
+    });
+  });
+
   it("maps a reverted receipt and preserves its reason", async () => {
     const reverted = reader({
       getTransactionStatus: async () => ({ finality_status: "ACCEPTED_ON_L2", execution_status: "REVERTED" }),

@@ -88,6 +88,62 @@ describe("EventProjectionCoordinator", () => {
     expect(await events.count()).toBe(1);
   });
 
+  it("coalesces overlapping projection ticks for one coordinator", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    let calls = 0;
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: {
+        async fetchAllRegistryEvents() {
+          calls++;
+          await gate;
+          return { events: [EVENT], watermark: 10, pagesFetched: 1 };
+        },
+      },
+      now: () => 100,
+    });
+
+    const first = coordinator.runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = coordinator.runOnce();
+    unblock();
+    const results = await Promise.all([first, second]);
+
+    expect(calls).toBe(1);
+    expect(results[0]).toEqual(results[1]);
+    expect(await events.count()).toBe(1);
+  });
+
+  it("keeps checkpoint CAS state independent for multiple registries", async () => {
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const registryB = "0x77b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
+    const inputA = {
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      nextFromBlock: 11,
+      scanWatermark: 10,
+      eventWatermark: 10,
+      continuationToken: null,
+    };
+    const inputB = { ...inputA, registryAddress: registryB, nextFromBlock: 21, scanWatermark: 20, eventWatermark: null };
+
+    expect(await checkpoints.compareAndSet(null, inputA, 100)).toBe(true);
+    expect(await checkpoints.compareAndSet(null, inputB, 100)).toBe(true);
+    expect((await checkpoints.get(REGISTRY))?.nextFromBlock).toBe(11);
+    expect((await checkpoints.get(registryB))?.nextFromBlock).toBe(21);
+    expect(await checkpoints.compareAndSet(0, { ...inputA, nextFromBlock: 12, scanWatermark: 11, eventWatermark: 11 }, 101)).toBe(true);
+    expect((await checkpoints.get(registryB))?.nextFromBlock).toBe(21);
+  });
+
   it("fails closed when scan watermark is unavailable", async () => {
     const events = new InMemoryPrismEventsStore();
     const checkpoints = new InMemoryEventProjectionCheckpointStore();

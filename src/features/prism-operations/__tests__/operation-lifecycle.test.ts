@@ -743,6 +743,46 @@ describe("reconciliation port — pure policy", () => {
     expect(d.authoritativeSource).toBe(AUTHORITATIVE_SOURCE.completed);
   });
 
+  it("blocks indexed reconciliation when the observed receipt hash is ambiguous or mismatched", () => {
+    let op = createOperation({ id: "op-rec5-mismatch", now: NOW });
+    op = advance(op, "awaiting_authorization");
+    op = advance(op, "ready");
+    op = advance(op, "submitted", { txHash: TX_HASH });
+    op = advance(op, "processing");
+    op = advance(op, "confirming");
+    op = advance(op, "confirmed");
+    op = advance(op, "indexed");
+
+    for (const matchedTxHash of [null, TX_HASH_2]) {
+      const d = decideReconciliationStep(op, {
+        chain: null,
+        indexer: null,
+        reconciliation: { chainReceiptMatched: true, eventMatchedToOperation: true, matchedTxHash },
+      });
+      expect(d.nextState).toBeNull();
+      expect(d.reason).toBe("awaiting_reconciliation_match");
+    }
+  });
+
+  it("blocks completion when the observed receipt hash does not match the operation", () => {
+    let op = createOperation({ id: "op-rec6-mismatch", now: NOW });
+    op = advance(op, "awaiting_authorization");
+    op = advance(op, "ready");
+    op = advance(op, "submitted", { txHash: TX_HASH });
+    op = advance(op, "processing");
+    op = advance(op, "confirming");
+    op = advance(op, "confirmed");
+    op = advance(op, "indexed");
+    op = advance(op, "reconciled");
+    const d = decideReconciliationStep(op, {
+      chain: null,
+      indexer: null,
+      reconciliation: { chainReceiptMatched: true, eventMatchedToOperation: true, matchedTxHash: TX_HASH_2 },
+    });
+    expect(d.nextState).toBeNull();
+    expect(d.reason).toBe("awaiting_receipt_issue");
+  });
+
   it("terminal states never advance via reconciliation", () => {
     let op = createOperation({ id: "op-rec-term", now: NOW });
     op = advance(op, "awaiting_authorization");

@@ -351,12 +351,14 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
   }
 
   async observeReconciliation(txHash: Hex): Promise<{ chainReceiptMatched: boolean; eventMatchedToOperation: boolean; matchedTxHash?: Hex | null }> {
-    // In the current reconciliation model, reconciliation is the ledger-index correlation
-    // that the worker derives from ledger + indexer facts. For adapter parity, we report
-    // matched when observeIndexer finds an event for this txHash.
+    // This adapter observes registry events only. A matching chain receipt is
+    // supplied by the ledger port and combined by the reconciliation boundary;
+    // an event alone must never be promoted to receipt evidence.
     const obs = await this.observeIndexer(txHash);
-    if (!obs || !obs.eventObserved) return { chainReceiptMatched: false, eventMatchedToOperation: false, matchedTxHash: null };
-    return { chainReceiptMatched: true, eventMatchedToOperation: true, matchedTxHash: txHash };
+    if (!obs || !obs.eventObserved || obs.txHash.toLowerCase() !== txHash.toLowerCase()) {
+      return { chainReceiptMatched: false, eventMatchedToOperation: false, matchedTxHash: null };
+    }
+    return { chainReceiptMatched: false, eventMatchedToOperation: true, matchedTxHash: txHash };
   }
 
   private inferKind(keys: string[]): RegistryEventKind | null {

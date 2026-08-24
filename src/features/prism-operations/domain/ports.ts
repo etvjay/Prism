@@ -66,6 +66,17 @@ export interface ReconciliationDecision {
   authoritativeSource: string | null;
 }
 
+function reconciliationMatchesOperation(operation: Operation, reconciliation: ReconciliationObservation | null): boolean {
+  if (!reconciliation || operation.txHash === null || reconciliation.matchedTxHash === null || reconciliation.matchedTxHash === undefined) {
+    return false;
+  }
+  return (
+    reconciliation.chainReceiptMatched === true &&
+    reconciliation.eventMatchedToOperation === true &&
+    reconciliation.matchedTxHash.toLowerCase() === operation.txHash.toLowerCase()
+  );
+}
+
 /**
  * Pure map from durable operation + observed chain/indexer/reconciliation facts
  * to the next OperationState. Returns null when no state change is warranted
@@ -124,7 +135,7 @@ export function decideReconciliationStep(
   }
 
   if (operation.state === "indexed") {
-    if (facts.reconciliation?.eventMatchedToOperation && facts.reconciliation.chainReceiptMatched) {
+    if (reconciliationMatchesOperation(operation, facts.reconciliation)) {
       return { nextState: "reconciled", reason: "reconciliation_match", authoritativeSource: AUTHORITATIVE_SOURCE.reconciled };
     }
     return { nextState: null, reason: "awaiting_reconciliation_match", authoritativeSource: null };
@@ -133,7 +144,7 @@ export function decideReconciliationStep(
   if (operation.state === "reconciled") {
     // Completion requires the receipt to have been issued; the facts signal
     // that reconciliation has succeeded, so the caller may issue receipt.
-    if (facts.reconciliation?.chainReceiptMatched && facts.reconciliation.eventMatchedToOperation) {
+    if (reconciliationMatchesOperation(operation, facts.reconciliation)) {
       return { nextState: "completed", reason: "receipt_issued", authoritativeSource: AUTHORITATIVE_SOURCE.completed };
     }
     return { nextState: null, reason: "awaiting_receipt_issue", authoritativeSource: null };

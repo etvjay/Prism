@@ -69,11 +69,46 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
     const reopened = await checkpoints.get(REGISTRY);
     expect(reopened).toMatchObject({ nextFromBlock: 11, scanWatermark: 10, eventWatermark: 10, version: 0 });
     expect(await events.count()).toBe(1);
+
+    const resumed = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: { fetchAllRegistryEvents: async () => ({ events: [EVENT], watermark: 12, pagesFetched: 1 }) },
+      now: () => 101,
+    });
+    const replay = await resumed.runOnce();
+    expect(replay.fromBlock).toBe(11);
+    expect(replay.inserted).toBe(0);
+    expect(replay.duplicates).toBe(1);
+    expect(replay.nextFromBlock).toBe(13);
+    expect(await events.count()).toBe(1);
   });
 
   it("CAS allows exactly one initial checkpoint writer", async () => {
     const input = { registryAddress: `${REGISTRY.slice(0, -1)}5`, network: "SN_SEPOLIA", nextFromBlock: 0, scanWatermark: 0, eventWatermark: null, continuationToken: null };
     const results = await Promise.all([checkpoints!.compareAndSet(null, input, 100), checkpoints!.compareAndSet(null, input, 100)]);
     expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("CAS update contention has one winner and preserves the winning version", async () => {
+    const contender = await PostgresEventProjectionCheckpointStore.create(options());
+    const registry = `${REGISTRY.slice(0, -1)}7`;
+    const base = { registryAddress: registry, network: "SN_SEPOLIA", nextFromBlock: 10, scanWatermark: 9, eventWatermark: null, continuationToken: null };
+    const next = { ...base, nextFromBlock: 11, scanWatermark: 10, eventWatermark: 10 };
+    try {
+      expect(await checkpoints!.compareAndSet(null, base, 100)).toBe(true);
+      const results = await Promise.all([
+        checkpoints!.compareAndSet(0, next, 101),
+        contender.compareAndSet(0, next, 101),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect((await checkpoints!.get(registry))?.version).toBe(1);
+      expect((await checkpoints!.get(registry))?.nextFromBlock).toBe(11);
+    } finally {
+      await contender.close();
+    }
   });
 });

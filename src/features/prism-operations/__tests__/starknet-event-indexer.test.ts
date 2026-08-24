@@ -158,12 +158,13 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     expect(obs).toMatchObject({ eventObserved: true, blockNumber: 42, eventIndex: 3 });
   });
 
-  it("observeReconciliation matches when event observed", async () => {
+  it("observeReconciliation reports event correlation without claiming an unobserved chain receipt", async () => {
     const reader = readerWithEvents([{ block_number: 42, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] }]);
     const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
     const r = await adapter.observeReconciliation(TX_A);
-    expect(r.chainReceiptMatched).toBe(true);
+    expect(r.chainReceiptMatched).toBe(false);
     expect(r.eventMatchedToOperation).toBe(true);
+    expect(r.matchedTxHash).toBe(TX_A);
   });
 
   it("fail-closed on reader dependency error (throws StarknetEventIndexerError)", async () => {

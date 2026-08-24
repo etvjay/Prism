@@ -125,6 +125,23 @@ export async function tickReconciliation(
     }
   }
 
+  // The indexer port can prove event correlation, but it cannot promote an
+  // event into receipt evidence by itself. Combine it with the ledger fact
+  // already observed in this tick and fail closed on an unknown/mismatched
+  // chain result. The pure policy still accepts an explicitly supplied
+  // reconciliation fact for transport-neutral callers and unit tests.
+  if (reconciliation !== null) {
+    const receiptMatches =
+      chain !== null &&
+      chain.txHash.toLowerCase() === (txHash as string).toLowerCase() &&
+      chain.execution === "SUCCEEDED" &&
+      (chain.finality === "ACCEPTED_ON_L2" || chain.finality === "ACCEPTED_ON_L1");
+    reconciliation = {
+      ...reconciliation,
+      chainReceiptMatched: receiptMatches,
+    };
+  }
+
   const facts: ReconciliationFacts = { chain, indexer, reconciliation };
   const decision = decideReconciliationStep(op, facts);
 

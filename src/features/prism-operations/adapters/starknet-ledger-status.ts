@@ -92,8 +92,10 @@ export class StarknetLedgerStatusAdapter implements LedgerStatusPort, ConfirmedB
     }
 
     let receipt: Record<string, unknown> | null = null;
+    let receiptObserved = false;
     try {
       receipt = await this.reader.getTransactionReceipt(txHash);
+      receiptObserved = true;
     } catch (error) {
       if (!isNotFound(error)) {
         throw new StarknetLedgerStatusError(`receipt lookup failed for ${txHash}`, error);
@@ -101,13 +103,14 @@ export class StarknetLedgerStatusAdapter implements LedgerStatusPort, ConfirmedB
     }
 
     const finalityStatus = finality(receipt?.finality_status ?? status.finality_status);
-    const executionStatus = execution(receipt?.execution_status ?? status.execution_status);
+    // A terminal status without a readable receipt is not enough to advance the
+    // durable operation. Keep finality visible for polling, but withhold the
+    // execution fact until the receipt is actually observed.
+    const executionStatus = execution(receiptObserved ? receipt?.execution_status : null);
     const blockNumber =
-      typeof receipt?.block_number === "number"
+      receiptObserved && typeof receipt?.block_number === "number"
         ? receipt.block_number
-        : typeof status.block_number === "number"
-          ? status.block_number
-          : null;
+        : null;
 
     return {
       txHash,

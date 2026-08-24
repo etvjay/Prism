@@ -90,6 +90,38 @@ describe("ReconciliationWorker — startup recovery, retry/backoff, unknown/reve
     expect(computeBackoffMs(10, 1000, 30000)).toBe(30000); // capped
   });
 
+  it("coalesces overlapping daemon ticks so one worker does not double-observe an operation", async () => {
+    const store = new InMemoryOperationStore();
+    await createSubmitted(store, "op-overlap");
+    let observations = 0;
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const worker = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          observations++;
+          if (observations === 1) await gate;
+          return { txHash, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: indexerFake(),
+      clock: clockFake(NOW + 20),
+    });
+
+    const first = worker.tickAllOnce(NOW + 20);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = worker.tickAllOnce(NOW + 20);
+    unblock();
+    const results = await Promise.all([first, second]);
+
+    expect(observations).toBe(1);
+    expect(results[0]).toEqual(results[1]);
+    expect((await store.getById("op-overlap"))?.state).toBe("processing");
+  });
+
   it("unknown status: submitted-but-unknown stays submitted, fail-closed, no invented completion", async () => {
     const store = new InMemoryOperationStore();
     await createSubmitted(store, "op-unk");
@@ -179,6 +211,71 @@ describe("ReconciliationWorker — startup recovery, retry/backoff, unknown/reve
     const res = await worker.tickAllOnce(NOW + 20);
     expect(res.dependencyFailures).toBe(1);
     expect((await store.getById("op-dep"))?.state).toBe("submitted");
+  });
+
+  it("orders equal-timestamp restart rows by operation id for repeatable bounded sweeps", async () => {
+    const store = new InMemoryOperationStore();
+    const secondTx = (`0x${"b".repeat(64)}`) as Hex;
+    await createSubmitted(store, "op-z", TX_HASH, NOW);
+    await createSubmitted(store, "op-a", secondTx, NOW);
+    const observed: Hex[] = [];
+    const worker = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          observed.push(txHash);
+          return { txHash, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: indexerFake(),
+      clock: clockFake(NOW + 20),
+      config: { sweepLimit: 1 },
+    });
+
+    const result = await worker.tickAllOnce(NOW + 20);
+    expect(result.swept).toBe(1);
+    expect(observed).toEqual([secondTx]);
+  });
+
+  it("combines a successful observed receipt with an indexed event before issuing a completed receipt", async () => {
+    const store = new InMemoryOperationStore();
+    let op = await createSubmitted(store, "op-observed-receipt");
+    op = await store.transition(op.id, { to: "processing", now: NOW + 4, expectedVersion: op.version });
+    op = await store.transition(op.id, { to: "confirming", now: NOW + 5, expectedVersion: op.version });
+    op = await store.transition(op.id, { to: "confirmed", now: NOW + 6, expectedVersion: op.version });
+    op = await store.transition(op.id, {
+      to: "indexed",
+      now: NOW + 7,
+      expectedVersion: op.version,
+      reconciliationWatermark: 100,
+      reconciliationMetadata: { eventIndex: 0 },
+    });
+
+    const worker = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          return { txHash, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: {
+        async observeIndexer(txHash: Hex) {
+          return { txHash, eventObserved: true, eventName: "ExecutionIdentityBound", blockNumber: 100, eventIndex: 0 };
+        },
+        async observeReconciliation(txHash: Hex) {
+          return { chainReceiptMatched: false, eventMatchedToOperation: true, matchedTxHash: txHash };
+        },
+      },
+      clock: clockFake(NOW + 8),
+    });
+
+    const reconciled = await worker.tickAllOnce(NOW + 8);
+    expect(reconciled.advanced).toBe(1);
+    expect((await store.getById(op.id))?.state).toBe("reconciled");
+
+    const completed = await worker.tickAllOnce(NOW + 9);
+    expect(completed.advanced).toBe(1);
+    expect((await store.getById(op.id))?.state).toBe("completed");
   });
 
   it("never marks submitted as completed without indexed+reconciled", async () => {

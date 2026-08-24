@@ -130,7 +130,10 @@ export class InMemoryOperationStore implements OperationStore {
     for (const rec of this.byId.values()) {
       if ((NON_TERMINAL_STATES as readonly string[]).includes(rec.state)) result.push(clone(rec));
     }
-    result.sort((a, b) => a.updatedAt - b.updatedAt);
+    result.sort((a, b) => {
+      if (a.updatedAt !== b.updatedAt) return a.updatedAt - b.updatedAt;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
     return result.slice(0, bounded);
   }
 

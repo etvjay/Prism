@@ -179,26 +179,27 @@ export class PostgresEventProjectionCheckpointStore implements EventProjectionCh
 }
 
 export class InMemoryEventProjectionCheckpointStore implements EventProjectionCheckpointStore {
-  private checkpoint: EventProjectionCheckpoint | null = null;
+  private readonly checkpoints = new Map<string, EventProjectionCheckpoint>();
   private closed = false;
 
   async get(registryAddress: string): Promise<EventProjectionCheckpoint | null> {
     this.assertOpen();
-    if (!this.checkpoint || this.checkpoint.registryAddress !== registryAddress.toLowerCase()) return null;
-    return { ...this.checkpoint };
+    const checkpoint = this.checkpoints.get(registryAddress.toLowerCase());
+    return checkpoint ? { ...checkpoint } : null;
   }
 
   async compareAndSet(expectedVersion: number | null, next: EventProjectionCheckpointInput, now: number): Promise<boolean> {
     this.assertOpen();
     validateInput(next);
     const address = next.registryAddress.toLowerCase();
+    const current = this.checkpoints.get(address);
     if (expectedVersion === null) {
-      if (this.checkpoint !== null) return false;
-      this.checkpoint = { ...next, registryAddress: address, version: 0, updatedAt: Math.floor(now) };
+      if (current !== undefined) return false;
+      this.checkpoints.set(address, { ...next, registryAddress: address, version: 0, updatedAt: Math.floor(now) });
       return true;
     }
-    if (!this.checkpoint || this.checkpoint.registryAddress !== address || this.checkpoint.version !== expectedVersion) return false;
-    this.checkpoint = { ...next, registryAddress: address, version: expectedVersion + 1, updatedAt: Math.floor(now) };
+    if (!current || current.version !== expectedVersion) return false;
+    this.checkpoints.set(address, { ...next, registryAddress: address, version: expectedVersion + 1, updatedAt: Math.floor(now) });
     return true;
   }
 

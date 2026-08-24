@@ -8,6 +8,8 @@ import { Pool } from "pg";
 import { PostgresOperationStore } from "../adapters/postgres-operation-store";
 import { OperationError } from "../domain/errors";
 import type { Hex } from "../domain/operation";
+import { ReconciliationWorker } from "../domain/reconciliation-worker";
+import { ReceiptService } from "../../../application/receipt-service";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
@@ -216,6 +218,57 @@ suite("PostgresOperationStore (LIVE integration, WP-4B)", () => {
       await reopened.close();
       store = await createStore();
     }
+  });
+
+  it("restart recovery reconciles an observed receipt before the receipt service reports completed", async () => {
+    const suffix = uniqueSuffix();
+    let op = await store.create({
+      id: `op-reconcile-${suffix}`,
+      idempotencyKey: `idem-reconcile-${suffix}`,
+      requestFingerprint: `fp-reconcile-${suffix}`,
+      now: NOW,
+    });
+    op = await store.transition(op.id, { to: "awaiting_authorization", now: NOW + 1, expectedVersion: op.version });
+    op = await store.transition(op.id, { to: "ready", now: NOW + 2, expectedVersion: op.version });
+    op = await store.transition(op.id, { to: "submitted", now: NOW + 3, expectedVersion: op.version, txHash: TX_HASH_2 });
+
+    await store.close();
+    const reopened = await createStore();
+    store = reopened;
+    const worker = new ReconciliationWorker({
+      store: reopened,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          return { txHash, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: {
+        async observeIndexer(txHash: Hex) {
+          return { txHash, eventObserved: true, eventName: "ExecutionIdentityBound", blockNumber: 100, eventIndex: 0 };
+        },
+        async observeReconciliation(txHash: Hex) {
+          return { chainReceiptMatched: false, eventMatchedToOperation: true, matchedTxHash: txHash };
+        },
+      },
+      clock: { now: () => NOW + 20 },
+      config: { sweepLimit: 100 },
+    });
+
+    for (let tick = 0; tick < 6; tick++) {
+      const result = await worker.tickAllOnce(NOW + 10 + tick);
+      expect(result.swept).toBeGreaterThanOrEqual(1);
+      expect(result.advanced).toBeGreaterThanOrEqual(1);
+    }
+
+    const receipt = await new ReceiptService(reopened).getReceipt(op.id, "request-reconcile");
+    expect(receipt.ok).toBe(true);
+    if (receipt.ok) {
+      expect(receipt.data.state).toBe("completed");
+      expect(receipt.data.txHash).toBe(TX_HASH_2);
+      expect(receipt.data.watermark).toBe(100);
+    }
+    await reopened.close();
+    store = await createStore();
   });
 
   it("listNonTerminal returns only non-terminal rows and survives restart watermark", async () => {
