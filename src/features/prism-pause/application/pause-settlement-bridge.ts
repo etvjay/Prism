@@ -13,6 +13,7 @@ import type { OperationStore } from "../../prism-operations/domain/operation-sto
 import type { PauseExecutionAdapter, SettlementChain } from "../ports/execution-adapter";
 import { resolveChainFromPlan } from "../ports/execution-adapter";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
+import { TERMINAL_FAILURE_STATES, TERMINAL_STATES } from "../../prism-operations/domain/operation";
 
 export interface PauseSettlementBridgeOptions {
   pauseStore: PauseStore;
@@ -22,8 +23,22 @@ export interface PauseSettlementBridgeOptions {
   now?: () => number;
 }
 
+const NON_REUSABLE_OPERATION_STATES: ReadonlySet<string> = new Set<string>([
+  ...TERMINAL_STATES,
+  ...TERMINAL_FAILURE_STATES,
+]);
+
 export class PauseSettlementBridge {
   constructor(private readonly opts: PauseSettlementBridgeOptions) {}
+
+  private assertExistingOperationUsable(operation: import("../../prism-operations/domain/operation-store").PersistedOperation): void {
+    // A completed operation may be returned only as an idempotent readback of
+    // the same already-linked RELEASED pause. Other terminal states can never
+    // be submitted again or linked during a retry.
+    if (NON_REUSABLE_OPERATION_STATES.has(operation.state) && operation.state !== "completed") {
+      throw new PauseError(PAUSE_ERROR_CODE.OPERATION_NOT_REUSABLE, `settlement_operation_terminal:${operation.state}`);
+    }
+  }
 
   private metrics(): PauseMetrics | undefined { return this.opts.metrics; }
   private nowMs(): number { return this.opts.now ? this.opts.now() : Date.now(); }
@@ -69,6 +84,7 @@ export class PauseSettlementBridge {
           // operationId derived from pause's settlementOperationId must match the idempotent key owner
           throw new PauseError(PAUSE_ERROR_CODE.OPERATION_ALREADY_LINKED, `settlement idempotency maps to ${existingByKey.id} not ${operationId}`);
         }
+        this.assertExistingOperationUsable(op);
       } else {
         op = await this.opts.operationStore.create({
           id: operationId,
@@ -81,6 +97,8 @@ export class PauseSettlementBridge {
         this.metrics()?.increment("settlement_operation_created", { chain: resolveChainFromPlan(plan) });
       }
     }
+
+    this.assertExistingOperationUsable(op);
 
     // If already submitted or beyond, idempotent return (distinct states preserved)
     if (["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(op.state)) {

@@ -11,7 +11,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   if (body === null) return jsonError(parsed.requestId, "ERR-023", 400, "malformed_json");
   const sessionOrErr = requireSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
-  const approver = (body.approver as string | undefined) ?? (body.approverAddress as string | undefined) ?? sessionOrErr.userId;
+  // The app session supplies only the authenticated subject. Any request claim is
+  // untrusted input for an explicit resolver and is never an authority decision.
+  const claimedApprover = (body.approver as string | undefined) ?? (body.approverAddress as string | undefined);
+  const authoritySubject = sessionOrErr.userId;
   const planHash = body.planHash as string | undefined;
   const approvalScopeHash = body.approvalScopeHash as string | null | undefined;
   let factory;
@@ -24,7 +27,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
   try {
-    const pause = await factory.pauseService.approvePause(decoded, approver, { planHash, approvalScopeHash });
+    const pause = await factory.pauseService.approvePause(decoded, authoritySubject, { planHash, approvalScopeHash, authorityClaim: claimedApprover ?? null });
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
     if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
     if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);

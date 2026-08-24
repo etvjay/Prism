@@ -5,6 +5,7 @@ import { createIntent } from "../domain/intent";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { computeApprovalScopeHash } from "../domain/pause";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
   policyVersion: "v1",
@@ -32,7 +33,7 @@ function makeIntent(now=1000) {
 describe("P4 explicit commands with binding", () => {
   it("pause -> verify -> release creates future Operation link", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_1", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_1", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -49,7 +50,7 @@ describe("P4 explicit commands with binding", () => {
 
   it("cancel from PAUSED succeeds, cancel from RELEASED fails", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_2", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_2", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -66,7 +67,7 @@ describe("P4 explicit commands with binding", () => {
 
   it("escalate and approve with plan-hash binding", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_4", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_4", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -96,7 +97,7 @@ describe("P4 explicit commands with binding", () => {
 
   it("reverify invalidates stale approval and requires fresh verify", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_6", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_6", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -110,7 +111,7 @@ describe("P4 explicit commands with binding", () => {
 
   it("release requires exact plan_hash binding", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_7", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_7", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });

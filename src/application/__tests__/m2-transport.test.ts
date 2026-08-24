@@ -19,6 +19,7 @@ import type { Hex } from "../../features/prism-operations/domain/operation";
 import type { AppSession } from "../auth";
 import { createPrismClient } from "../../sdk/client";
 import { createMcpAdapter, MCP_TOOL_DEFINITIONS } from "../../sdk/mcp-boundary";
+import { testPauseAuthorityResolver } from "../../features/prism-pause/__tests__/test-authority";
 
 const DOMAIN = "prism.example";
 const CONTROLLER = "0x1111111111111111111111111111111111111111";
@@ -54,7 +55,7 @@ function build(now = 1_789_000_000) {
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
   const handlers = createPrismApiHandlers(app);
-  const pauseService = new InMemoryPauseService(clock);
+  const pauseService = new InMemoryPauseService(clock, { authorityResolver: testPauseAuthorityResolver });
   const receiptService = new ReceiptService(operationStore);
   return { app, handlers, registry, operationStore, challengeService, clock, pauseService, receiptService };
 }

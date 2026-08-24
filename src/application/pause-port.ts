@@ -62,7 +62,7 @@ export interface PauseService {
   pauseIntent(intentId: string, opts?: { correlationId?: string | null; requestId?: string | null }): Promise<ExecutionPause>;
   getPause(pauseId: string): Promise<ExecutionPause | null>;
   verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string; sources?: unknown }): Promise<ExecutionPause>;
-  releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null }): Promise<ExecutionPause>;
+  releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause>;
   cancelPause(pauseId: string, expectedVersion?: number | null): Promise<ExecutionPause>;
   escalatePause(pauseId: string): Promise<ExecutionPause>;
   approvePause(pauseId: string, approver: string, opts?: { planHash?: string; approvalScopeHash?: string | null }): Promise<ExecutionPause>;
@@ -84,6 +84,8 @@ import type { ExecutionPause as DomainPause } from "../features/prism-pause/doma
 import { computeApprovalScopeHash } from "../features/prism-pause/domain/pause";
 import { PauseError, PAUSE_ERROR_CODE } from "../features/prism-pause/domain/errors";
 import type { Policy, VerificationSources } from "../features/prism-pause/domain/policy-engine";
+import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
+export type { PauseAuthorityAction, PauseAuthorityActor, PauseAuthorityDecision, PauseAuthorityRequest, PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 
 function toMs(clockNow: number): number {
   // clock.now() is seconds (fixedClock seconds). Convert to ms for domain.
@@ -178,6 +180,7 @@ export class InMemoryPauseService implements PauseService {
       operationStore?: import("../features/prism-operations/domain/operation-store").OperationStore;
       metrics?: import("../features/prism-pause/ports/metrics").PauseMetrics;
       adapterRegistry?: Map<import("../features/prism-pause/ports/execution-adapter").SettlementChain, import("../features/prism-pause/ports/execution-adapter").PauseExecutionAdapter>;
+      authorityResolver?: PauseAuthorityResolver;
     },
   ) {
     this.injectedOperationStore = opts?.operationStore;
@@ -190,6 +193,7 @@ export class InMemoryPauseService implements PauseService {
       defaultPauseTtlMs: 3600 * 1000,
       operationStore: opts?.operationStore,
       executionAdapters: opts?.adapterRegistry,
+      authorityResolver: opts?.authorityResolver,
       metrics: metricsForDomain,
       now: () => toMs(this.clock.now()),
     });
@@ -355,7 +359,7 @@ export class InMemoryPauseService implements PauseService {
     }
   }
 
-  async releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null }): Promise<ExecutionPause> {
+  async releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const domainPause = await this.domainStore.getPause(pauseId);
     if (!domainPause) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `pause_not_found:${pauseId}`);
 
@@ -386,6 +390,8 @@ export class InMemoryPauseService implements PauseService {
         now: nowMs,
         expectedVersion: expectedVersion ?? domainPause.version,
         correlationId,
+        authoritySubject: opts?.authoritySubject,
+        authorityClaim: opts?.authorityClaim,
       });
       const corr = this.correlationByPause.get(pauseId) ?? null;
       // Note: domainService already created & submitted Operation via injected store/adapter (distinct states, never completed).
@@ -445,7 +451,7 @@ export class InMemoryPauseService implements PauseService {
     }
   }
 
-  async approvePause(pauseId: string, _approver: string, opts?: { planHash?: string; approvalScopeHash?: string | null }): Promise<ExecutionPause> {
+  async approvePause(pauseId: string, approver: string, opts?: { planHash?: string; approvalScopeHash?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const domainPause = await this.domainStore.getPause(pauseId);
     if (!domainPause) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `pause_not_found:${pauseId}`);
     const nowMs = toMs(this.clock.now());
@@ -458,7 +464,7 @@ export class InMemoryPauseService implements PauseService {
       throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_SCOPE_MISMATCH, "approval_scope_hash_mismatch");
     }
     try {
-      const result = await this.domainService.approve({ pauseId, planHash: planHash as unknown as `0x${string}`, approvalScopeHash: approvalScopeHash as unknown as `0x${string}` | null, now: nowMs, expectedVersion: domainPause.version });
+      const result = await this.domainService.approve({ pauseId, planHash: planHash as unknown as `0x${string}`, approvalScopeHash: approvalScopeHash as unknown as `0x${string}` | null, now: nowMs, expectedVersion: domainPause.version, authoritySubject: approver, authorityClaim: opts?.authorityClaim });
       const corr = this.correlationByPause.get(pauseId) ?? null;
       return mapDomainPauseToRest(result, corr);
     } catch (e) {

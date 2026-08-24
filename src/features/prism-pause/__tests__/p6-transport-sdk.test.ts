@@ -2,12 +2,13 @@ import { describe, it, expect } from "vitest";
 import { PrismClient } from "../../../sdk/client";
 import { createIsolatedFactory } from "../../../application/factory";
 import { parseHeaders } from "../../../application/http-helpers";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 function headersOf(obj: { headers: Headers }): string | null { return null; }
 
 describe("P6 transport/API convergence + SDK hash vocabulary", () => {
   it("REST Pause routes use rigorous PauseService and expose stable hash/CAS/error semantics", async () => {
-    const factory = createIsolatedFactory(1_800_000_000);
+    const factory = createIsolatedFactory(1_800_000_000, { pauseAuthorityResolver: testPauseAuthorityResolver });
     // Create intent via service (simulates POST /v1/intents with Idempotency-Key + Correlation)
     const intent = await factory.pauseService.createIntent({
       prismId: "prism:alice",
@@ -83,7 +84,7 @@ describe("P6 transport/API convergence + SDK hash vocabulary", () => {
     const client = new PrismClient({ baseUrl: "http://localhost", defaultSession: { sessionId:"sess1", userId:"prism:alice", issuedAt: Math.floor(Date.now()/1000)-5, expiresAt: Math.floor(Date.now()/1000)+3600 } });
     expect((client as any).pauses).toBeDefined();
     // PauseData shape via service returns hashes, not calldata
-    const factory = createIsolatedFactory(1_800_000_200);
+    const factory = createIsolatedFactory(1_800_000_200, { pauseAuthorityResolver: testPauseAuthorityResolver });
     const intent = await factory.pauseService.createIntent({ prismId:"prism:bob", purpose:"payment", venue:"base", asset:"0xdead", recipientAddress:"0xabc", amount:"10", idempotencyKey:"idem_sdk", correlationId:"corr-sdk" });
     const pause = await factory.pauseService.pauseIntent(intent.intentId, { correlationId:"corr-sdk" });
     const verified = await factory.pauseService.verifyPause(pause.pauseId);

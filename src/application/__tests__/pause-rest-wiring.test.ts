@@ -6,14 +6,36 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createIsolatedFactory, resetFactory } from "../factory";
 import { PAUSE_ERROR_CODE } from "../../features/prism-pause/domain/errors";
 import { computeApprovalScopeHash } from "../../features/prism-pause/domain/pause";
+import { testPauseAuthorityResolver } from "../../features/prism-pause/__tests__/test-authority";
+
+function createTestFactory() {
+  return createIsolatedFactory(undefined, { pauseAuthorityResolver: testPauseAuthorityResolver });
+}
 
 const PRISM_ID = "prism:RESTTEST";
 
 describe("Pause REST wiring — rigorous guards", () => {
   beforeEach(() => { resetFactory(); });
 
-  it("release with plan_hash mismatch fails ERR-102", async () => {
+  it("default REST adapter fails closed when release/approval authority is not configured", async () => {
     const f = createIsolatedFactory();
+    const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-authority-open" });
+    const pause = await f.pauseService.pauseIntent(intent.intentId);
+    const verified = await f.pauseService.verifyPause(pause.pauseId);
+
+    await expect(f.pauseService.releasePause(verified.pauseId, verified.version, { planHash: verified.planHash, settlementOperationId: "op-authority-open" })).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED });
+    expect((await f.pauseService.getPause(verified.pauseId))?.state).toBe("RELEASE_READY");
+    expect(await f.operationStore.getById("op-authority-open")).toBeUndefined();
+
+    const blockedIntent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "unknown_asset", recipientAddress: "unknown_recipient", idempotencyKey: "idem-approval-authority-open" });
+    const blockedPause = await f.pauseService.pauseIntent(blockedIntent.intentId);
+    const escalated = await f.pauseService.verifyPause(blockedPause.pauseId);
+    await expect(f.pauseService.approvePause(escalated.pauseId, "claimed-controller")).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED });
+    expect((await f.pauseService.getPause(escalated.pauseId))?.state).toBe("ESCALATED");
+  });
+
+  it("release with plan_hash mismatch fails ERR-102", async () => {
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-plan-mismatch" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     await f.pauseService.verifyPause(pause.pauseId);
@@ -22,7 +44,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("release with approval_scope_hash mismatch fails ERR-104", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-approval-mismatch" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const verified = await f.pauseService.verifyPause(pause.pauseId);
@@ -34,14 +56,14 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("verify with policyVersion mismatch fails ERR-103", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-policy-mismatch" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     await expect(f.pauseService.verifyPause(pause.pauseId, { policyVersion: "v999" })).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH });
   });
 
   it("UNKNOWN blocking — verify with unknown recipient escalates and release fails blocking", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "unknown_asset", recipientAddress: "unknown_recipient", idempotencyKey: "idem-unknown" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const verified = await f.pauseService.verifyPause(pause.pauseId);
@@ -52,7 +74,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("stale version/CAS on release fails ERR-111", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-cas-release" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const verified = await f.pauseService.verifyPause(pause.pauseId);
@@ -63,7 +85,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("stale version/CAS on cancel fails ERR-111", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-cas-cancel" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     await expect(f.pauseService.cancelPause(pause.pauseId, pause.version - 1 as unknown as number)).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.STALE_VERSION });
@@ -72,7 +94,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("RELEASED creates settlementOperationId only, not completed, and second release/cancel fails", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-released-semantics" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const verified = await f.pauseService.verifyPause(pause.pauseId);
@@ -87,7 +109,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("verify auto-promote is eliminated — verify stays VERIFYING or goes to ESCALATED/RELEASE_READY via policy engine, not fake auto-promote", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "10", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-verify-rigorous" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     expect(pause.state).toBe("PAUSED");
@@ -99,7 +121,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("approve requires correct planHash binding", async () => {
-    const f = createIsolatedFactory();
+    const f = createTestFactory();
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "unknown_asset", recipientAddress: "unknown_recipient", idempotencyKey: "idem-approve-binding" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const escalated = await f.pauseService.verifyPause(pause.pauseId);

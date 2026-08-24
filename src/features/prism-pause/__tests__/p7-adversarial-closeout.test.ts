@@ -7,6 +7,7 @@ import { createFakeAdapterRegistry } from "../adapters/fake-execution-adapters";
 import { computeApprovalScopeHash } from "../domain/pause";
 import { PAUSE_ERROR_CODE } from "../domain/errors";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
   policyVersion: "v1",
@@ -40,7 +41,7 @@ async function bootstrap(opts?: { metrics?: InMemoryPauseMetrics; adapters?: Map
   const opStore = new InMemoryOperationStore();
   const metrics = opts?.metrics ?? new InMemoryPauseMetrics();
   const adapters = opts?.adapters ?? createFakeAdapterRegistry(opStore);
-  const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10_000, now: () => 5000 });
+  const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver, now: () => 5000 });
   return { pauseStore, opStore, metrics, svc };
 }
 
@@ -145,7 +146,7 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
       },
     };
     const adapters = new Map([[ "base" as import("../ports/execution-adapter").SettlementChain, failingAdapter as unknown as import("../ports/execution-adapter").PauseExecutionAdapter ]]);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10_000, now: () => 5000 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver, now: () => 5000 });
     const intent = await svc.createIntent({ intentId: "intent_adapter", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "10", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_adapter", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "10" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -191,7 +192,7 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
     const pauseStore = new InMemoryPauseStore();
     const opStore = new InMemoryOperationStore();
     const adapters = createFakeAdapterRegistry(opStore);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics: throwingMetrics, defaultPauseTtlMs: 10_000, now: () => 5000 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics: throwingMetrics, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver, now: () => 5000 });
     const intent = await svc.createIntent({ intentId: "intent_metrics", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "10", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_metrics", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "10" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -269,7 +270,7 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
       },
     };
     const adapters = new Map([[ "base" as import("../ports/execution-adapter").SettlementChain, maliciousAdapter as unknown as import("../ports/execution-adapter").PauseExecutionAdapter ]]);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10_000, now: () => 5000 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver, now: () => 5000 });
     const intent = await svc.createIntent({ intentId: "intent_mal_adapter", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "10", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_mal_adapter", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "10" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });

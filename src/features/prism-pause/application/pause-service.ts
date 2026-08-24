@@ -22,6 +22,8 @@ import type { OperationStore, PersistedOperation } from "../../prism-operations/
 import type { PauseExecutionAdapter, SettlementChain } from "../ports/execution-adapter";
 import { resolveChainFromPlan } from "../ports/execution-adapter";
 import type { PauseMetrics } from "../ports/metrics";
+import type { PauseAuthorityAction, PauseAuthorityActor, PauseAuthorityDecision, PauseAuthorityResolver } from "../ports/authority";
+import { TERMINAL_FAILURE_STATES, TERMINAL_STATES } from "../../prism-operations/domain/operation";
 
 export interface PauseServiceOptions {
   store: PauseStore;
@@ -31,11 +33,19 @@ export interface PauseServiceOptions {
   operationStore?: OperationStore;
   executionAdapters?: Map<SettlementChain, PauseExecutionAdapter>;
   metrics?: PauseMetrics;
+  /** Explicit Product/System authority policy. Omitted means approve/release fail closed. */
+  authorityResolver?: PauseAuthorityResolver;
   now?: () => number;
 }
 
 let decisionSeq = 0;
 function nextDecisionId(): string { decisionSeq +=1; return `dec_${Date.now()}_${decisionSeq}`; }
+
+const AUTHORITY_ACTORS: ReadonlySet<string> = new Set<PauseAuthorityActor>(["user", "controller", "authorized_agent", "operator"]);
+const NON_REUSABLE_OPERATION_STATES: ReadonlySet<string> = new Set<string>([
+  ...TERMINAL_STATES,
+  ...TERMINAL_FAILURE_STATES,
+]);
 
 export class PauseService {
   constructor(private readonly store: PauseStore, private readonly opts: PauseServiceOptions = { store: undefined as unknown as PauseStore }) {
@@ -46,6 +56,49 @@ export class PauseService {
 
   private settlementFingerprint(pause: ExecutionPause): string {
     return `${pause.planHash}:${pause.policyVersion}:${pause.pauseId}`;
+  }
+
+  private assertSettlementOperationReusable(operation: PersistedOperation): void {
+    if (NON_REUSABLE_OPERATION_STATES.has(operation.state)) {
+      throw new PauseError(PAUSE_ERROR_CODE.OPERATION_NOT_REUSABLE, `settlement_operation_terminal:${operation.state}`);
+    }
+  }
+
+  private async resolveAuthority(input: {
+    action: PauseAuthorityAction;
+    subject?: string | null;
+    claimedActor?: string | null;
+    pause: ExecutionPause;
+    intent: ExecutionIntent;
+    plan: ExecutionPlan;
+  }): Promise<PauseAuthorityDecision & { actor: PauseAuthorityActor }> {
+    const resolver = this.opts.authorityResolver;
+    if (!resolver) {
+      throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED, "pause_authority_policy_not_configured");
+    }
+
+    let decision: PauseAuthorityDecision;
+    try {
+      const request = {
+        action: input.action,
+        subject: input.subject ?? null,
+        claimedActor: input.claimedActor ?? null,
+        pause: input.pause,
+        intent: input.intent,
+        plan: input.plan,
+      };
+      decision = await (typeof resolver === "function" ? resolver(request) : resolver.resolve(request));
+    } catch (cause) {
+      if (cause instanceof PauseError) throw cause;
+      throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNAVAILABLE, "pause_authority_resolution_failed");
+    }
+    if (!decision || decision.authorized !== true) {
+      throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_DENIED, "pause_authority_denied");
+    }
+    if (!decision.actor || !AUTHORITY_ACTORS.has(decision.actor)) {
+      throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNAVAILABLE, "pause_authority_result_invalid");
+    }
+    return { ...decision, actor: decision.actor };
   }
 
   private async prepareSettlementOperation(input: {
@@ -64,6 +117,7 @@ export class PauseService {
       if (byId.idempotencyKey !== idempotencyKey || byId.requestFingerprint !== requestFingerprint) {
         throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement_operation_id_conflict:${input.operationId}`);
       }
+      this.assertSettlementOperationReusable(byId);
       return { operation: byId, created: false };
     }
     const byKey = await operationStore.getByIdempotencyKey(idempotencyKey);
@@ -74,6 +128,7 @@ export class PauseService {
       if (byKey.requestFingerprint !== requestFingerprint) {
         throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement idempotency fingerprint mismatch for ${input.operationId}`);
       }
+      this.assertSettlementOperationReusable(byKey);
       return { operation: byKey, created: false };
     }
     const operation = await operationStore.create({
@@ -84,6 +139,7 @@ export class PauseService {
       now: input.now,
       correlationId: input.correlationId,
     });
+    this.assertSettlementOperationReusable(operation);
     try { this.opts.metrics?.increment("settlement_operation_created", { chain: resolveChainFromPlan(input.plan) }); } catch {}
     return { operation, created: true };
   }
@@ -99,7 +155,7 @@ export class PauseService {
       const currentPause = await this.store.getPause(input.pauseId);
       if (currentPause?.state === "RELEASED" && currentPause.settlementOperationId === input.operationId) return;
       const currentOperation = await this.opts.operationStore.getById(input.operationId);
-      if (currentOperation?.state === "created") {
+      if (currentOperation && ["created", "awaiting_authorization", "ready"].includes(currentOperation.state)) {
         await this.opts.operationStore.transition(input.operationId, {
           to: "cancelled",
           now: input.now,
@@ -200,21 +256,23 @@ export class PauseService {
     return next;
   }
 
-  async release(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; settlementOperationId: string; now?: number; expectedVersion?: number; correlationId?: string | null }): Promise<ExecutionPause> {
+  async release(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; settlementOperationId: string; now?: number; expectedVersion?: number; correlationId?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainRelease(pause, { planHash: input.planHash, approvalScopeHash: input.approvalScopeHash ?? null, settlementOperationId: input.settlementOperationId, now, expectedVersion });
+    const plan = await this.store.getPlan(next.planHash);
+    if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, next.planHash);
+    const intent = await this.store.getIntent(pause.intentId);
+    if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
+    const authority = await this.resolveAuthority({ action: "release", subject: input.authoritySubject, claimedActor: input.authorityClaim, pause, intent, plan });
 
     // The operation row is the durable settlement boundary. Preflight and
     // persist it before the pause CAS so a store outage cannot leave RELEASED
     // pointing at an operation that does not exist.
-    let plan: ExecutionPlan | undefined;
     let prepared: { operation: PersistedOperation; created: boolean } | undefined;
     if (this.opts.operationStore) {
-      plan = await this.store.getPlan(next.planHash);
-      if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, next.planHash);
       prepared = await this.prepareSettlementOperation({
         pause,
         plan,
@@ -239,7 +297,7 @@ export class PauseService {
       throw cause;
     }
 
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...persisted.reasonCodes], createdAt: now });
     try { this.opts.metrics?.increment("pause_released", { state: persisted.state }); } catch {}
 
     // Submit via injected adapter if available and op not yet terminal/completed.
@@ -302,14 +360,19 @@ export class PauseService {
     return persisted;
   }
 
-  async approve(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
+  async approve(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; now?: number; expectedVersion?: number; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = approveEscalation(pause, { planHash: input.planHash, approvalScopeHash: input.approvalScopeHash ?? null, now, expectedVersion });
+    const plan = await this.store.getPlan(pause.planHash);
+    if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, pause.planHash);
+    const intent = await this.store.getIntent(pause.intentId);
+    if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
+    const authority = await this.resolveAuthority({ action: "approve", subject: input.authoritySubject, claimedActor: input.authorityClaim, pause, intent, plan });
     const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: "controller", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
     try { this.opts.metrics?.increment("pause_approved", { to: persisted.state }); } catch {}
     return persisted;
   }

@@ -6,6 +6,7 @@ import { InMemoryPauseMetrics } from "../ports/metrics";
 import { createFakeAdapterRegistry } from "../adapters/fake-execution-adapters";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { computeApprovalScopeHash } from "../domain/pause";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
   policyVersion: "v1",
@@ -31,7 +32,7 @@ describe("P5 settlement adapter boundary", () => {
     const opStore = new InMemoryOperationStore();
     const metrics = new InMemoryPauseMetrics();
     const adapters = createFakeAdapterRegistry(opStore);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10000, now: () => 1200 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10000, authorityResolver: testPauseAuthorityResolver, now: () => 1200 });
     const intent = await svc.createIntent({ intentId: "intent_p5a", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_p5a", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -64,7 +65,7 @@ describe("P5 settlement adapter boundary", () => {
       const pauseStore = new InMemoryPauseStore();
       const opStore = new InMemoryOperationStore();
       const adapters = createFakeAdapterRegistry(opStore);
-      const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, now: () => 2000 });
+      const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, authorityResolver: testPauseAuthorityResolver, now: () => 2000 });
       const asset = chainId === "starknet" ? "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" : "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
       const intent = await svc.createIntent({ intentId: `intent_${chainId}`, principal: "prism:bob", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: asset, requestedAmount: "10", requestedRoute: `${chainId}:${asset}:transfer`, createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: `idem_${chainId}`, policyVersion: "v1" });
       const policyForChain: Policy = { ...policy, allowedChains: [chainId], allowedAssets: [asset] };
@@ -83,7 +84,7 @@ describe("P5 settlement adapter boundary", () => {
     const pauseStore = new InMemoryPauseStore();
     const opStore = new InMemoryOperationStore();
     const adapters = createFakeAdapterRegistry(opStore);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, now: () => 3000 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, authorityResolver: testPauseAuthorityResolver, now: () => 3000 });
     const intent = await svc.createIntent({ intentId: "intent_chain", principal: "prism:carol", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "50", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_chain", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "50" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -131,7 +132,7 @@ describe("P5 settlement adapter boundary", () => {
       },
     };
     const adapters = new Map([[ "base" as import("../ports/execution-adapter").SettlementChain, customAdapter as unknown as import("../ports/execution-adapter").PauseExecutionAdapter]]);
-    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, now: () => 4000 });
+    const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, defaultPauseTtlMs: 10000, authorityResolver: testPauseAuthorityResolver, now: () => 4000 });
     const intent = await svc.createIntent({ intentId: "intent_custom", principal: "prism:dave", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "1", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_custom", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "1" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });

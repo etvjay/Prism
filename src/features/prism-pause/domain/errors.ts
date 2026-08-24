@@ -28,6 +28,10 @@ export const PAUSE_ERROR_CODE = {
   REVERIFY_NOT_ALLOWED: "ERR-120",
   INVALID_STATE: "ERR-121",
   OPERATION_ALREADY_LINKED: "ERR-122",
+  AUTHORITY_UNCONFIGURED: "ERR-123",
+  OPERATION_NOT_REUSABLE: "ERR-124",
+  AUTHORITY_DENIED: "ERR-125",
+  AUTHORITY_UNAVAILABLE: "ERR-126",
   // Preserve existing system codes where applicable
   STALE_STATE_CONFLICT: "ERR-023",
   RPC_UNAVAILABLE: "ERR-021",
@@ -59,6 +63,10 @@ const SHAPES: Record<string, { name: string; category: string; retryable: string
   "ERR-120": { name: "reverify_not_allowed", category: "conflict", retryable: "no", userAction: "check_state", httpStatusHint: 409 },
   "ERR-121": { name: "invalid_state", category: "validation", retryable: "no", userAction: "correct_state", httpStatusHint: 422 },
   "ERR-122": { name: "operation_already_linked", category: "conflict", retryable: "no", userAction: "use_existing_operation", httpStatusHint: 409 },
+  "ERR-123": { name: "authority_unconfigured", category: "authorization", retryable: "no", userAction: "configure_authority_policy", httpStatusHint: 503 },
+  "ERR-124": { name: "operation_not_reusable", category: "conflict", retryable: "no", userAction: "use_new_operation_id", httpStatusHint: 409 },
+  "ERR-125": { name: "authority_denied", category: "authorization", retryable: "no", userAction: "obtain_authority", httpStatusHint: 403 },
+  "ERR-126": { name: "authority_unavailable", category: "dependency", retryable: "true_backoff", userAction: "retry_authority_resolution", httpStatusHint: 503 },
   "ERR-023": { name: "stale_state_conflict", category: "stale_state", retryable: "re_read", userAction: "refresh", httpStatusHint: 409 },
   "ERR-021": { name: "rpc_unavailable", category: "dependency", retryable: "true_backoff", userAction: "wait_retry", httpStatusHint: 503 },
 };

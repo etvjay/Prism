@@ -7,6 +7,7 @@ import { createFakeAdapterRegistry } from "../adapters/fake-execution-adapters";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { computeApprovalScopeHash } from "../domain/pause";
 import { PAUSE_ERROR_CODE } from "../domain/errors";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
   policyVersion: "v1",
@@ -40,7 +41,7 @@ async function bootstrap() {
   const opStore = new InMemoryOperationStore();
   const metrics = new InMemoryPauseMetrics();
   const adapters = createFakeAdapterRegistry(opStore);
-  const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10000, now: () => 5000 });
+  const svc = new PauseService(pauseStore, { store: pauseStore, operationStore: opStore, executionAdapters: adapters, metrics, defaultPauseTtlMs: 10000, authorityResolver: testPauseAuthorityResolver, now: () => 5000 });
   return { pauseStore, opStore, metrics, svc };
 }
 

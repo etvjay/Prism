@@ -7,6 +7,7 @@ import { createPause, computeApprovalScopeHash, toVerifying, completeVerificatio
 import { makeCheck } from "../domain/checks";
 import { PAUSE_REASON_CODE } from "../domain/errors";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
   policyVersion: "v1",
@@ -30,12 +31,12 @@ const passingSources: VerificationSources = {
 describe("P2 durable store CAS / race / restart", () => {
   it("restart preserves PAUSED/ESCALATED state (snapshot survives)", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_r1", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_r1", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
     // simulate restart: create new service over same store instance (durability = store object survives)
-    const svc2 = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc2 = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const reloaded = await svc2.getPause(pause.pauseId);
     expect(reloaded?.state).toBe("PAUSED");
     // now escalate and verify snapshot persists
@@ -48,7 +49,7 @@ describe("P2 durable store CAS / race / restart", () => {
 
   it("concurrent release → exactly one winner (CAS)", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_r2", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_r2", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -70,7 +71,7 @@ describe("P2 durable store CAS / race / restart", () => {
 
   it("cancel vs release race → canonical CAS result (one winner)", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_r3", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_r3", policyVersion: "v1" });
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
@@ -86,7 +87,7 @@ describe("P2 durable store CAS / race / restart", () => {
 
   it("duplicate idempotency key → same intent, no duplicate pause", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent1 = await svc.createIntent({ intentId: "intent_dup", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_dup", policyVersion: "v1" });
     // same idempotency key with different intentId but same payload -> returns same intent (idempotent)
     const intent2 = await svc.createIntent({ intentId: "intent_dup", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_dup", policyVersion: "v1" });
@@ -101,7 +102,7 @@ describe("P2 durable store CAS / race / restart", () => {
 
   it("expired intent → not pausable", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const past = Date.now() - 20_000;
     const intent = await svc.createIntent({ intentId: "intent_exp", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: past, expiresAt: past + 1000, clientIdempotencyKey: "idem_exp", policyVersion: "v1" });
     // intent already expired
@@ -112,7 +113,7 @@ describe("P2 durable store CAS / race / restart", () => {
 
   it("changed plan invalidates previous approval (replay guard)", async () => {
     const store = new InMemoryPauseStore();
-    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
     const intent = await svc.createIntent({ intentId: "intent_chg", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_chg", policyVersion: "v1" });
     const plan1 = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan1.planHash, now: 1200 });
