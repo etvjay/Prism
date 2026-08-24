@@ -34,11 +34,15 @@ export interface StarknetEventReader {
   getBlockNumber?(): Promise<number>;
 }
 
+export type StarknetRegistryVersion = "v1" | "v2";
+
 export type StarknetEventIndexerOptions = {
   /** Injected RpcProvider-like reader (no secret file reads). */
   reader: StarknetEventReader;
   /** Registry contract address to filter events (0x hex). */
   registryAddress: string;
+  /** ABI version controls ExecutionIdentityBound digest decoding. */
+  registryVersion?: StarknetRegistryVersion;
   /** Chunk size for getEvents pagination. Defaults to 100. */
   chunkSize?: number;
 };
@@ -82,6 +86,15 @@ function normalizeTxHash(value: string): Hex | null {
   return `0x${raw.slice(2).padStart(64, "0")}` as Hex;
 }
 
+function combineU256Limbs(lowRaw: string | undefined, highRaw: string | undefined): Hex | null {
+  if (!lowRaw || !highRaw || !/^0x[0-9a-fA-F]+$/.test(lowRaw) || !/^0x[0-9a-fA-F]+$/.test(highRaw)) return null;
+  const low = BigInt(lowRaw);
+  const high = BigInt(highRaw);
+  const limit = 1n << 128n;
+  if (low >= limit || high >= limit) return null;
+  return `0x${(low + (high << 128n)).toString(16).padStart(64, "0")}` as Hex;
+}
+
 /**
  * Deterministic event indexer adapter.
  * - Calls injected reader.getEvents
@@ -92,6 +105,7 @@ function normalizeTxHash(value: string): Hex | null {
 export class StarknetEventIndexerAdapter implements EventIndexerPort {
   private readonly reader: StarknetEventReader;
   private readonly registryAddress: string;
+  private readonly registryVersion: StarknetRegistryVersion;
   private readonly chunkSize: number;
 
   constructor(options: StarknetEventIndexerOptions) {
@@ -103,6 +117,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     }
     this.reader = options.reader;
     this.registryAddress = options.registryAddress.toLowerCase();
+    this.registryVersion = options.registryVersion ?? "v1";
     this.chunkSize = options.chunkSize ?? 100;
   }
 
@@ -305,7 +320,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const prismId = keys[1];
       const venueRaw = keys[2];
       const executionAccount = keys[3] ?? data[0];
-      const proofDigest = data[0] ?? data[1];
+      const proofDigest = this.registryVersion === "v2" ? combineU256Limbs(data[0], data[1]) : data[0];
       // Venue is felt252 'BASE' — decode if needed; keep as string BASE for domain
       if (!prismId || !executionAccount || !proofDigest) return null;
       const venue = venueRaw ? String(venueRaw) : "BASE";

@@ -69,9 +69,15 @@ const prismIdArg = get("--prism-id", process.env.PRISM_ID ?? "prism:1");
 const controllerArg = get("--controller", process.env.CONTROLLER_ADDRESS ?? "0x1111111111111111111111111111111111111111");
 const execArg = get("--execution-account", get("--executionAccount", process.env.BASE_EXECUTION_ACCOUNT ?? process.env.EXECUTION_ACCOUNT ?? null));
 const registryArg = get("--registry", process.env.STARKNET_REGISTRY_ADDRESS ?? process.env.PRISM_REGISTRY_ADDRESS ?? null);
+const registryVersionArg = get("--registry-version", process.env.STARKNET_REGISTRY_VERSION ?? "v1");
 const rpcArg = get("--rpc", process.env.STARKNET_RPC_URL ?? process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? null);
 const liveRequested = has("--live");
 const dryRunFlag = has("--dry-run") || !liveRequested;
+
+if (!['v1', 'v2'].includes(String(registryVersionArg).toLowerCase())) {
+  console.error(`✕ invalid --registry-version: ${registryVersionArg} (expected v1 or v2)`);
+  process.exit(1);
+}
 
 if (has("--help") || has("-h")) {
   console.log(`M3 Base Sequence Runner — dry-run preflight
@@ -84,6 +90,7 @@ Flags:
   --controller 0x<hex>  (Starknet controller address)
   --execution-account 0x<40hex> (Base EOA/smart wallet; dry-run generates ephemeral if omitted)
   --registry 0x<hex>    (Starknet registry address, required for --live)
+  --registry-version v1|v2  (explicit registry ABI version; default v1)
   --rpc <url>           (Starknet RPC URL, required for --live)
   --dry-run             (default when --live not set — never fabricates receipt)
   --live                (requires signing provider env: STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY etc.)
@@ -117,13 +124,14 @@ const publicConfig = {
   executionAccount,
   controllerAddress: controllerArg,
   registryAddress: registryArg ?? undefined,
+  registryVersion: String(registryVersionArg).toLowerCase(),
   rpcUrl: rpcArg ?? undefined,
   starknetNetwork: manifestInfo.network,
   hasLiveSigningProvider: !!(process.env.STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY || process.env.STARKNET_SEPOLIA_KEYSTORE_PATH || process.env.CONTROLLER_PRIVATE_KEY || process.env.STARKNET_PRIVATE_KEY || process.env.BASE_SIGNER_PRIVATE_KEY),
   liveRequested,
 };
 
-console.log(`M3 runner — env=${envArg} chainId=${chainId} (manifest ${manifestInfo.chainId}) domain=${publicConfig.domain} venue=BASE prismId=${publicConfig.prismId}`);
+console.log(`M3 runner — env=${envArg} registryVersion=${publicConfig.registryVersion} chainId=${chainId} (manifest ${manifestInfo.chainId}) domain=${publicConfig.domain} venue=BASE prismId=${publicConfig.prismId}`);
 console.log(`  controller=${publicConfig.controllerAddress} executionAccount=${publicConfig.executionAccount}`);
 console.log(`  registry=${publicConfig.registryAddress ?? "(none — dry-run)"} rpc=${publicConfig.rpcUrl ? "<set>" : "(none — dry-run)"} liveRequested=${liveRequested} dryRun=${dryRunFlag}`);
 
@@ -191,7 +199,12 @@ console.log("\nRunning dry-run preflight gate suite (offline, TEST DOUBLE, X2)..
 const r = spawnSync("npm", ["test", "--", "src/features/evidence/__tests__/m3-base-sequence-gate.test.ts"], { stdio: "inherit" });
 if (r.status === 0) {
   console.log("\n✓ Dry-run preflight passed — challenge → EOA/EIP-1271/ERC-6492 → bind (submitted) → resolve ACTIVE → revoke → empty resolve → P persists");
-  console.log("  Felt boundaries exact: prismId -> felt at calldata[0], digest -> felt at calldata[3] (250-bit mask), submitted!=completed preserved");
+  if (publicConfig.registryVersion === "v2") {
+    console.log("  V2 boundary: full digest serializes as u256 low/high limbs; V2 adapter tests are separate and no live receipt is fabricated.");
+  } else {
+    console.log("  V1 boundary: prismId -> felt at calldata[0], digest -> felt at calldata[3] (250-bit mask).");
+  }
+  console.log("  submitted!=completed preserved; no live broadcast in dry-run.");
   console.log("  Unknown signer/provider/receipt states correctly fail closed (ERR-003/014, ERR-021, UNKNOWN)");
   if (!liveRequested) {
     console.log("\n  Live signing not requested — no bind receipt fabricated (correct).");

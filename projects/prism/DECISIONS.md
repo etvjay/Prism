@@ -416,3 +416,61 @@ Freeze the complete mainnet contract/configuration set before final testnet rehe
 **Reopen conditions**
 
 Reopen if the bounded feature set expands, Pause cannot pass P0–P8, the full testnet rehearsal fails, or a promised feature lacks independent evidence.
+
+---
+
+## DEC-PRISM-SYS-004 — Registry V2 exact proof-digest representation
+
+**Layer:** System/Data-Representation
+**Status:** Accepted for Registry V2 cutover; V2 not deployed
+**Decision ID:** DEC-PRISM-SYS-004
+**Decided by:** Jason
+**Decided at:** 2026-08-24
+
+**Decision**
+
+Registry V2 uses the full Keccak-256 proof digest as Cairo `u256`:
+
+```text
+proof_digest: u256
+consumed_digests: Map<u256, bool>
+```
+
+The ABI serializes the exact value as low/high `u128` limbs. No masking, modulo, truncation, alternate hash, proxy, upgrade path, or import authority is introduced. Registry V1 remains deployed historical/legacy evidence and is not reinterpreted as V2.
+
+**Consequences**
+
+- V2 is a fresh immutable registry address with fresh identity state.
+- V1 identities and felt-masked digest records are not automatically migrated.
+- The full offchain digest and exact V2 onchain digest remain equal.
+- V2 bind events carry the exact `u256` digest as low/high event data.
+- V2 becomes canonical only after deployment, class-hash verification, fresh identity evidence, and independent reads.
+
+**Evidence boundary**
+
+This decision authorizes the V2 design and cutover direction. It is not a deployment receipt, live bind evidence, or M3 completion.
+
+---
+
+## DEC-PRISM-SYS-005 — Explicit Prism ID felt boundary
+
+**Layer:** System/Data-Representation
+**Status:** Accepted for V2 cutover
+**Decision ID:** DEC-PRISM-SYS-005
+**Decided by:** Jason
+**Decided at:** 2026-08-24
+
+**Decision**
+
+The canonical offchain product identity remains `prism:<decimal>`. At the Starknet calldata boundary only, canonical decimal IDs map to minimal hexadecimal felts:
+
+```text
+prism:1  → 0x1
+prism:42 → 0x2a
+```
+
+Malformed, signed, leading-zero, zero, non-decimal, and overflow values are rejected with stable errors. No base36 conversion, hashing, or silent repair is permitted.
+
+**Evidence boundary**
+
+This decision authorizes the explicit boundary conversion. It does not authorize deployment, signing, or live M3 evidence.

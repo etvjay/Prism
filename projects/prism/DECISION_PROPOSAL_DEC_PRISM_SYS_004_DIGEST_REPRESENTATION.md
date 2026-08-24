@@ -1,10 +1,9 @@
-# DECISION PROPOSAL (DRAFT — NOT CANON) — DEC-PRISM-SYS-004: Field-bounded proof digest representation for Starknet felt252
+# DECISION PROPOSAL (SUPERSEDED) — DEC-PRISM-SYS-004 historical felt-mask alternative
 
-> **Status: PROPOSED.** This file is derived documentation only. It does not
-> amend `projects/prism/system/*` canon and does not touch any accepted
-> decision record (`DEC-PRISM-001..018`, `DEC-PRISM-SYS-001..003`). Owner
-> acceptance is required before any of the text below enters
-> `projects/prism/DECISIONS.md` or the System layer.
+> **Status: SUPERSEDED by accepted Registry V2 exact-u256 decision.** This file
+> preserves the rejected felt-mask analysis for historical audit context. The
+> active rule is recorded in `projects/prism/DECISIONS.md`: V2 uses exact
+> `proof_digest: u256`; V1 remains legacy. This file is not deployment evidence.
 
 ## Subject
 
@@ -54,9 +53,7 @@ runbook.
 
 ## Options considered
 
-1. **ACCEPTED — field-bounded mask at the boundary** (above). Smallest explicit
-   change; no contract redeploy; no canon mutation; follows starknetKeccak
-   precedent.
+1. **Historical V1 alternative — field-bounded mask at the boundary** (preserved for audit context, rejected for V2).
 2. REJECTED — truncate/modulo in the runbook or repair the specific value by
    hand: silent loss, non-auditable, explicitly forbidden by task constraints
    and by evidence discipline.
@@ -94,9 +91,9 @@ interface must change first (option 3) and M3 remains blocked by interface.
 
 # ADDENDUM — M3-X2 second boundary: prismId `prism:<decimal>` → felt252
 
-> **Status: PROPOSED (companion to SYS-004).** Same scope guard: derived doc only,
-> not canon until owner accepts as `DEC-PRISM-SYS-005` (or as an amendment to
-> `DOMAIN_MODEL.md` PrismId representation note).
+> **Status: ACCEPTED as DEC-PRISM-SYS-005.** The canonical decision is recorded
+> in `projects/prism/DECISIONS.md`; this addendum remains derived implementation
+> detail and deployment evidence is still required.
 
 ## Subject
 
@@ -126,22 +123,6 @@ A companion fix was applied to the digest precheck boundary
 (digest).felt)`), so the offchain replay check keys the same felt as the
 onchain `consumed_digests` map.
 
-## What owner acceptance would require (append-only)
+## Acceptance record
 
-```yaml
-decision_id: DEC-PRISM-SYS-005        # next free id after SYS-004
-layer: System/Data-Representation
-status: <ACCEPTED | REJECTED>
-subject: prismId felt252 boundary — canonical prism:<decimal> ↔ 0x hex felt
-decided_by: Jason
-decided_at: <date>
-companion_work:
-  - amend DOMAIN_MODEL.md PrismId note with named mapping and leading-zeros policy (EXTEND)
-  - amend CONTRACT_SPEC.md OP-7-01/8-01 with felt representation note
-  - add TEST_ARCHITECTURE.md row for prismId boundary tests (prism:1, leading zeros, malformed/overflow, calldata position)
-```
-
-Until accepted, this mapping ships as implementation with this addendum attached.
-If rejected, the alternative is to change the registry interface or the
-application's canonical ID serialization first, and M3 remains blocked by
-interface pending owner/system decision.
+`DEC-PRISM-SYS-005` is accepted in `projects/prism/DECISIONS.md` on 2026-08-24. The mapping is implementation-ready; V2 deployment and live M3 evidence remain open.
