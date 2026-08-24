@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import IdentityContextMesh, { type IdentityContextMeshState } from "./IdentityContextMesh";
+import PrismWorkspacePreview from "./PrismWorkspacePreview";
 import RefractedCore from "./RefractedCore";
 import styles from "./PrismLanding.module.css";
 
@@ -214,6 +215,12 @@ export default function PrismLanding() {
     selectHeroState(stateIndex);
   };
 
+  const openWorkspaceTab = (tab: "activity" | "connections" | "profile") => {
+    setMenuOpen(false);
+    window.dispatchEvent(new CustomEvent("prism:workspace-tab", { detail: tab }));
+    document.getElementById("prism-home")?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth" });
+  };
+
   return (
     <main className={styles.page} id="top">
       <section
@@ -225,8 +232,9 @@ export default function PrismLanding() {
 
           <div className={styles.navLinks}>
             <a href="#top" onClick={() => selectHeroState(0)}>Home</a>
-            <a href="#hero-sequence" onClick={() => selectHeroState(1)}>ID</a>
-            <a href="#identity-context" onClick={() => selectHeroState(2)}>Explore</a>
+            <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("activity"); }}>Activity</a>
+            <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("connections"); }}>Connections</a>
+            <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("profile"); }}>Profile</a>
           </div>
 
           <div className={styles.navActions}>
@@ -251,9 +259,10 @@ export default function PrismLanding() {
           {menuOpen ? (
             <div className={styles.mobileMenu} id="mobile-menu">
               <a href="#top" onClick={() => closeMenuAndSelect(0)}>Home</a>
-              <a href="#hero-sequence" onClick={() => closeMenuAndSelect(1)}>ID</a>
-              <a href="#identity-context" onClick={() => closeMenuAndSelect(2)}>Explore</a>
-              <a href="#enter-prism" onClick={() => setMenuOpen(false)}>Entry preview</a>
+              <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("activity"); }}>Activity</a>
+              <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("connections"); }}>Connections</a>
+              <a href="#prism-home" onClick={(event) => { event.preventDefault(); openWorkspaceTab("profile"); }}>Profile</a>
+              <a href="#prism-home" onClick={(event) => { event.preventDefault(); setMenuOpen(false); document.getElementById("prism-home")?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth" }); }}>Workspace preview</a>
             </div>
           ) : null}
         </nav>
@@ -328,6 +337,7 @@ export default function PrismLanding() {
           </div>
         </div>
       </section>
+      <PrismWorkspacePreview />
     </main>
   );
 }
