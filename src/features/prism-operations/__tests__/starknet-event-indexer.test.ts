@@ -104,6 +104,17 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     expect((result.events[0].payload as { proofDigest: string }).proofDigest).toBe(`0x${(0x1234n << 128n | 0x42n).toString(16).padStart(64, "0")}`);
   });
 
+  it("rejects V2 bound events with unsupported venue or missing execution key", async () => {
+    const unsupported = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: [SEL_BOUND, "0x1", "0xdead", "0xabc"], data: ["0x42", "0x1234"] },
+    ]);
+    const missingAccount = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: [SEL_BOUND, "0x1", "0x42415345"], data: ["0x42", "0x1234"] },
+    ]);
+    expect((await new StarknetEventIndexerAdapter({ reader: unsupported, registryAddress: REGISTRY, registryVersion: "v2" }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+    expect((await new StarknetEventIndexerAdapter({ reader: missingAccount, registryAddress: REGISTRY, registryVersion: "v2" }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+  });
+
   it("computes watermark as max blockNumber", async () => {
     const reader = readerWithEvents([
       { block_number: 7, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x1"), data: ["0x1111"] },

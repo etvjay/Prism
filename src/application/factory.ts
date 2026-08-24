@@ -57,6 +57,8 @@ export interface FactoryStarknetOverrides {
     getBlockNumber?(): Promise<number>;
     getBlockLatestAccepted?(): Promise<{ block_number: number }>;
   };
+  /** Explicit ABI version for an injected submit port; required when Starknet read wiring is configured. */
+  submitPortRegistryVersion?: StarknetRegistryVersion;
   submitPort?: StarknetSubmitPort;
 }
 
@@ -149,7 +151,9 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string }
 }
 
 function getStarknetRegistryVersion(): StarknetRegistryVersion {
-  const value = (process.env.STARKNET_REGISTRY_VERSION ?? "v1").trim().toLowerCase();
+  const raw = process.env.STARKNET_REGISTRY_VERSION?.trim().toLowerCase();
+  if (!raw) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_registry_version_required");
+  const value = raw === "1" ? "v1" : raw === "2" ? "v2" : raw;
   if (value !== "v1" && value !== "v2") throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_version");
   return value;
 }
@@ -181,9 +185,13 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   }
   const reader = new StarknetRegistryReader({ rpcUrl: cfg.rpcUrl, registryAddress: cfg.registryAddress, reader: provider as unknown as import("./adapters/starknet-registry-reader").StarknetRegistryReaderRpc });
   const ledger = new StarknetLedgerStatusAdapter({ rpcUrl: cfg.rpcUrl, reader: provider as unknown as import("../features/prism-operations/adapters/starknet-ledger-status").StarknetRpcReader });
+  const registryVersion = getStarknetRegistryVersion();
+  if (overrides?.submitPort && overrides.submitPortRegistryVersion !== registryVersion) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_mismatch");
+  }
   let indexer: StarknetEventIndexerAdapter;
   try {
-    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion: getStarknetRegistryVersion(), chunkSize: 100 });
+    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion, chunkSize: 100 });
   } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }

@@ -24,8 +24,12 @@ const REGISTRY = "0x1111111111111111111111111111111111111111";
 const NOW = 1_789_000_000;
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>) {
+  const effective = { ...overrides };
+  if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && effective.STARKNET_REGISTRY_VERSION === undefined) {
+    effective.STARKNET_REGISTRY_VERSION = "v1";
+  }
   const prev: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(overrides)) {
+  for (const [k, v] of Object.entries(effective)) {
     prev[k] = process.env[k];
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -35,7 +39,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => Promis
       if (v === undefined) delete process.env[k];
       else process.env[k] = v as string;
     }
-    for (const k of Object.keys(overrides)) if (!(k in prev)) delete process.env[k];
+    for (const k of Object.keys(effective)) if (!(k in prev)) delete process.env[k];
   });
 }
 

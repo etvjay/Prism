@@ -69,14 +69,22 @@ const prismIdArg = get("--prism-id", process.env.PRISM_ID ?? "prism:1");
 const controllerArg = get("--controller", process.env.CONTROLLER_ADDRESS ?? "0x1111111111111111111111111111111111111111");
 const execArg = get("--execution-account", get("--executionAccount", process.env.BASE_EXECUTION_ACCOUNT ?? process.env.EXECUTION_ACCOUNT ?? null));
 const registryArg = get("--registry", process.env.STARKNET_REGISTRY_ADDRESS ?? process.env.PRISM_REGISTRY_ADDRESS ?? null);
-const registryVersionArg = get("--registry-version", process.env.STARKNET_REGISTRY_VERSION ?? "v1");
+const registryVersionInput = get("--registry-version", process.env.STARKNET_REGISTRY_VERSION ?? null);
+const registryVersionArg = registryVersionInput ?? "v1";
 const rpcArg = get("--rpc", process.env.STARKNET_RPC_URL ?? process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? null);
 const liveRequested = has("--live");
 const dryRunFlag = has("--dry-run") || !liveRequested;
+const registryVersionRaw = String(registryVersionArg).toLowerCase();
+const normalizedRegistryVersion = registryVersionRaw === "1" ? "v1" : registryVersionRaw === "2" ? "v2" : registryVersionRaw;
 
-if (!['v1', 'v2'].includes(String(registryVersionArg).toLowerCase())) {
+if (!['v1', 'v2'].includes(normalizedRegistryVersion)) {
   console.error(`✕ invalid --registry-version: ${registryVersionArg} (expected v1 or v2)`);
   process.exit(1);
+}
+
+if (liveRequested && !registryVersionInput) {
+  console.error("✕ live V1/V2 registry version must be explicit (--registry-version or STARKNET_REGISTRY_VERSION)");
+  process.exit(2);
 }
 
 if (has("--help") || has("-h")) {
@@ -124,7 +132,7 @@ const publicConfig = {
   executionAccount,
   controllerAddress: controllerArg,
   registryAddress: registryArg ?? undefined,
-  registryVersion: String(registryVersionArg).toLowerCase(),
+  registryVersion: normalizedRegistryVersion,
   rpcUrl: rpcArg ?? undefined,
   starknetNetwork: manifestInfo.network,
   hasLiveSigningProvider: !!(process.env.STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY || process.env.STARKNET_SEPOLIA_KEYSTORE_PATH || process.env.CONTROLLER_PRIVATE_KEY || process.env.STARKNET_PRIVATE_KEY || process.env.BASE_SIGNER_PRIVATE_KEY),
@@ -140,11 +148,13 @@ if (liveRequested) {
   const envRec = parseEnvRecord();
   const hasStarknetKey = !!(envRec.STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY || envRec.STARKNET_SEPOLIA_KEYSTORE_PATH || envRec.CONTROLLER_PRIVATE_KEY || envRec.STARKNET_PRIVATE_KEY);
   const hasBaseKey = !!(envRec.BASE_SIGNER_PRIVATE_KEY || envRec.BASE_PRIVATE_KEY || envRec.EOA_PRIVATE_KEY);
-  const hasAny = hasStarknetKey || hasBaseKey || publicConfig.hasLiveSigningProvider;
-  if (!hasAny) {
-    console.error(`\n✕ M3_BLOCKED_BY_SIGNING_ENVIRONMENT: live signing provider unavailable`);
-    console.error(`  Missing: STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY / STARKNET_SEPOLIA_KEYSTORE_PATH / CONTROLLER_PRIVATE_KEY`);
-    console.error(`  and BASE_SIGNER_PRIVATE_KEY / BASE_PRIVATE_KEY. No bind receipt fabricated.`);
+  if (!hasStarknetKey || !hasBaseKey) {
+    const missing = [];
+    if (!hasStarknetKey) missing.push("Starknet controller/deployer signing provider");
+    if (!hasBaseKey) missing.push("Base signing provider");
+    console.error(`\n✕ M3_BLOCKED_BY_SIGNING_ENVIRONMENT: ${missing.join(" and ")} unavailable`);
+    console.error(`  Required Starknet: STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY / STARKNET_SEPOLIA_KEYSTORE_PATH / CONTROLLER_PRIVATE_KEY`);
+    console.error(`  Required Base: BASE_SIGNER_PRIVATE_KEY / BASE_PRIVATE_KEY / EOA_PRIVATE_KEY. No bind receipt fabricated.`);
     console.error(`  Dry-run preflight still available: re-run without --live or with --dry-run`);
     console.error(`\nVerdict: M3_BLOCKED_BY_SIGNING_ENVIRONMENT`);
     process.exit(2);

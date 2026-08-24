@@ -95,6 +95,15 @@ function combineU256Limbs(lowRaw: string | undefined, highRaw: string | undefine
   return `0x${(low + (high << 128n)).toString(16).padStart(64, "0")}` as Hex;
 }
 
+function decodeBaseVenue(value: string | undefined): "BASE" | null {
+  if (!value || !/^0x[0-9a-fA-F]+$/.test(value)) return null;
+  try {
+    return BigInt(value) === BigInt("0x42415345") ? "BASE" : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Deterministic event indexer adapter.
  * - Calls injected reader.getEvents
@@ -318,24 +327,18 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     }
     if (kind === "ExecutionIdentityBound") {
       const prismId = keys[1];
-      const venueRaw = keys[2];
-      const executionAccount = keys[3] ?? data[0];
+      const venue = decodeBaseVenue(keys[2]);
+      const executionAccount = keys[3];
       const proofDigest = this.registryVersion === "v2" ? combineU256Limbs(data[0], data[1]) : data[0];
-      // Venue is felt252 'BASE' — decode if needed; keep as string BASE for domain
-      if (!prismId || !executionAccount || !proofDigest) return null;
-      const venue = venueRaw ? String(venueRaw) : "BASE";
-      // Normalize venue hex felt to BASE string when it matches VNUE_BASE
-      const venueStr = venue.toLowerCase().includes("42") || venue === "0x42415345" ? "BASE" : "BASE";
-      return { prismId, venue: venueStr, executionAccount, proofDigest } as unknown as RegistryCanonicalEvent["payload"];
+      if (!prismId || !venue || !executionAccount || !proofDigest) return null;
+      return { prismId, venue, executionAccount, proofDigest } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "BindingRevoked") {
       const prismId = keys[1];
-      const venueRaw = keys[2];
-      const executionAccount = keys[3] ?? data[0];
-      if (!prismId || !executionAccount) return null;
-      const venueStr = "BASE";
-      void venueRaw;
-      return { prismId, venue: venueStr, executionAccount } as unknown as RegistryCanonicalEvent["payload"];
+      const venue = decodeBaseVenue(keys[2]);
+      const executionAccount = keys[3];
+      if (!prismId || !venue || !executionAccount) return null;
+      return { prismId, venue, executionAccount } as unknown as RegistryCanonicalEvent["payload"];
     }
     return null;
   }

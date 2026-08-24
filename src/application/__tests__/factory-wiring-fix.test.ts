@@ -18,8 +18,12 @@ const CONTROLLER = "0x2222222222222222222222222222222222222222222222222222222222
 const ACCOUNT_ADDR = "0x3333333333333333333333333333333333333333333333333333333333333333";
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void> | void) {
+  const effective = { ...overrides };
+  if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && effective.STARKNET_REGISTRY_VERSION === undefined) {
+    effective.STARKNET_REGISTRY_VERSION = "v1";
+  }
   const prev: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(overrides)) {
+  for (const [k, v] of Object.entries(effective)) {
     prev[k] = process.env[k];
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -30,7 +34,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => Promis
       if (v === undefined) delete process.env[k];
       else process.env[k] = v as string;
     }
-    for (const k of Object.keys(overrides)) if (!(k in prev)) delete process.env[k];
+    for (const k of Object.keys(effective)) if (!(k in prev)) delete process.env[k];
   };
   if (res instanceof Promise) return res.finally(restore);
   restore();
@@ -238,6 +242,25 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       // Caller can check and report submit_unconfigured rather than assuming live
       const submitUnconfigured = f.isStarknetConfigured && !f.isStarknetSubmitConfigured;
       expect(submitUnconfigured).toBe(true);
+    });
+  });
+
+  it("requires submit-port ABI version to match configured registry version", async () => {
+    const fakeProvider = {
+      async callContract() { return ["0x0"] as string[]; },
+      async getEvents() { return { events: [], continuation_token: null } as never; },
+      async getBlockNumber() { return 100; },
+    };
+    const submitPort = {
+      async submitCreateIdentity() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+      async submitBind() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+      async submitRevoke() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+    };
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
+      expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v1" })).toThrow(/submit_port_registry_version_mismatch/);
+      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2" });
+      expect(factory.submitPort).toBe(submitPort);
+      expect(factory.isStarknetSubmitConfigured).toBe(true);
     });
   });
 
