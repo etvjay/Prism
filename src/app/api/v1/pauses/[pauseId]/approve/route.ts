@@ -1,6 +1,7 @@
 import { getAppFactory } from "@/application/factory";
 import { parseHeaders, readJson, requireSession, jsonError } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
+import { PauseError } from "@/features/prism-pause/domain/errors";
 
 export async function POST(req: Request, ctx: { params: Promise<{ pauseId: string }> }): Promise<Response> {
   const parsed = parseHeaders(req);
@@ -11,13 +12,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   const sessionOrErr = requireSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   const approver = (body.approver as string | undefined) ?? (body.approverAddress as string | undefined) ?? sessionOrErr.userId;
+  const planHash = body.planHash as string | undefined;
+  const approvalScopeHash = body.approvalScopeHash as string | null | undefined;
   const factory = getAppFactory();
   try {
-    const pause = await factory.pauseService.approvePause(decoded, approver);
+    const pause = await factory.pauseService.approvePause(decoded, approver, { planHash, approvalScopeHash });
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
     if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
     return new Response(JSON.stringify({ ok: true, data: pause, requestId: parsed.requestId ?? null }), { status: 200, headers });
   } catch (e) {
+    if (e instanceof PauseError) {
+      const shape = e.toExternalShape();
+      return new Response(JSON.stringify({ ok: false, error: shape, requestId: parsed.requestId ?? null }), { status: e.httpStatusHint, headers: { "content-type": "application/json" } });
+    }
     const code = (e as { code?: string })?.code ?? APP_ERROR_CODE.STALE_STATE_CONFLICT;
     const detail = (e as { detail?: string })?.detail ?? (e as Error).message;
     const { AppError } = await import("@/application/errors");

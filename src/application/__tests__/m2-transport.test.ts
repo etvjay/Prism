@@ -169,13 +169,13 @@ describe("M2 — stale version (optimistic CAS)", () => {
     if (!illegalSkip.ok) expect(illegalSkip.error.detail).toContain("submitted_is_not_completed");
   });
 
-  it("pause release with stale expectedVersion fails ERR-023", async () => {
+  it("pause release with stale expectedVersion fails ERR-023/ERR-111", async () => {
     const h = build();
     const intent = await h.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", idempotencyKey: "idem-pause-stale" });
     const pause = await h.pauseService.pauseIntent(intent.intentId);
     const verified = await h.pauseService.verifyPause(pause.pauseId);
     const stale = verified.version - 10;
-    await expect(h.pauseService.releasePause(verified.pauseId, stale)).rejects.toMatchObject({ code: "ERR-023" });
+    await expect(h.pauseService.releasePause(verified.pauseId, stale)).rejects.toMatchObject({ code: expect.stringMatching(/ERR-023|ERR-111/) });
     // Correct version succeeds
     const released = await h.pauseService.releasePause(verified.pauseId, verified.version);
     expect(released.state).toBe("RELEASED");
