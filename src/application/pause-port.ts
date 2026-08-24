@@ -62,7 +62,7 @@ export interface PauseService {
   pauseIntent(intentId: string, opts?: { correlationId?: string | null; requestId?: string | null }): Promise<ExecutionPause>;
   getPause(pauseId: string): Promise<ExecutionPause | null>;
   verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string; sources?: unknown }): Promise<ExecutionPause>;
-  releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string }): Promise<ExecutionPause>;
+  releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null }): Promise<ExecutionPause>;
   cancelPause(pauseId: string, expectedVersion?: number | null): Promise<ExecutionPause>;
   escalatePause(pauseId: string): Promise<ExecutionPause>;
   approvePause(pauseId: string, approver: string, opts?: { planHash?: string; approvalScopeHash?: string | null }): Promise<ExecutionPause>;
@@ -167,10 +167,32 @@ export class InMemoryPauseService implements PauseService {
   private readonly correlationByIntent = new Map<string, string | null>();
   private readonly correlationByPause = new Map<string, string | null>();
   private intentCounter = 1;
+  private readonly injectedOperationStore?: import("../features/prism-operations/domain/operation-store").OperationStore;
+  private readonly injectedMetrics?: import("../features/prism-pause/ports/metrics").PauseMetrics;
+  private readonly injectedAdapters?: Map<import("../features/prism-pause/ports/execution-adapter").SettlementChain, import("../features/prism-pause/ports/execution-adapter").PauseExecutionAdapter>;
 
-  constructor(private readonly clock: { now(): number }, store?: PauseStore) {
-    this.domainStore = store ?? new InMemoryPauseStore();
-    this.domainService = new DomainPauseService(this.domainStore as InMemoryPauseStore & PauseStore, { store: this.domainStore, defaultPauseTtlMs: 3600 * 1000 } as never);
+  constructor(
+    private readonly clock: { now(): number },
+    opts?: {
+      store?: PauseStore;
+      operationStore?: import("../features/prism-operations/domain/operation-store").OperationStore;
+      metrics?: import("../features/prism-pause/ports/metrics").PauseMetrics;
+      adapterRegistry?: Map<import("../features/prism-pause/ports/execution-adapter").SettlementChain, import("../features/prism-pause/ports/execution-adapter").PauseExecutionAdapter>;
+    },
+  ) {
+    this.injectedOperationStore = opts?.operationStore;
+    this.injectedMetrics = opts?.metrics;
+    this.injectedAdapters = opts?.adapterRegistry;
+    this.domainStore = opts?.store ?? new InMemoryPauseStore();
+    const metricsForDomain = opts?.metrics;
+    this.domainService = new DomainPauseService(this.domainStore, {
+      store: this.domainStore,
+      defaultPauseTtlMs: 3600 * 1000,
+      operationStore: opts?.operationStore,
+      executionAdapters: opts?.adapterRegistry,
+      metrics: metricsForDomain,
+      now: () => toMs(this.clock.now()),
+    });
   }
 
   // For testing: expose underlying store/service
@@ -333,7 +355,7 @@ export class InMemoryPauseService implements PauseService {
     }
   }
 
-  async releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string }): Promise<ExecutionPause> {
+  async releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null }): Promise<ExecutionPause> {
     const domainPause = await this.domainStore.getPause(pauseId);
     if (!domainPause) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `pause_not_found:${pauseId}`);
 
@@ -341,16 +363,19 @@ export class InMemoryPauseService implements PauseService {
     const planHash = (opts?.planHash ?? domainPause.planHash) as `0x${string}`;
     // Enforce plan_hash binding: if opts supplied and mismatched, domain will throw but we pre-check for clearer code
     if (opts?.planHash && opts.planHash !== domainPause.planHash) {
+      this.injectedMetrics?.increment("plan_mutation_blocked", { pauseId });
       throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, `plan_hash_mismatch:expected_${domainPause.planHash}_got_${opts.planHash}`);
     }
 
     const expectedScope = computeApprovalScopeHash(domainPause.pauseId, domainPause.planHash as `0x${string}`, domainPause.policyVersion);
     if (opts?.approvalScopeHash !== undefined && opts.approvalScopeHash !== null && opts.approvalScopeHash !== expectedScope) {
+      this.injectedMetrics?.increment("plan_mutation_blocked", { pauseId, reason: "approval_scope" });
       throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_SCOPE_MISMATCH, "approval_scope_hash_mismatch");
     }
 
     // settlementOperationId: future operation link only, not completed
     const settlementOperationId = opts?.settlementOperationId ?? `op_future_${pauseId}_${Date.now()}`;
+    const correlationId = opts?.correlationId ?? this.correlationByPause.get(pauseId) ?? null;
 
     try {
       const result = await this.domainService.release({
@@ -360,12 +385,33 @@ export class InMemoryPauseService implements PauseService {
         settlementOperationId,
         now: nowMs,
         expectedVersion: expectedVersion ?? domainPause.version,
+        correlationId,
       });
       const corr = this.correlationByPause.get(pauseId) ?? null;
+      // Note: domainService already created & submitted Operation via injected store/adapter (distinct states, never completed).
+      // Verify operation remains not completed for observability.
+      if (this.injectedOperationStore) {
+        try {
+          const op = await this.injectedOperationStore.getById(settlementOperationId);
+          if (op && op.state === "completed") {
+            // Should never happen — adapter must not mark completed.
+            throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "operation_must_not_be_completed_on_release");
+          }
+        } catch (e) {
+          if (e instanceof PauseError) throw e;
+          // ignore read failures — operation creation is best-effort observability
+        }
+      }
       return mapDomainPauseToRest(result, corr);
     } catch (e) {
       if (e instanceof PauseError && (e.code === PAUSE_ERROR_CODE.PAUSE_NOT_FOUND || e.code === PAUSE_ERROR_CODE.INTENT_NOT_FOUND)) {
         throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, e.detail ?? String((e as Error).message));
+      }
+      if (e instanceof PauseError && (e.code === PAUSE_ERROR_CODE.APPROVAL_REPLAY || e.code === PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH || e.code === PAUSE_ERROR_CODE.APPROVAL_SCOPE_MISMATCH)) {
+        this.injectedMetrics?.increment("approval_replay_blocked");
+      }
+      if (e instanceof PauseError && e.code === PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING) {
+        this.injectedMetrics?.increment("pause_release_blocked", { reason: "unknown_check" });
       }
       throw e;
     }

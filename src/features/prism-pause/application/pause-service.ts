@@ -18,11 +18,20 @@ import type { ExecutionPause } from "../domain/pause";
 import { evaluatePolicy } from "../domain/policy-engine";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
+import type { OperationStore } from "../../prism-operations/domain/operation-store";
+import type { PauseExecutionAdapter, SettlementChain } from "../ports/execution-adapter";
+import { resolveChainFromPlan } from "../ports/execution-adapter";
+import type { PauseMetrics } from "../ports/metrics";
 
 export interface PauseServiceOptions {
   store: PauseStore;
   // default TTLs if not supplied per intent
   defaultPauseTtlMs?: number;
+  // P5 settlement bridge — injectable, no live chain call. When present, RELEASED creates durable Operation.
+  operationStore?: OperationStore;
+  executionAdapters?: Map<SettlementChain, PauseExecutionAdapter>;
+  metrics?: PauseMetrics;
+  now?: () => number;
 }
 
 let decisionSeq = 0;
@@ -31,6 +40,8 @@ function nextDecisionId(): string { decisionSeq +=1; return `dec_${Date.now()}_$
 export class PauseService {
   constructor(private readonly store: PauseStore, private readonly opts: PauseServiceOptions = { store: undefined as unknown as PauseStore }) {
     if (!opts.store) this.opts = { store, defaultPauseTtlMs: 10*60*1000 }; else this.opts = opts;
+    // Ensure defaults for settlement fields
+    if (!this.opts.now) this.opts.now = () => Date.now();
   }
 
   // P1: create intent + normalized plan + pause (idempotent)
@@ -73,7 +84,7 @@ export class PauseService {
   }
 
   async verify(input: { pauseId: string; policy: Policy; sources: VerificationSources; now?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const plan = await this.store.getPlan(pause.planHash);
@@ -105,56 +116,123 @@ export class PauseService {
     const completed = completeVerification(current, { checks, now, expectedVersion: current.version });
     await this.store.putChecks(pause.pauseId, checks);
     const next = await this.store.updatePause(completed, current.version);
-    // decision for verify is not a PauseDecision kind; we append a REVERIFY-like audit if needed? Use REVERIFY for verify cycle
+    this.opts.metrics?.increment(completed.state === "RELEASE_READY" ? "pause_verified" : "pause_verify_blocked_unknown", { state: completed.state, risk: completed.riskLevel });
+    if (completed.state === "ESCALATED") {
+      await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: completed.approvalScopeHash, reasonCodes: [...completed.reasonCodes], createdAt: now });
+    }
     return next;
   }
 
-  async release(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; settlementOperationId: string; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+  async release(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; settlementOperationId: string; now?: number; expectedVersion?: number; correlationId?: string | null }): Promise<ExecutionPause> {
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainRelease(pause, { planHash: input.planHash, approvalScopeHash: input.approvalScopeHash ?? null, settlementOperationId: input.settlementOperationId, now, expectedVersion });
     const persisted = await this.store.updatePause(next, expectedVersion);
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    this.opts.metrics?.increment("pause_released", { state: persisted.state });
+    // P5 settlement bridge: create durable Operation intent/plan link without marking completed; then submit via injected adapter (no live call).
+    if (this.opts.operationStore) {
+      const plan = await this.store.getPlan(persisted.planHash);
+      if (plan) {
+        const fingerprint = `${persisted.planHash}:${persisted.policyVersion}:${persisted.pauseId}`;
+        const idempotencyKey = `pause_settlement:${persisted.pauseId}:${persisted.planHash}`;
+        const opId = input.settlementOperationId;
+        // Idempotent operation creation: same key + fingerprint benign; different fingerprint conflicts
+        let op = await this.opts.operationStore.getById(opId);
+        if (!op) {
+          const existingByKey = await this.opts.operationStore.getByIdempotencyKey(idempotencyKey);
+          if (existingByKey) {
+            if (existingByKey.requestFingerprint !== fingerprint) {
+              throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement idempotency fingerprint mismatch for ${opId}`);
+            }
+            op = existingByKey;
+          } else {
+            op = await this.opts.operationStore.create({
+              id: opId,
+              kind: `pause_settlement:${resolveChainFromPlan(plan)}`,
+              idempotencyKey,
+              requestFingerprint: fingerprint,
+              now,
+              correlationId: input.correlationId ?? null,
+            });
+            this.opts.metrics?.increment("settlement_operation_created", { chain: resolveChainFromPlan(plan) });
+          }
+        }
+        // Submit via injected adapter if available and op not yet terminal/completed. Never mark completed.
+        if (this.opts.executionAdapters) {
+          const chain = resolveChainFromPlan(plan);
+          const adapter = this.opts.executionAdapters.get(chain);
+          if (adapter) {
+            // Only submit if op is not already submitted or beyond; otherwise idempotent.
+            if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(op.state)) {
+              // legal path: created -> awaiting_authorization -> ready -> submitted
+              if (op.state === "created") {
+                op = await this.opts.operationStore.transition(op.id, { to: "awaiting_authorization", now, expectedVersion: op.version });
+                op = await this.opts.operationStore.transition(op.id, { to: "ready", now, expectedVersion: op.version });
+              } else if (op.state === "awaiting_authorization") {
+                op = await this.opts.operationStore.transition(op.id, { to: "ready", now, expectedVersion: op.version });
+              }
+              if (op.state === "ready") {
+                // deterministic fake txHash via adapter's submit logic (reuse adapter for txHash generation by delegating to transition)
+                // Generate same fake as adapter: if adapter provides custom, use it; otherwise use local submit path.
+                try {
+                  const submitted = await adapter.submit({ operation: op, pause: persisted, plan, correlationId: input.correlationId ?? null, operationId: opId });
+                  if (submitted.state === "completed") throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_must_not_mark_completed");
+                  this.opts.metrics?.increment("settlement_operation_submitted", { chain });
+                } catch (e) {
+                  if (e instanceof PauseError) throw e;
+                  // adapter failure is retryable dependency, don't fail the pause release itself — operation remains created/ready for retry
+                  this.opts.metrics?.increment("pause_release_blocked", { reason: "adapter_submit_failed" });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     return persisted;
   }
 
   async cancel(input: { pauseId: string; now?: number; expectedVersion?: number; reason?: string }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainCancel(pause, { now, expectedVersion, reason: input.reason });
     const persisted = await this.store.updatePause(next, expectedVersion);
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "CANCEL", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    this.opts.metrics?.increment("pause_cancelled");
     return persisted;
   }
 
   async escalate(input: { pauseId: string; reasonCodes: readonly string[]; requiredApprovalCount: number; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainEscalate(pause, { reasonCodes: input.reasonCodes, requiredApprovalCount: input.requiredApprovalCount, now, expectedVersion });
     const persisted = await this.store.updatePause(next, expectedVersion);
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...input.reasonCodes], createdAt: now });
+    this.opts.metrics?.increment("pause_escalated");
     return persisted;
   }
 
   async approve(input: { pauseId: string; planHash: Hex; approvalScopeHash?: Hex | null; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = approveEscalation(pause, { planHash: input.planHash, approvalScopeHash: input.approvalScopeHash ?? null, now, expectedVersion });
     const persisted = await this.store.updatePause(next, expectedVersion);
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: "controller", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    this.opts.metrics?.increment("pause_approved", { to: persisted.state });
     return persisted;
   }
 
   async reverify(input: { pauseId: string; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
@@ -165,18 +243,19 @@ export class PauseService {
   }
 
   async expire(input: { pauseId: string; now?: number; expectedVersion?: number }): Promise<ExecutionPause> {
-    const now = input.now ?? Date.now();
+    const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const next = domainExpire(pause, now, input.expectedVersion);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const persisted = await this.store.updatePause(next, expectedVersion);
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now });
+    this.opts.metrics?.increment("pause_expired");
     return persisted;
   }
 
   async sweepExpired(now?: number): Promise<readonly ExecutionPause[]> {
-    const n = now ?? Date.now();
+    const n = now ?? (this.opts.now ? this.opts.now() : Date.now());
     const expired = await this.store.listExpired(n, 100);
     const results: ExecutionPause[] = [];
     for (const p of expired) {
@@ -185,6 +264,7 @@ export class PauseService {
         results.push(next);
       } catch {}
     }
+    this.opts.metrics?.increment("pause_sweep", { count: String(results.length) });
     return results;
   }
 

@@ -25,9 +25,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
   try {
-    const pause = await factory.pauseService.releasePause(decoded, expectedVersion, { planHash, approvalScopeHash, settlementOperationId });
+    const pause = await factory.pauseService.releasePause(decoded, expectedVersion, { planHash, approvalScopeHash, settlementOperationId, correlationId: parsed.correlationId });
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
     if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
+    if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
+    // stable hash semantics: expose planHash/approvalScopeHash/settlementOperationId via data; CAS via ETag/If-Match already parsed.
     return new Response(JSON.stringify({ ok: true, data: pause, requestId: parsed.requestId ?? null }), { status: 200, headers });
   } catch (e) {
     if (e instanceof PauseError) {

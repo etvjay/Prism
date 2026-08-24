@@ -23,6 +23,8 @@ import { InMemoryRegistry } from "./adapters/in-memory-registry";
 import { PrismApplicationService } from "./prism-application";
 import { createPrismApiHandlers } from "./handlers";
 import { InMemoryPauseService } from "./pause-port";
+import { InMemoryPauseMetrics } from "../features/prism-pause/ports/metrics";
+import { createFakeAdapterRegistry } from "../features/prism-pause/adapters/fake-execution-adapters";
 import { ReceiptService } from "./receipt-service";
 import { AppError, APP_ERROR_CODE } from "./errors";
 
@@ -99,7 +101,14 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000))):
   });
   const handlers = createPrismApiHandlers(app);
   const pauseStore = new InMemoryPauseStore();
-  const pauseService = new InMemoryPauseService(clock, pauseStore);
+  const pauseMetrics = new InMemoryPauseMetrics();
+  const pauseAdapters = createFakeAdapterRegistry(operationStore);
+  const pauseService = new InMemoryPauseService(clock, {
+    store: pauseStore,
+    operationStore,
+    metrics: pauseMetrics,
+    adapterRegistry: pauseAdapters,
+  });
   const receiptService = new ReceiptService(operationStore);
   return { handlers, app, registry, operationStore, ownershipStore, pauseService, pauseStore, receiptService, challengeService, prismEventsStore: null, isPostgres: false };
 }
@@ -146,7 +155,14 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
   const handlers = createPrismApiHandlers(app);
-  const pauseService = new InMemoryPauseService(clock, pauseStore);
+  const pauseMetrics = new InMemoryPauseMetrics();
+  const pauseAdapters = createFakeAdapterRegistry(operationStore);
+  const pauseService = new InMemoryPauseService(clock, {
+    store: pauseStore,
+    operationStore,
+    metrics: pauseMetrics,
+    adapterRegistry: pauseAdapters,
+  });
   const receiptService = new ReceiptService(operationStore);
 
   return { handlers, app, registry, operationStore, ownershipStore, pauseService, pauseStore, receiptService, challengeService, prismEventsStore, isPostgres: true };

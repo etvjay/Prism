@@ -104,7 +104,12 @@ export interface PauseData {
   readonly version: number;
   readonly reasonCodes: readonly string[];
   readonly riskLevel: string;
+  readonly approvalScopeHash: string | null;
   readonly settlementOperationId: string | null;
+  readonly correlationId: string | null;
+  readonly requiredApprovalCount: number;
+  readonly expiresAt: number | null;
+  // No raw calldata/felt: callers provide only prism vocabulary (planHash etc.)
 }
 
 export interface AppSession {
