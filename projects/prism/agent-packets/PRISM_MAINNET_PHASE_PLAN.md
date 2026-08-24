@@ -122,7 +122,7 @@ get_identity second read
 indexed event + watermark
 ```
 
-**Current state:** account and registry deployment are observed on SN_SEPOLIA; the M1 live-read harness is integration-ready at X2, but live `create_identity`, event indexing, and independent identity read remain open.
+**Current state:** account and registry deployment are observed on SN_SEPOLIA; live `create_identity` and independent `get_identity` readback are now observed at X3 in `M1_LIVE_IDENTITY_EVIDENCE.md`. Event indexing/watermark reconciliation and the M3 cross-chain sequence remain open.
 
 **Exit maturity:** X3 testnet identity evidence.
 
