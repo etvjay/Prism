@@ -199,6 +199,73 @@ describe("ReconciliationWorker — startup recovery, retry/backoff, unknown/reve
     expect(after?.errorCode).toBe("ERR-022");
   });
 
+  it("requires_attention recovery: after escalation, backoff, and worker restart, startup recovery resumes processing", async () => {
+    const store = new InMemoryOperationStore();
+    await createSubmitted(store, "op-esc-restart", TX_HASH, NOW);
+
+    const escalationWorker = new ReconciliationWorker({
+      store,
+      ledger: ledgerFake({ chain: null }),
+      indexer: indexerFake(),
+      clock: clockFake(NOW + 200),
+      config: {
+        requiresAttentionAfterMs: 100_000,
+        backoffBaseMs: 1_000,
+        backoffMaxMs: 30_000,
+      },
+    });
+    const escalated = await escalationWorker.tickAllOnce(NOW + 200);
+    expect(escalated.escalated).toBe(1);
+    expect((await store.getById("op-esc-restart"))?.state).toBe("requires_attention");
+
+    // The worker must honor the persisted retry backoff before asking the chain again.
+    let earlyObservations = 0;
+    const beforeBackoff = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain() {
+          earlyObservations++;
+          return null;
+        },
+      },
+      indexer: indexerFake(),
+      clock: clockFake(NOW + 201),
+      config: { backoffBaseMs: 1_000, backoffMaxMs: 30_000 },
+    });
+    const skipped = await beforeBackoff.tickAllOnce(NOW + 201);
+    expect(skipped.advanced).toBe(0);
+    expect(skipped.noops).toBe(1);
+    expect(earlyObservations).toBe(0);
+
+    // A fresh worker instance represents process restart. Once the persisted
+    // backoff has elapsed, it must recover the operation through startup sweep.
+    let restartObservations = 0;
+    const restartedWorker = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          restartObservations++;
+          return { txHash, finality: "ACCEPTED_ON_L2", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: {
+        async observeIndexer(txHash: Hex) {
+          return { txHash, eventObserved: false, blockNumber: null, eventIndex: null };
+        },
+        async observeReconciliation(txHash: Hex) {
+          return { chainReceiptMatched: false, eventMatchedToOperation: false, matchedTxHash: null };
+        },
+      },
+      clock: clockFake(NOW + 203),
+      config: { backoffBaseMs: 1_000, backoffMaxMs: 30_000 },
+    });
+    const recovered = await restartedWorker.recoverAtStartup(NOW + 203);
+    expect(recovered.swept).toBe(1);
+    expect(recovered.advanced).toBe(1);
+    expect(restartObservations).toBe(1);
+    expect((await store.getById("op-esc-restart"))?.state).toBe("processing");
+  });
+
   it("dependency outage: ledger throws -> fail-closed, metrics dependencyFailures incremented", async () => {
     const store = new InMemoryOperationStore();
     await createSubmitted(store, "op-dep");

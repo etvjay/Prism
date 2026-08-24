@@ -59,6 +59,8 @@ export interface FactoryStarknetOverrides {
   };
   /** Explicit ABI version for an injected submit port; required when Starknet read wiring is configured. */
   submitPortRegistryVersion?: StarknetRegistryVersion;
+  /** Explicit registry address for an injected test double that cannot declare one itself. */
+  submitPortRegistryAddress?: string;
   submitPort?: StarknetSubmitPort;
 }
 
@@ -165,6 +167,47 @@ function assertSubmitPortAbiVersion(submitPort: StarknetSubmitPort | undefined, 
   }
 }
 
+const STARKNET_CONTRACT_ADDRESS_LIMIT = 1n << 251n;
+
+function normalizeRegistryAddress(value: unknown, missingMessage: string, invalidMessage: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, missingMessage);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,64}$/.test(normalized)) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, invalidMessage);
+  }
+  const numeric = BigInt(normalized);
+  if (numeric === 0n || numeric >= STARKNET_CONTRACT_ADDRESS_LIMIT) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, invalidMessage);
+  }
+  return normalized;
+}
+
+function assertSubmitPortRegistryAddress(
+  submitPort: StarknetSubmitPort | undefined,
+  registryAddress: string,
+  explicitSubmitPortRegistryAddress?: string,
+): void {
+  if (!submitPort) return;
+  const configured = normalizeRegistryAddress(registryAddress, "starknet_registry_address_required", "invalid_starknet_registry_address");
+  const declared = submitPort.registryAddress;
+  const candidate = declared ?? explicitSubmitPortRegistryAddress;
+  if (candidate === undefined) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_address_required");
+  }
+  const actual = normalizeRegistryAddress(candidate, "submit_port_registry_address_required", "invalid_submit_port_registry_address");
+  if (declared !== undefined && explicitSubmitPortRegistryAddress !== undefined) {
+    const explicit = normalizeRegistryAddress(explicitSubmitPortRegistryAddress, "submit_port_registry_address_required", "invalid_submit_port_registry_address");
+    if (explicit !== actual) {
+      throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_address_mismatch");
+    }
+  }
+  if (actual !== configured) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_address_mismatch");
+  }
+}
+
 function getProjectionStartBlock(): number {
   const raw = (process.env.PRISM_STARKNET_INDEXER_START_BLOCK ?? "0").trim();
   const value = Number(raw);
@@ -197,6 +240,7 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   if (overrides?.submitPort && overrides.submitPortRegistryVersion !== registryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_mismatch");
   }
+  assertSubmitPortRegistryAddress(overrides?.submitPort, cfg.registryAddress, overrides?.submitPortRegistryAddress);
   let indexer: StarknetEventIndexerAdapter;
   try {
     indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100 });

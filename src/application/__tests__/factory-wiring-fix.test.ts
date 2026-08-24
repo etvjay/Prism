@@ -259,9 +259,66 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
     };
     await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
       expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v1" })).toThrow(/submit_port_registry_version_mismatch/);
-      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2" });
+      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2", submitPortRegistryAddress: REGISTRY });
       expect(factory.submitPort).toBe(submitPort);
       expect(factory.isStarknetSubmitConfigured).toBe(true);
+    });
+  });
+
+  it("requires an injected submit adapter registry address to match the configured read registry", async () => {
+    const fakeProvider = {
+      async callContract() { return ["0x0"] as string[]; },
+      async getEvents() { return { events: [], continuation_token: null } as never; },
+      async getBlockNumber() { return 100; },
+    };
+    const account = { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } };
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
+      const matching = new StarknetSubmitAdapter({ account, registryAddress: REGISTRY });
+      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, {
+        starknetReadProvider: fakeProvider as never,
+        submitPort: matching,
+        submitPortRegistryVersion: "v1",
+      });
+      expect(factory.submitPort).toBe(matching);
+
+      const mismatched = new StarknetSubmitAdapter({ account, registryAddress: "0x4444" });
+      expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, {
+        starknetReadProvider: fakeProvider as never,
+        submitPort: mismatched,
+        submitPortRegistryVersion: "v1",
+      })).toThrow(/submit_port_registry_address_mismatch/);
+
+      const missingAddress = {
+        registryVersion: "v1" as const,
+        async submitCreateIdentity() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+        async submitBind() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+        async submitRevoke() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
+      };
+      expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, {
+        starknetReadProvider: fakeProvider as never,
+        submitPort: missingAddress as never,
+        submitPortRegistryVersion: "v1",
+      })).toThrow(/submit_port_registry_address_required/);
+    });
+  });
+
+  it("keeps V1/V2 submit adapter separation while matching the configured registry address", async () => {
+    const fakeProvider = {
+      async callContract() { return ["0x0"] as string[]; },
+      async getEvents() { return { events: [], continuation_token: null } as never; },
+      async getBlockNumber() { return 100; },
+    };
+    const account = { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } };
+    const v2 = new StarknetSubmitAdapterV2({ account, registryAddress: REGISTRY });
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
+      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, {
+        starknetReadProvider: fakeProvider as never,
+        submitPort: v2,
+        submitPortRegistryVersion: "v2",
+      });
+      expect(factory.submitPort).toBe(v2);
+      expect(factory.submitPort.registryVersion).toBe("v2");
+      expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(REGISTRY);
     });
   });
 

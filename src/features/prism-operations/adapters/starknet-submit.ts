@@ -148,7 +148,7 @@ function assertAccountMatchesController(accountAddr: string, controllerAddr: str
 export class StarknetSubmitAdapter implements StarknetSubmitPort {
   readonly registryVersion = "v1" as const;
   private readonly account: StarknetAccountLike;
-  private readonly registryAddress: string;
+  readonly registryAddress: string;
 
   constructor(options: StarknetSubmitAdapterOptions) {
     if (!options.account || typeof options.account.execute !== "function") {

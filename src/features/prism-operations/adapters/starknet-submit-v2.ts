@@ -44,7 +44,7 @@ function registryId(value: string): string {
 export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
   readonly registryVersion = "v2" as const;
   private readonly account: StarknetAccountLike;
-  private readonly registryAddress: string;
+  readonly registryAddress: string;
 
   constructor(options: { account: StarknetAccountLike; registryAddress: string }) {
     if (!options.account || typeof options.account.execute !== "function") throw new Error("invariant_violation: V2 account required");
