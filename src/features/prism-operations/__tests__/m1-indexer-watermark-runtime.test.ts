@@ -12,7 +12,7 @@ import { isWatermarkStale } from "../domain/recovery";
 import { buildM1Envelope, buildM1GetIdentityFixture, buildM1WatermarkFixture, runM1CrossChecks } from "../../evidence/m1-live-read";
 import type { RegistryReadPort } from "../../../application/ports";
 
-const REGISTRY = "0x1111111111111111111111111111111111111111111111111111111111111111";
+const REGISTRY = "0x1111";
 const TX_A: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TX_B: Hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TX_C: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";

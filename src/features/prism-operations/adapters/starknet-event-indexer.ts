@@ -98,6 +98,14 @@ function isContractAddress(value: string | undefined): boolean {
   return BigInt(value!) < CONTRACT_ADDRESS_LIMIT;
 }
 
+function isNonZeroContractAddress(value: string | undefined): boolean {
+  return isContractAddress(value) && BigInt(value!) !== 0n;
+}
+
+function isPrismIdFelt(value: string | undefined): boolean {
+  return isFelt(value) && BigInt(value!) > 0n;
+}
+
 function normalizeTxHash(value: string): Hex | null {
   const raw = value.trim().toLowerCase();
   if (!/^0x[0-9a-f]{1,64}$/.test(raw)) return null;
@@ -139,8 +147,11 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     if (!options.reader || typeof options.reader.getEvents !== "function") {
       throw new Error("invariant_violation: StarknetEventIndexerAdapter requires injected reader.getEvents");
     }
-    if (!/^0x[0-9a-f]{1,64}$/.test(options.registryAddress.trim().toLowerCase())) {
-      throw new Error("invariant_violation: registryAddress must be 0x hex");
+    if (!isNonZeroContractAddress(options.registryAddress)) {
+      throw new Error("invariant_violation: registryAddress must be a nonzero ContractAddress");
+    }
+    if (options.registryVersion !== "v1" && options.registryVersion !== "v2") {
+      throw new Error("invariant_violation: registryVersion must be v1 or v2");
     }
     this.reader = options.reader;
     this.registryAddress = options.registryAddress.toLowerCase();
@@ -304,7 +315,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
         const keys = event.keys ?? event.event?.keys ?? [];
         const data = event.data ?? event.event?.data ?? [];
         const kind = this.inferKind(keys);
-        return kind !== null && typeof event.block_number === "number" && Number.isInteger(event.block_number) && typeof event.event_index === "number" && Number.isInteger(event.event_index) && this.inferPayload(kind, data, keys) !== null;
+        return kind !== null && typeof event.block_number === "number" && Number.isSafeInteger(event.block_number) && event.block_number >= 0 && typeof event.event_index === "number" && Number.isSafeInteger(event.event_index) && event.event_index >= 0 && this.inferPayload(kind, data, keys) !== null;
       });
       if (!match) return { txHash: canonicalTxHash, eventObserved: false, blockNumber: null, eventIndex: null };
       const blockNumber = match.block_number as number;
@@ -350,7 +361,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       if (keys.length !== 2 || data.length !== 1) return null;
       const prismId = keys[1];
       const controller = data[0];
-      if (!isFelt(prismId) || !isContractAddress(controller)) return null;
+      if (!isPrismIdFelt(prismId) || !isNonZeroContractAddress(controller)) return null;
       return { prismId, controller } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "ExecutionIdentityBound") {
@@ -361,7 +372,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const proofDigest = this.registryVersion === "v2"
         ? (data.length === 2 ? combineU256Limbs(data[0], data[1]) : null)
         : (data.length === 1 && isFelt(data[0]) ? data[0] : null);
-      if (!isFelt(prismId) || !venue || !isContractAddress(executionAccount) || !proofDigest) return null;
+      if (!isPrismIdFelt(prismId) || !venue || !isNonZeroContractAddress(executionAccount) || !proofDigest) return null;
       return { prismId, venue, executionAccount, proofDigest } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "BindingRevoked") {
@@ -369,7 +380,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const prismId = keys[1];
       const venue = decodeBaseVenue(keys[2]);
       const executionAccount = keys[3];
-      if (!isFelt(prismId) || !venue || !isContractAddress(executionAccount)) return null;
+      if (!isPrismIdFelt(prismId) || !venue || !isNonZeroContractAddress(executionAccount)) return null;
       return { prismId, venue, executionAccount } as unknown as RegistryCanonicalEvent["payload"];
     }
     return null;

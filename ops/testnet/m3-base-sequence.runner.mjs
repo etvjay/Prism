@@ -37,16 +37,14 @@ function parseEnvRecord() {
 
 function loadManifestChainId(env) {
   const p = resolve("ops/target-network/manifest.yaml");
-  if (!existsSync(p)) return { chainId: 84532, network: "SN_SEPOLIA" };
+  if (!existsSync(p)) throw new Error("target-network manifest missing");
+  if (!["testnet", "mainnet", "SN_SEPOLIA", "SN_MAIN"].includes(env)) throw new Error(`unknown environment ${env}`);
   const raw = readFileSync(p, "utf8");
-  const isTestnet = env === "testnet" || !env || env === "SN_SEPOLIA";
-  if (isTestnet) {
-    const m = raw.match(/testnet:\s*\n[\s\S]*?chain_id:\s*(\d+)/);
-    return { chainId: m ? parseInt(m[1], 10) : 84532, network: "SN_SEPOLIA" };
-  } else {
-    const m = raw.match(/mainnet:\s*\n[\s\S]*?chain_id:\s*(\d+)/);
-    return { chainId: m ? parseInt(m[1], 10) : 8453, network: "SN_MAIN" };
-  }
+  const isTestnet = env === "testnet" || env === "SN_SEPOLIA";
+  const section = isTestnet ? "testnet" : "mainnet";
+  const m = raw.match(new RegExp(`${section}:[\\s\\S]*?base:[\\s\\S]*?chain_id:\\s*(\\d+)`));
+  if (!m) throw new Error(`manifest base chain_id missing for ${section}`);
+  return { chainId: Number(m[1]), network: isTestnet ? "SN_SEPOLIA" : "SN_MAIN" };
 }
 
 if (has("--self-test")) {
@@ -62,7 +60,13 @@ if (has("--self-test")) {
 }
 
 const envArg = get("--env", process.env.PRISM_ENV ?? "testnet");
-const manifestInfo = loadManifestChainId(envArg);
+let manifestInfo;
+try {
+  manifestInfo = loadManifestChainId(envArg);
+} catch (error) {
+  console.error(`✕ target-network manifest blocked: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 const chainIdArg = get("--chain-id", get("--chainId", process.env.PRISM_CHAIN_ID ?? process.env.BASE_CHAIN_ID ?? String(manifestInfo.chainId)));
 const domainArg = get("--domain", process.env.PRISM_DOMAIN ?? "prism.example");
 const prismIdArg = get("--prism-id", process.env.PRISM_ID ?? "prism:1");
@@ -197,7 +201,11 @@ try {
   if (!/^0x[0-9a-f]{40}$/.test(publicConfig.executionAccount.toLowerCase())) throw new Error(`malformed executionAccount ${publicConfig.executionAccount}`);
   if (BigInt(publicConfig.executionAccount) === 0n) throw new Error("zero executionAccount is not allowed");
   if (!/^0x[0-9a-f]{1,64}$/.test(publicConfig.controllerAddress.toLowerCase())) throw new Error(`malformed controllerAddress ${publicConfig.controllerAddress}`);
-  if (BigInt(publicConfig.controllerAddress) === 0n) throw new Error("zero controllerAddress is not allowed");
+  if (BigInt(publicConfig.controllerAddress) === 0n || BigInt(publicConfig.controllerAddress) >= (1n << 251n)) throw new Error("controllerAddress outside ContractAddress range");
+  if (publicConfig.registryAddress) {
+    if (!/^0x[0-9a-f]{1,64}$/.test(publicConfig.registryAddress.toLowerCase())) throw new Error(`malformed registryAddress ${publicConfig.registryAddress}`);
+    if (BigInt(publicConfig.registryAddress) === 0n || BigInt(publicConfig.registryAddress) >= (1n << 251n)) throw new Error("registryAddress outside ContractAddress range");
+  }
   validated = publicConfig;
   console.log(`✓ Config validated — chainId ${chainId}, domain ${publicConfig.domain}, prismId ${publicConfig.prismId} -> felt 0x${val.toString(16)}, executionAccount ${publicConfig.executionAccount}, controller ${publicConfig.controllerAddress}`);
 } catch (e) {

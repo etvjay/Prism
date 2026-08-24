@@ -130,9 +130,13 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
   if (!/^0x[0-9a-f]{1,64}$/.test(ctrl)) {
     throw new Error(`M3_CONFIG_BLOCKED: malformed controllerAddress ${input.controllerAddress}`);
   }
+  if (BigInt(ctrl) === 0n || BigInt(ctrl) >= (1n << 251n)) {
+    throw new Error(`M3_CONFIG_BLOCKED: controllerAddress outside ContractAddress range`);
+  }
   if (input.registryAddress) {
     const reg = input.registryAddress.trim().toLowerCase();
     if (!/^0x[0-9a-f]{1,64}$/.test(reg)) throw new Error(`M3_CONFIG_BLOCKED: malformed registryAddress ${input.registryAddress}`);
+    if (BigInt(reg) === 0n || BigInt(reg) >= (1n << 251n)) throw new Error(`M3_CONFIG_BLOCKED: registryAddress outside ContractAddress range`);
     if (reg === ctrl) throw new Error(`M3_CONFIG_BLOCKED: controller must not equal registry`);
   }
   const versionRaw = input.registryVersion ?? (input.liveRequested ? undefined : "v1");
@@ -388,6 +392,7 @@ export async function runM3DryRunSequence(
       operationStore: deps.operationStore,
       registry: deps.registry,
       submitPort: spiedPort,
+      registryVersion: validatedConfig.registryVersion,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
     });
@@ -440,6 +445,7 @@ export async function runM3DryRunSequence(
       operationStore: deps.operationStore,
       registry: deps.registry,
       submitPort: deps.submitPort,
+      registryVersion: validatedConfig.registryVersion,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
     });
@@ -465,6 +471,7 @@ export async function runM3DryRunSequence(
       operationStore: deps.operationStore,
       registry: deps.registry,
       submitPort: deps.submitPort,
+      registryVersion: validatedConfig.registryVersion,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
     });
@@ -508,6 +515,7 @@ export async function runM3DryRunSequence(
       operationStore: deps.operationStore,
       registry: deps.registry,
       submitPort: deps.submitPort,
+      registryVersion: validatedConfig.registryVersion,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
     });
@@ -529,6 +537,7 @@ export async function runM3DryRunSequence(
       operationStore: deps.operationStore,
       registry: deps.registry,
       submitPort: deps.submitPort,
+      registryVersion: validatedConfig.registryVersion,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
     });

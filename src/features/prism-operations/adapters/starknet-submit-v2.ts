@@ -25,6 +25,10 @@ function assertController(account: StarknetAccountLike, controller: string): voi
   if (account.address.toLowerCase() !== address(controller)) throw new StarknetSubmitError("ERR-004", "account_controller_mismatch");
 }
 
+function mapContractError(cause: unknown): string | null {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.match(/ERR-0\d{2,3}/)?.[0] ?? (cause as { code?: string })?.code ?? null;
+}
 function registryId(value: string): string {
   try {
     return prismIdToRegistryFelt(value);
@@ -51,7 +55,8 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
       const result = await this.account.execute([{ contractAddress: this.registryAddress, entrypoint: "create_identity", calldata: [] }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {
-      throw new StarknetSubmitError("ERR-021", "submit_v2_create_identity_failed", cause);
+      const code = mapContractError(cause);
+      throw new StarknetSubmitError(code ?? "ERR-021", code ? String((cause as Error).message) : "submit_v2_create_identity_failed", cause);
     }
   }
 
@@ -75,7 +80,8 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
       }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {
-      throw new StarknetSubmitError("ERR-021", "submit_v2_bind_failed", cause);
+      const code = mapContractError(cause);
+      throw new StarknetSubmitError(code ?? "ERR-021", code ? String((cause as Error).message) : "submit_v2_bind_failed", cause);
     }
   }
 
@@ -92,7 +98,8 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
       }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {
-      throw new StarknetSubmitError("ERR-021", "submit_v2_revoke_failed", cause);
+      const code = mapContractError(cause);
+      throw new StarknetSubmitError(code ?? "ERR-021", code ? String((cause as Error).message) : "submit_v2_revoke_failed", cause);
     }
   }
 }

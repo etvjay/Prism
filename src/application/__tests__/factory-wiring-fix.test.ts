@@ -13,7 +13,7 @@ import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarkne
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 
-const REGISTRY = "0x1111111111111111111111111111111111111111111111111111111111111111";
+const REGISTRY = "0x1111";
 const CONTROLLER = "0x2222";
 const ACCOUNT_ADDR = "0x3333333333333333333333333333333333333333333333333333333333333333";
 

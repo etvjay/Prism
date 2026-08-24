@@ -50,6 +50,14 @@ describe("StarknetSubmitAdapterV2", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("preserves embedded contract error codes from V2 execute failures", async () => {
+    const adapter = new StarknetSubmitAdapterV2({
+      account: { address: ACCOUNT, execute: async () => { throw new Error("ERR-007: DIGEST CONSUMED"); } },
+      registryAddress: REGISTRY,
+    });
+    await expect(adapter.submitBind({ operationId: "op", prismId: "prism:1", venue: "BASE", executionAccount: "0xabc", controllerAddress: ACCOUNT, proofDigest: `0x${"1".repeat(64)}` as never })).rejects.toMatchObject({ code: "ERR-007" });
+  });
+
   it("does not route V2 through the V1 felt-mask function", async () => {
     const calls: Array<unknown[]> = [];
     const adapter = new StarknetSubmitAdapterV2({ account: account(calls), registryAddress: REGISTRY });

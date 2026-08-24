@@ -231,7 +231,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : "v1";
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
   // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
@@ -371,7 +371,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : "v1";
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({
         registryAddress: getStarknetRegistryAddress()!,
