@@ -349,3 +349,36 @@ Acceptance is a target-network decision. It is not deployment evidence and does 
 
 **Reopen conditions**  
 Reopen if SN_SEPOLIA/Base Sepolia becomes unavailable, chain IDs or protocol semantics change, or the decisive workflow requires a different environment.
+
+---
+
+## DEC-PRISM-M5-001 — Current STRK20 route selection
+
+**Layer:** Product/System/Delivery
+**Status:** Accepted for testnet implementation; live evidence pending
+**Decision ID:** DEC-PRISM-M5-001
+**Decided by:** Jason
+**Decided at:** 2026-08-23
+**Selected route:** `PrismVesuLendingHelper`
+
+**Decision**
+
+Use the pinned Prism-owned Vesu helper as the current M5/testnet route. The helper preserves the canonical `privacy_invoke` surface, pins the SN_SEPOLIA privacy pool, underlying token, and Vesu vToken, and uses u256-compatible real-token interfaces with checked output conversion.
+
+PrismClaim remains a preserved future product-native route. It is not rejected or removed; its authority, attestation, custody, expiry, and privacy decisions remain a separate re-entry track and may replace the helper after ratification and verification.
+
+**Current action**
+
+```text
+STRK → Vesu STRK vToken shares
+```
+
+The supported private action must be submitted through a STRK20-capable Wallet API or official Privacy SDK/prover path. A raw Starknet invoke is not equivalent to a private pool action.
+
+**Evidence boundary**
+
+This decision authorizes the testnet route only. It does not close M5, promote X2 to X3 for the full route, authorize mainnet, or modify `strk20.json`. M5 remains open until a successful pool-invoked transaction and independent readback prove the complete helper path.
+
+**Reopen conditions**
+
+Reopen if the pinned helper fails real pool ABI/atomicity tests, the pool rejects the Vesu share-token output, the upstream validator does not recognize Prism contract involvement, or a supported Wallet API/prover path is unavailable.
