@@ -103,7 +103,7 @@ describe("Bundle 2R Live — account/registry address mismatch (G2/G3, SC-06, IN
     await expect(
       adapter.submitBind({
         operationId: "op-2",
-        prismId: "prism:P1",
+        prismId: "prism:1",
         venue: "BASE",
         executionAccount: "0xcccccccccccccccccccccccccccccccccccccccc",
         proofDigest: DIGEST,
@@ -116,7 +116,7 @@ describe("Bundle 2R Live — account/registry address mismatch (G2/G3, SC-06, IN
     const adapter = new StarknetSubmitAdapter({ account: fakeAccount(), registryAddress: REGISTRY });
     const res = await adapter.submitBind({
       operationId: "op-ok",
-      prismId: "prism:P1",
+      prismId: "prism:1",
       venue: "BASE",
       executionAccount: "0xcccccccccccccccccccccccccccccccccccccccc",
       proofDigest: DIGEST,

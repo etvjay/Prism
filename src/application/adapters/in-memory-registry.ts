@@ -7,6 +7,17 @@
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import type { RegistryReadPort, StarknetSubmitPort } from "../ports";
 
+// Felt-bounded digest mapping for consumed_digests parity with Starknet registry.
+// In-memory double must mimic onchain felt keying: a full 256-bit keccak that
+// maps to same felt as already-consumed should be rejected as replay (ERR-007).
+const DIGEST_MASK_250 = (1n << 250n) - 1n;
+function toFeltDigestHex(digest: Hex): string {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(digest)) return digest.toLowerCase();
+  const v = BigInt(digest);
+  const masked = v <= DIGEST_MASK_250 ? v : v & DIGEST_MASK_250;
+  return `0x${masked.toString(16).padStart(64, "0")}`.toLowerCase();
+}
+
 function randomTxHash(seed: string): Hex {
   // Deterministic pseudo-hash for tests — 64 hex chars.
   let h = 0;
@@ -37,7 +48,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   seedBinding(prismId: string, venue: string, executionAccount: string, digest?: Hex): void {
     const key = bindingKey(prismId, venue, executionAccount);
     this.bindings.set(key, { status: "ACTIVE" });
-    if (digest) this.consumedDigests.add(digest.toLowerCase());
+    if (digest) this.consumedDigests.add(toFeltDigestHex(digest));
   }
 
   // RegistryReadPort
@@ -63,7 +74,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   }
 
   async isDigestConsumed(digest: Hex): Promise<boolean> {
-    return this.consumedDigests.has(digest.toLowerCase());
+    return this.consumedDigests.has(toFeltDigestHex(digest));
   }
 
   // StarknetSubmitPort — fail-closed on dependency error injection.
@@ -98,7 +109,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
       (err as unknown as { code?: string }).code = "ERR-004";
       throw err;
     }
-    if (this.consumedDigests.has(input.proofDigest.toLowerCase())) {
+    if (this.consumedDigests.has(toFeltDigestHex(input.proofDigest))) {
       const err = new Error("proof_digest_already_consumed");
       (err as unknown as { code?: string }).code = "ERR-007";
       throw err;
@@ -146,7 +157,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   // Test helper to simulate reconciliation making a bind visible
   applyBindForTest(prismId: string, venue: string, executionAccount: string, digest: Hex): void {
     this.bindings.set(bindingKey(prismId, venue, executionAccount), { status: "ACTIVE" });
-    this.consumedDigests.add(digest.toLowerCase());
+    this.consumedDigests.add(toFeltDigestHex(digest));
   }
   applyRevokeForTest(prismId: string, venue: string, executionAccount: string): void {
     this.bindings.set(bindingKey(prismId, venue, executionAccount), { status: "REVOKED" });

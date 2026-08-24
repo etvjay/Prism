@@ -33,6 +33,7 @@ import type { Hex, OperationState } from "../features/prism-operations/domain/op
 import type { Clock } from "../features/prism-identity/domain/ports";
 import { PrismChallengeService } from "../features/prism-identity/application/challenge-service";
 import { assertValidPrismId, assertSupportedVenue, assertValidExecutionAccount } from "../features/prism-identity/domain/identifiers";
+import { toFieldBoundedDigest } from "../features/prism-identity/domain/felt-digest";
 import { OperationError } from "../features/prism-operations/domain/errors";
 import { PrismError } from "../features/prism-identity/domain/errors";
 
@@ -212,8 +213,14 @@ export class PrismApplicationService {
       if (!identity) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `identity_not_found:${prismId}`);
       // - controller must match (ERR-004) — never infer from session.
       if (identity.controller !== controllerAddress) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch:expected_${identity.controller}_got_${controllerAddress}`);
-      // - digest not already consumed (ERR-007)
-      const digestConsumed = await this.deps.registry.isDigestConsumed(proofDigest as Hex);
+      // - digest not already consumed (ERR-007) — same field-bounded mapping as Starknet calldata boundary
+      let feltDigestForCheck: Hex;
+      try {
+        feltDigestForCheck = toFieldBoundedDigest(proofDigest as Hex).felt;
+      } catch {
+        throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, `malformed_proof_digest:${proofDigest}`);
+      }
+      const digestConsumed = await this.deps.registry.isDigestConsumed(feltDigestForCheck);
       if (digestConsumed) throw new AppError(APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED, `digest_already_consumed:${proofDigest}`);
 
       const kind = "bind_execution_identity";

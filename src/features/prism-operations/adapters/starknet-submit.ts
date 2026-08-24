@@ -11,6 +11,7 @@
 
 import type { Hex } from "../domain/operation";
 import type { StarknetSubmitPort } from "../../../application/ports";
+import { toFieldBoundedDigest, prismIdToRegistryFelt } from "../../prism-identity/domain/felt-digest";
 
 /** Minimal Account surface required for submission — injectable for tests. */
 export interface StarknetAccountLike {
@@ -59,8 +60,8 @@ function assertHexAddress(value: string): string {
 
 function mapRevertToCode(cause: unknown): string | null {
   const msg = cause instanceof Error ? cause.message : String(cause);
-  // Contract reverts carry ERR-00x inside message
-  const match = msg.match(/ERR-00[1-9]/);
+  // Contract reverts carry ERR-00x inside message (also handle ERR-023 for adapter validation)
+  const match = msg.match(/ERR-0\d{2,3}/);
   return match ? match[0] : null;
 }
 
@@ -185,9 +186,32 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
     if (!/^0x[0-9a-fA-F]{64}$/.test(input.proofDigest)) {
       throw new StarknetSubmitError("ERR-023", `malformed_proof_digest:${input.proofDigest}`);
     }
-    // prismId is felt252; validate non-empty
-    if (!input.prismId || input.prismId.trim().length === 0) {
-      throw new StarknetSubmitError("ERR-002", "missing_prism_id");
+    // M3 digest-format fix: the full 256-bit keccak proof_digest is canonical
+    // everywhere offchain; the ONLY conversion to felt252-safe calldata
+    // happens here (named mapping, see felt-digest.ts / DEC-PRISM-SYS-004
+    // proposal). No silent truncation: boundedness is recorded and surfaced.
+    let feltDigest: Hex;
+    try {
+      feltDigest = toFieldBoundedDigest(input.proofDigest).felt;
+    } catch (cause) {
+      throw new StarknetSubmitError("ERR-023", `malformed_proof_digest:${input.proofDigest}`, cause);
+    }
+    // M3-X2 prismId fix: application Prism IDs are canonical `prism:<decimal>`
+    // offchain; the registry expects felt252 `0x<hex>`. Explicit named
+    // conversion prismIdToRegistryFelt is applied at this Starknet boundary
+    // only — application/Product IDs remain unchanged offchain. No base36,
+    // hash, or silent repair.
+    let registryPrismId: string;
+    try {
+      if (!input.prismId || input.prismId.trim().length === 0) {
+        throw new Error("ERR-002: missing_prism_id");
+      }
+      registryPrismId = prismIdToRegistryFelt(input.prismId);
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      const codeMatch = msg.match(/ERR-0\d{2,3}/);
+      const code = codeMatch ? codeMatch[0] : "ERR-002";
+      throw new StarknetSubmitError(code, `malformed_prism_id:${input.prismId}`, cause);
     }
     if (input.venue.toUpperCase() !== "BASE") {
       throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
@@ -197,7 +221,7 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
         {
           contractAddress: this.registryAddress,
           entrypoint: "bind_execution_identity",
-          calldata: [input.prismId, input.venue, input.executionAccount, input.proofDigest],
+          calldata: [registryPrismId, input.venue, input.executionAccount, feltDigest],
         },
       ]);
       const txHash = assertHex64(result.transaction_hash);
@@ -207,7 +231,7 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
       if (maybeCode) throw new StarknetSubmitError(maybeCode, String((cause as Error).message), cause);
       // Preserve contract-mapped codes if cause already carries code
       const code = (cause as { code?: string })?.code;
-      if (code && /^ERR-00[0-9]$/.test(code)) throw new StarknetSubmitError(code, String((cause as Error).message), cause);
+      if (code && /^ERR-0\d{2,3}$/.test(code)) throw new StarknetSubmitError(code, String((cause as Error).message), cause);
       throw new StarknetSubmitError("ERR-021", "submit_bind_failed", cause);
     }
   }
@@ -222,14 +246,24 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
     const ctrl = assertHexAddress(input.controllerAddress);
     assertAccountMatchesController(this.account.address, ctrl);
     assertHexAddress(input.executionAccount);
-    if (!input.prismId || input.prismId.trim().length === 0) throw new StarknetSubmitError("ERR-002", "missing_prism_id");
+    // Same prismId boundary conversion as bind — registry expects felt.
+    let registryPrismId: string;
+    try {
+      if (!input.prismId || input.prismId.trim().length === 0) throw new Error("ERR-002: missing_prism_id");
+      registryPrismId = prismIdToRegistryFelt(input.prismId);
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      const codeMatch = msg.match(/ERR-0\d{2,3}/);
+      const code = codeMatch ? codeMatch[0] : "ERR-002";
+      throw new StarknetSubmitError(code, `malformed_prism_id:${input.prismId}`, cause);
+    }
     if (input.venue.toUpperCase() !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
     try {
       const result = await this.account.execute([
         {
           contractAddress: this.registryAddress,
           entrypoint: "revoke_binding",
-          calldata: [input.prismId, input.venue, input.executionAccount],
+          calldata: [registryPrismId, input.venue, input.executionAccount],
         },
       ]);
       const txHash = assertHex64(result.transaction_hash);
@@ -238,7 +272,7 @@ export class StarknetSubmitAdapter implements StarknetSubmitPort {
       const maybeCode = mapRevertToCode(cause);
       if (maybeCode) throw new StarknetSubmitError(maybeCode, String((cause as Error).message), cause);
       const code = (cause as { code?: string })?.code;
-      if (code && /^ERR-00[0-9]$/.test(code)) throw new StarknetSubmitError(code, String((cause as Error).message), cause);
+      if (code && /^ERR-0\d{2,3}$/.test(code)) throw new StarknetSubmitError(code, String((cause as Error).message), cause);
       throw new StarknetSubmitError("ERR-021", "submit_revoke_failed", cause);
     }
   }
