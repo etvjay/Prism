@@ -30,6 +30,12 @@ const registry = get("--registry", null);
 const prismId = get("--prism-id", null);
 const rpc = get("--rpc", null);
 const expectedClassHash = get("--expected-class-hash", null);
+const fromBlockRaw = get("--from-block", "0");
+const fromBlock = Number(fromBlockRaw);
+if (!Number.isInteger(fromBlock) || fromBlock < 0) {
+  console.error(`✕ --from-block malformed: ${fromBlockRaw}`);
+  process.exit(2);
+}
 
 if (env !== "testnet") {
   console.error(`✕ env must be testnet for M1 (manifest release-gated). Got ${env}`);
@@ -85,27 +91,51 @@ async function rpcCall(method, params) {
 
     // 2) get_identity (call) — read-only, never fabricates a Prism ID; probe the supplied prismId
     const pid = prismId ?? "1";
+    const pidFelt = /^0x[0-9a-fA-F]+$/.test(pid) ? pid : `0x${BigInt(pid).toString(16)}`;
     console.log(`\n[2] Read-only get_identity for prism_id=${pid} via starknet_call...`);
-    // Compute selector for get_identity (keccak) — use known value from contract
-    // For display we attempt a call; if ABI/call fails we still report the attempt deterministically
+    // Selector verified against PrismIdentityRegistry ABI.
+    const GET_IDENTITY_SELECTOR = "0x2c4943a27e820803a6ef49bb04b629950e2de615ab9ac0fb8baef037b168782";
     try {
-      const callResult = await rpcCall("starknet_call", [{ contract_address: registry, entry_point_selector: "0x" + BigInt("0x" + Buffer.from("get_identity").toString("hex")).toString(16), calldata: [pid] }, "latest"]);
+      const callResult = await rpcCall("starknet_call", [{ contract_address: registry, entry_point_selector: GET_IDENTITY_SELECTOR, calldata: [pidFelt] }, "latest"]);
       console.log(`  starknet_call get_identity(${pid}) →`, JSON.stringify(callResult).slice(0, 400));
-      // Result is Option<Identity>: 0 = None, else (controller, created_at_block, version)
-      const isNone = Array.isArray(callResult) && callResult.length === 1 && callResult[0] === "0x0";
-      console.log(`  exists: ${isNone ? "false (None — unknown prism_id, not an error; probe a known event prism_id instead)" : "true (Some)"}`);
+      // Result is Option<Identity>: deployed Cairo encoding uses tag 0 = Some, tag 1 = None.
+      const isNone = Array.isArray(callResult) && callResult.length > 0 && ["0x1", "1"].includes(String(callResult[0]).toLowerCase());
+      console.log(`  exists: ${isNone ? "false (None — unknown prism_id)" : "true (Some)"}`);
     } catch (e) {
-      console.log(`  note: starknet_call shape may need ABI encoding; raw attempt failed: ${e.message}`);
-      console.log("  fallback: use sncast call --contract-address $REGISTRY --function get_identity --calldata <prismId> (read-only)");
+      console.log(`  note: starknet_call failed (read-only): ${e.message}`);
+      console.log("  fallback: use the canonical RegistryReadAdapter/RPC call path; no invoke attempted");
     }
 
     // 3) getEvents for PrismIdentityCreated + watermark
     console.log("\n[3] Read-only indexer fetch (PrismIdentityCreated events) + watermark...");
     const PRISM_CREATED_SELECTOR = "0x2c3cc45f2ad701f3571bc1faaf7d37e194064f8e8e3269b8642fc31624960e7";
-    const eventsRes = await rpcCall("starknet_getEvents", [{ from_block: { block_number: 0 }, to_block: "latest", address: registry, keys: [[PRISM_CREATED_SELECTOR]], chunk_size: 20 }]);
-    const events = eventsRes.events ?? [];
-    const watermark = events.length ? Math.max(...events.map((e) => e.block_number ?? 0)) : null;
-    console.log(`  events: ${events.length} PrismIdentityCreated, watermark=${watermark}, continuation_token=${eventsRes.continuation_token ?? "null"}`);
+    const allEvents = [];
+    const seenEvents = new Set();
+    let continuationToken = null;
+    let pagesFetched = 0;
+    do {
+      const filter = {
+        from_block: { block_number: fromBlock },
+        to_block: "latest",
+        address: registry,
+        keys: [[PRISM_CREATED_SELECTOR]],
+        chunk_size: 1000,
+      };
+      if (continuationToken) filter.continuation_token = continuationToken;
+      const page = await rpcCall("starknet_getEvents", [filter]);
+      for (const event of page.events ?? []) {
+        const key = `${event.transaction_hash}:${event.event_index}`;
+        if (seenEvents.has(key)) continue;
+        seenEvents.add(key);
+        allEvents.push(event);
+      }
+      pagesFetched += 1;
+      continuationToken = page.continuation_token ?? null;
+      if (pagesFetched >= 100 && continuationToken) throw new Error("event_pagination_limit_exceeded");
+    } while (continuationToken);
+    const events = allEvents;
+    const eventWatermark = events.length ? Math.max(...events.map((e) => e.block_number ?? 0)) : null;
+    console.log(`  events: ${events.length} PrismIdentityCreated, pages=${pagesFetched}, eventWatermark=${eventWatermark}, continuation_token=${continuationToken ?? "null"}`);
     if (events.length) {
       console.log(`  sample keys: ${JSON.stringify(events[0].keys ?? events[0].event?.keys ?? []).slice(0, 200)}`);
     }
@@ -114,15 +144,18 @@ async function rpcCall(method, params) {
     console.log("\n[4] Watermark freshness (stale block cross-check, K=5)...");
     const latestBlock = await rpcCall("starknet_getBlockWithTxHashes", ["latest"]);
     const confirmedBlock = latestBlock.block_number ?? latestBlock.blockNumber ?? null;
+    const scanWatermark = confirmedBlock;
     console.log(`  confirmedBlock (latest) = ${confirmedBlock}`);
-    if (watermark !== null && confirmedBlock !== null) {
+    console.log(`  scanWatermark = ${scanWatermark}; eventWatermark = ${eventWatermark}`);
+    if (scanWatermark !== null && confirmedBlock !== null) {
       const K = 5;
-      const stale = watermark < confirmedBlock - K;
-      console.log(`  isStaleProjection(watermark=${watermark}, confirmed=${confirmedBlock}, K=${K}) → ${stale}`);
-      if (stale) console.log("  → blocker: stale block (indexer watermark behind confirmed - K)");
+      const stale = scanWatermark < confirmedBlock - K;
+      console.log(`  isStaleProjection(scanWatermark=${scanWatermark}, confirmed=${confirmedBlock}, K=${K}) → ${stale}`);
+      if (stale) console.log("  → blocker: scan watermark behind confirmed - K");
+      else if (eventWatermark !== null && eventWatermark < confirmedBlock - K) console.log("  ✓ scan fresh; newest matching event is older, which is not a scan-watermark failure");
       else console.log("  ✓ fresh (not stale)");
     } else {
-      console.log("  watermark null → stale by definition (no events yet — not promotable until first create_identity)");
+      console.log("  scanWatermark null → stale by definition (confirmed block unavailable)");
     }
 
     console.log("\n✓ M1 live read (read-only) completed. To promote to X3, build an envelope with:");

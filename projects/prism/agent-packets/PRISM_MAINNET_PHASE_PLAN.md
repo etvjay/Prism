@@ -122,7 +122,7 @@ get_identity second read
 indexed event + watermark
 ```
 
-**Current state:** account and registry deployment are observed on SN_SEPOLIA; live `create_identity` and independent `get_identity` readback are now observed at X3 in `M1_LIVE_IDENTITY_EVIDENCE.md`. Event indexing/watermark reconciliation and the M3 cross-chain sequence remain open.
+**Current state:** account/registry deployment, live create/read, `PrismIdentityCreated` event scan, independent PublicNode/Alchemy readback, and current scan watermark are observed at X3; durable event projection/reconciliation and the M3 cross-chain sequence remain open.
 
 **Exit maturity:** X3 testnet identity evidence.
 

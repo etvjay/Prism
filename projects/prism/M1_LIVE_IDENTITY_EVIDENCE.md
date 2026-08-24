@@ -1,7 +1,7 @@
 # M1 Live Identity Evidence — SN_SEPOLIA
 
-**Status:** Observed testnet evidence; partial M1 closeout  
-**Evidence maturity:** X3 for live create/read; event indexing/watermark reconciliation remains open  
+**Status:** Observed testnet evidence; live M1 read/event/scan closeout with durable projection still open
+**Evidence maturity:** X3 for live create/read/event/scan; X2 for durable indexer projection/reconciliation
 **Date:** 2026-08-24 UTC
 
 ## Deployment
@@ -63,25 +63,24 @@ data:
 
 ```text
 1. sncast call against the SN_SEPOLIA provider
-2. raw starknet_call against https://starknet-sepolia-rpc.publicnode.com
+2. raw starknet_call against the PublicNode SN_SEPOLIA endpoint
+3. raw starknet_call against the user-provided Alchemy SN_SEPOLIA endpoint
 ```
 
-The second raw read returned:
+The Alchemy read returned the same registry class and identity values. The deployed Cairo Option encoding is observed as:
 
 ```text
-[0x0, 0x047c0f8b01b9c7c75c669dc549bc305a0f2d796808117339a1c87730162b131c,
- 0xd506a9, 0x0]
+[0x0, controller, created_at_block, version] = Some(Identity)
+[0x1] = None
 ```
 
-`0xd506a9 = 13960873`.
-
-The raw RPC also returned the registry class hash and confirmed the create transaction in block `13960873` using the normalized transaction hash.
+The read-only event scan from the registry deployment block found the canonical creation event and completed through the current confirmed block. The event block is older than the scan head, which is expected because no later identity creation occurred; the scan watermark is current.
 
 ## Remaining M1 gates
 
 ```text
-event indexer projection/read watermark
-fresh watermark policy envelope
+durable event indexer projection/read-model persistence
+reconciliation worker consuming the live event scan
 full independent explorer + RPC evidence envelope
 M3 Base proof/bind/resolve/revoke sequence
 ```

@@ -30,6 +30,8 @@ export interface StarknetEventReader {
     }>;
     continuation_token?: string | null;
   }>;
+  // Optional for scan-head watermark when the provider supports it.
+  getBlockNumber?(): Promise<number>;
 }
 
 export type StarknetEventIndexerOptions = {
@@ -203,6 +205,19 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       if (page.watermark !== null) watermark = watermark === null ? page.watermark : Math.max(watermark, page.watermark);
       continuationToken = page.continuationToken;
     } while (continuationToken !== null && continuationToken !== undefined && continuationToken !== "");
+
+    // A scan watermark is the highest confirmed block actually read, not the
+    // newest matching event. This prevents an old-but-valid event from making
+    // a fully scanned projection look stale. Injected test readers without a
+    // block reader retain the event watermark fallback.
+    if (typeof this.reader.getBlockNumber === "function") {
+      try {
+        const scannedThrough = await this.reader.getBlockNumber();
+        if (Number.isFinite(scannedThrough)) watermark = scannedThrough;
+      } catch {
+        // Preserve the event watermark; the caller remains fail-closed if it is stale.
+      }
+    }
 
     aggregated.sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;

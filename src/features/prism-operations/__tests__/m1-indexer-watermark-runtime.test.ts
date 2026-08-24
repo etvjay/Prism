@@ -124,7 +124,7 @@ describe("M1 indexer/watermark runtime — deterministic gate", () => {
     expect(obs?.eventObserved).toBe(false);
 
     const { StarknetRegistryReadAdapter } = await import("../adapters/starknet-registry-read");
-    const reg = new StarknetRegistryReadAdapter({ reader: { callContract: async () => ["0x0"] }, registryAddress: REGISTRY });
+    const reg = new StarknetRegistryReadAdapter({ reader: { callContract: async () => ["0x1"] }, registryAddress: REGISTRY });
     expect(await reg.getIdentity("prism:999")).toBeNull();
     const resolveRes = await reg.resolve("prism:999", "BASE");
     expect(resolveRes.executionAccount).toBeNull();

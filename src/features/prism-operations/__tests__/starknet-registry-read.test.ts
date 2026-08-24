@@ -21,7 +21,7 @@ function readerThrowing(msg: string) {
 describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail-closed)", () => {
   it("getIdentity returns parsed identity for Some via injected reader", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x1", CONTROLLER, "12345", "0"]),
+      reader: readerReturning(["0x0", CONTROLLER, "12345", "0"]),
       registryAddress: REGISTRY,
     });
     const res = await adapter.getIdentity(PRISM_ID);
@@ -34,7 +34,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("getIdentity returns null for None (unknown prismId) — fail-closed, not throw", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x0"]),
+      reader: readerReturning(["0x1"]),
       registryAddress: REGISTRY,
     });
     const res = await adapter.getIdentity(PRISM_ID);
@@ -52,7 +52,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("getIdentity throws ERR-002 for malformed prismId", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x0"]),
+      reader: readerReturning(["0x1"]),
       registryAddress: REGISTRY,
     });
     await expect(adapter.getIdentity("bad-id")).rejects.toBeInstanceOf(StarknetRegistryReadError);
@@ -62,13 +62,13 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
   });
 
   it("constructor throws for malformed registry address", () => {
-    expect(() => new StarknetRegistryReadAdapter({ reader: readerReturning(["0x0"]), registryAddress: "not-hex" })).toThrow(/malformed_address/);
+    expect(() => new StarknetRegistryReadAdapter({ reader: readerReturning(["0x1"]), registryAddress: "not-hex" })).toThrow(/malformed_address/);
     expect(() => new StarknetRegistryReadAdapter({ reader: null as unknown as never, registryAddress: REGISTRY })).toThrow(/injected reader/);
   });
 
   it("getIdentity throws for malformed address field via reader (fail-closed not fabricated)", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x1", "not-hex", "10", "0"]),
+      reader: readerReturning(["0x0", "not-hex", "10", "0"]),
       registryAddress: REGISTRY,
     });
     await expect(adapter.getIdentity(PRISM_ID)).rejects.toBeInstanceOf(StarknetRegistryReadError);
@@ -85,7 +85,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("resolve returns NO_ACTIVE for unknown prismId", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x0"]),
+      reader: readerReturning(["0x1"]),
       registryAddress: REGISTRY,
     });
     const res = await adapter.resolve(PRISM_ID, "BASE");
@@ -95,7 +95,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
   it("resolve returns ACTIVE when tagged Some", async () => {
     const acct = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x1", acct]),
+      reader: readerReturning(["0x0", acct]),
       registryAddress: REGISTRY,
     });
     const res = await adapter.resolve(PRISM_ID, "BASE");
@@ -115,7 +115,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("isDigestConsumed throws for malformed digest", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x0"]),
+      reader: readerReturning(["0x1"]),
       registryAddress: REGISTRY,
     });
     await expect(adapter.isDigestConsumed("not-hex" as Hex)).rejects.toBeInstanceOf(StarknetRegistryReadError);
@@ -124,7 +124,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("never logs or persists connection strings (adapter stores only address, no rpcUrl)", () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x0"]),
+      reader: readerReturning(["0x1"]),
       registryAddress: REGISTRY,
     });
     // adapter should not have rpcUrl property; inspection should not expose secret
@@ -135,7 +135,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
   it("preserves Starknet canonical authority: getIdentity via felt conversion prism:2 -> 0x2", async () => {
     let captured: string[] = [];
     const adapter = new StarknetRegistryReadAdapter({
-      reader: { callContract: async (req) => { captured = req.calldata; return ["0x0"]; } },
+      reader: { callContract: async (req) => { captured = req.calldata; return ["0x1"]; } },
       registryAddress: REGISTRY,
     });
     await adapter.getIdentity(PRISM_ID_2);
@@ -144,7 +144,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
 
   it("malformed controller in response throws, not fabricated as identity", async () => {
     const adapter = new StarknetRegistryReadAdapter({
-      reader: readerReturning(["0x1", "not-hex-controller", "10", "0"]),
+      reader: readerReturning(["0x0", "not-hex-controller", "10", "0"]),
       registryAddress: REGISTRY,
     });
     await expect(adapter.getIdentity(PRISM_ID)).rejects.toBeInstanceOf(StarknetRegistryReadError);

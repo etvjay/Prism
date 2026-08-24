@@ -87,16 +87,17 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     if (!Array.isArray(result) || result.length === 0) {
       throw new StarknetRegistryReadError("ERR-023", `malformed_get_identity_response:${JSON.stringify(result).slice(0, 200)}`);
     }
-    // Option<Identity> encoding: [0] => None, [1, controller, created_at_block, version] => Some
+    // Option<Identity> encoding in the deployed Cairo ABI: [0] => Some,
+    // [1] => None. The live registry returns [0, controller, block, version]
+    // for an existing identity and [1] for an unknown id.
     const tag = result[0].trim().toLowerCase();
-    if (tag === "0x0" || tag === "0" || tag === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+    if (tag === "0x1" || tag === "1" || tag === "0x0000000000000000000000000000000000000000000000000000000000000001") {
       return null; // fail-closed unknown: None, not an error
     }
-    if (tag !== "0x1" && tag !== "1" && tag !== "0x0000000000000000000000000000000000000000000000000000000000000001") {
-      // Some Cairo versions encode Option as bare struct without tag when Some; handle length heuristic
-      // If length == 3 and first looks like controller, treat as Some
+    if (tag !== "0x0" && tag !== "0" && tag !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
+      // Some Cairo versions encode Option as bare struct without tag when Some
+      // (controller, created_at_block, version).
       if (result.length === 3) {
-        // controller, createdAtBlock, version without tag
         const controller = normalizeController(result[0]);
         const createdAtBlock = Number(result[1]);
         const version = Number(result[2]);
@@ -110,7 +111,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
       }
       throw new StarknetRegistryReadError("ERR-023", `malformed_get_identity_tag:${tag}`);
     }
-    // Tagged Some: expect [1, controller, created_at_block, version]
+    // Tagged Some uses tag 0: [0, controller, created_at_block, version].
     if (result.length < 4) {
       throw new StarknetRegistryReadError("ERR-023", `malformed_get_identity_some_short:${JSON.stringify(result).slice(0, 200)}`);
     }
@@ -153,12 +154,13 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     if (!Array.isArray(result) || result.length === 0) {
       throw new StarknetRegistryReadError("ERR-023", `malformed_resolve_response:${JSON.stringify(result).slice(0, 200)}`);
     }
-    // Resolution enum: 0 => NoActiveDestination, 1 => ActiveDestination(contractAddress)
+    // Resolution enum declaration order in Cairo is ActiveDestination first,
+    // NoActiveDestination second: tag 0 = ACTIVE, tag 1 = NO_ACTIVE.
     const tag = result[0].trim().toLowerCase();
-    if (tag === "0x0" || tag === "0") {
+    if (tag === "0x1" || tag === "1") {
       return { executionAccount: null, watermark: 0 };
     }
-    if (tag === "0x1" || tag === "1") {
+    if (tag === "0x0" || tag === "0") {
       if (result.length < 2) throw new StarknetRegistryReadError("ERR-023", `malformed_resolve_active_short:${JSON.stringify(result).slice(0, 200)}`);
       const acct = normalizeController(result[1]);
       if (!/^0x[0-9a-f]{1,64}$/.test(acct)) throw new StarknetRegistryReadError("ERR-002", `malformed_execution_account:${acct}`);

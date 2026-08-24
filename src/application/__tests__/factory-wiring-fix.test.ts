@@ -74,7 +74,7 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
       const all = await ports!.indexer.fetchAllRegistryEvents({ fromBlock: 0 });
       expect(getEventsCalls).toBeGreaterThan(0);
       expect(all.events.length).toBe(1);
-      expect(all.watermark).toBe(7);
+      expect(all.watermark).toBe(100);
       expect(all.pagesFetched).toBe(1);
     });
   });
@@ -169,7 +169,7 @@ describe("FACTORY_WIRING_FIX — defect 2: DUAL READERS canonicalized", () => {
   });
 
   it("malformed controller in response throws ERR-002 identically (no fabricated identity)", async () => {
-    const bad = { callContract: async () => ["0x1", "not-hex", "10", "0"] };
+    const bad = { callContract: async () => ["0x0", "not-hex", "10", "0"] };
     const canonical = new StarknetRegistryReadAdapter({ reader: bad, registryAddress: REG });
     const wrapped = new StarknetRegistryReader({ rpcUrl: "https://fake", registryAddress: REG, reader: bad as never });
     await expect(canonical.getIdentity("prism:1")).rejects.toMatchObject({ code: "ERR-002" });
