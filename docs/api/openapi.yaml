@@ -1,0 +1,377 @@
+openapi: 3.1.0
+info:
+  title: Prism Protocol API
+  version: 1.0.0
+  description: |
+    Domain-first REST surface over PrismApplicationService / PauseService.
+    No raw felt/calldata; submitted != completed; stable ERR catalogue;
+    idempotency/correlation/expected-version via headers.
+servers:
+  - url: http://localhost:3000
+    description: local dev
+  - url: https://prism.example
+    description: production
+
+components:
+  securitySchemes:
+    prismSession:
+      type: apiKey
+      in: header
+      name: X-Session-Id
+      description: App-session authentication (CON-PRISM-006). Execution authority is separate (controller/ proofDigest) and never inferred from session.
+
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      schema: { type: string }
+      description: Client-generated request id; server echoes for tracing.
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      schema: { type: string }
+      description: Observability correlation chain.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string }
+      description: Exactly-once create semantics; same key + same fingerprint is benign, different fingerprint is ERR-023.
+    ExpectedVersion:
+      name: If-Match
+      in: header
+      schema: { type: string }
+      description: Optimistic CAS version guard (SYSTEM_FOUNDRY §18). Value is quoted etag version, e.g. "3".
+    SessionId:
+      name: X-Session-Id
+      in: header
+      schema: { type: string }
+    SessionUser:
+      name: X-Session-User
+      in: header
+      schema: { type: string }
+    Watermark:
+      name: X-Prism-Watermark
+      in: header
+      schema: { type: integer }
+      description: Block watermark of canonical read.
+
+  schemas:
+    Error:
+      type: object
+      required: [code, name, category, retryable, userAction, httpStatusHint]
+      properties:
+        code: { type: string, example: ERR-004 }
+        name: { type: string, example: not_controller }
+        category: { type: string, example: authorization }
+        retryable: { type: string, example: no }
+        userAction: { type: string, example: sign_with_controller_account }
+        httpStatusHint: { type: integer, example: 403 }
+        detail: { type: string }
+
+    ApiErrorEnvelope:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, enum: [false] }
+        error: { $ref: '#/components/schemas/Error' }
+        requestId: { type: string, nullable: true }
+
+    OperationRef:
+      type: object
+      properties:
+        operationId: { type: string }
+        state: { type: string, example: submitted }
+        version: { type: integer }
+
+    CreateIdentityRequest:
+      type: object
+      required: [controllerAddress]
+      properties:
+        controllerAddress: { type: string, description: Starknet controller 0x hex }
+        kind: { type: string, example: create_identity }
+        session: { type: object }
+        correlationId: { type: string, nullable: true }
+        idempotencyKey: { type: string }
+
+    BindRequest:
+      type: object
+      required: [venue, executionAccount, proofDigest, controllerAddress]
+      properties:
+        venue: { type: string, enum: [BASE], example: BASE }
+        executionAccount: { type: string, example: "0x83a..." }
+        proofDigest: { type: string, pattern: "^0x[0-9a-fA-F]{64}$" }
+        controllerAddress: { type: string }
+        session: { type: object }
+        expectedVersion: { type: integer, nullable: true }
+
+    RevokeRequest:
+      type: object
+      required: [venue, executionAccount, controllerAddress]
+      properties:
+        venue: { type: string, enum: [BASE] }
+        executionAccount: { type: string }
+        controllerAddress: { type: string }
+        session: { type: object }
+
+    IntentRequest:
+      type: object
+      required: [prismId, purpose]
+      properties:
+        prismId: { type: string, example: "prism:P7F21" }
+        purpose: { type: string, enum: [payment, transfer, contract_call, private_action, other] }
+        venue: { type: string, nullable: true }
+        executionAccount: { type: string, nullable: true }
+        amount: { type: string, nullable: true }
+        asset: { type: string, nullable: true }
+        recipientPrismId: { type: string, nullable: true }
+        recipientAddress: { type: string, nullable: true }
+        session: { type: object }
+        idempotencyKey: { type: string }
+        correlationId: { type: string, nullable: true }
+
+paths:
+  /v1/identity:
+    post:
+      summary: Create Prism identity (OP-7-01)
+      operationId: createIdentity
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/SessionUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateIdentityRequest' }
+      responses:
+        '200':
+          description: Submitted — operation row persisted before broadcast (submitted != completed)
+          headers:
+            X-Request-Id: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object, properties: { operationId: { type: string }, state: { type: string } } }
+                  operation: { $ref: '#/components/schemas/OperationRef' }
+                  requestId: { type: string, nullable: true }
+        '401': { description: Missing app session (ERR-023 mapped as 401)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '409': { description: Idempotency conflict (ERR-023)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: RPC unavailable (ERR-021)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/identity/{prismId}:
+    get:
+      summary: Get identity (QRY-7-01, watermarked)
+      parameters:
+        - name: prismId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Identity exists
+          headers:
+            X-Prism-Watermark: { schema: { type: integer } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object, properties: { prismId: { type: string }, controller: { type: string, nullable: true }, exists: { type: boolean }, watermark: { type: integer, nullable: true } } }
+        '404': { description: Identity not found (ERR-010)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/identity/{prismId}/bindings:
+    post:
+      summary: Bind execution identity (OP-8-01, controller-only, digest single-use)
+      parameters:
+        - name: prismId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ExpectedVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BindRequest' }
+      responses:
+        '200': { description: Submitted, content: { application/json: { schema: { type: object } } } }
+        '403': { description: Not controller (ERR-004)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '409': { description: Digest already consumed (ERR-007) / binding already active (ERR-008) / idempotency conflict (ERR-023)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/identity/{prismId}/bindings/{bindingId}/revoke:
+    post:
+      summary: Revoke binding (OP-8-03, parent identity survives)
+      parameters:
+        - name: prismId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: bindingId
+          in: path
+          required: true
+          schema: { type: string, description: executionAccount or opaque binding id }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokeRequest' }
+      responses:
+        '200': { description: Submitted or already revoked, content: { application/json: { schema: { type: object } } } }
+        '403': { description: Not controller, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '404': { description: Binding not found (ERR-009)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/resolve/{identifier}:
+    get:
+      summary: Resolve (QRY-8-01, watermarked, canonical preference)
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema: { type: string }
+        - name: venue
+          in: query
+          required: true
+          schema: { type: string, enum: [BASE] }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Active destination or NO_ACTIVE_DESTINATION with watermark
+          headers:
+            X-Prism-Watermark: { schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object, properties: { prismId: { type: string }, venue: { type: string }, executionAccount: { type: string, nullable: true }, exists: { type: boolean }, watermark: { type: integer, nullable: true } } }
+        '404': { description: Identity not found (ERR-010)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/operations/{operationId}:
+    get:
+      summary: Get operation (durable, submitted != completed)
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Operation, content: { application/json: { schema: { type: object } } } }
+        '404': { description: Unknown operation, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/receipts/{receiptId}:
+    get:
+      summary: Get receipt (operation-derived, observed result)
+      parameters:
+        - name: receiptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Receipt, content: { application/json: { schema: { type: object } } } }
+        '404': { description: Unknown receipt, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/challenge/issue:
+    post:
+      summary: Issue ownership challenge (CMD-B-01, fresh nonce per call)
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: Challenge issued }
+        '422': { description: Invalid venue/account }
+
+  /v1/challenge/verify:
+    post:
+      summary: Submit proof (CMD-B-02, ladder EOA/1271/6492, nonce single-use)
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: Verified }
+        '400': { description: Altered message (ERR-012)' }
+        '409': { description: Nonce already used (ERR-006)' }
+        '410': { description: Expired (ERR-013)' }
+
+  /v1/intents:
+    post:
+      summary: Create intent (pre-Pause, plan_hash binding)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IntentRequest' } } } }
+      responses:
+        '200': { description: Intent created }
+        '409': { description: Idempotency conflict }
+
+  /v1/intents/{intentId}/pause:
+    post:
+      summary: Pause intent (creates ExecutionPause, injectable PauseService)
+      parameters:
+        - name: intentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: Paused }
+
+  /v1/pauses/{pauseId}:
+    get:
+      summary: Get pause
+      parameters:
+        - name: pauseId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Pause }
+        '404': { description: Not found }
+
+  /v1/pauses/{pauseId}/verify:
+    post:
+      summary: Verify pause (policy checks)
+      parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Verifying/ReleaseReady }
+
+  /v1/pauses/{pauseId}/release:
+    post:
+      summary: Release pause (requires RELEASE_READY + version guard, creates settlement operation)
+      parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/ExpectedVersion' }]
+      responses:
+        '200': { description: Released }
+        '409': { description: Stale version or cannot_release_from state }
+
+  /v1/pauses/{pauseId}/cancel:
+    post:
+      summary: Cancel pause
+      parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/ExpectedVersion' }]
+      responses:
+        '200': { description: Cancelled }
+
+  /v1/pauses/{pauseId}/escalate:
+    post:
+      summary: Escalate pause
+      parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Escalated }
+
+  /v1/pauses/{pauseId}/approve:
+    post:
+      summary: Approve escalated pause
+      parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: ReleaseReady after approval }
