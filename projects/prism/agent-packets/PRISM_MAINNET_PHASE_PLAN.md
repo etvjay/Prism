@@ -28,9 +28,9 @@ payment-memo slice. It is not a full messenger and is not a mainnet blocker
 unless the mainnet release explicitly promises PrismChannel.
 ```
 
-**Band A** is the minimum credible Prism mainnet.  
-**Band B** is required if Prism Pause is included in the mainnet product promise.  
-**Band C** is not a prerequisite for the first mainnet release; it is the post-mainnet product evolution path.
+**Band B** is now the selected release contract: Prism Pause is part of the mainnet promise and all promised M0–M7 work, owner-led Phase 8 surfaces, and M8 testnet evidence must pass before M9.
+**Band A** is not the selected release rule.
+**Band C** remains deferred and is not a prerequisite for the selected mainnet release.
 
 ---
 
@@ -80,7 +80,7 @@ no unresolved contradiction in the selected MVP path
 all deferred features explicitly labeled
 ```
 
-**Current state:** Product/system material exists; the M5 helper route is now recorded in `DEC-PRISM-M5-001`, but the overall Band A vs Band B release choice and Pause-as-mainnet-promise decision remain open.
+**Current state:** Band B is accepted in `DEC-PRISM-M0-001`; detailed Pause P0 decisions and the remaining M0–M7/runtime/evidence gates remain open.
 
 ---
 
@@ -167,7 +167,7 @@ T12 failure/recovery
 real runtime smoke test on testnet
 ```
 
-**Current state:** REST/API, SDK, and MCP boundary contracts are integration-ready at X2; real HTTP/PostgreSQL runtime, live indexer/reconciliation, and testnet smoke remain open.
+**Current state:** REST/API, SDK, MCP, environment-gated Postgres wiring, and HTTP smoke are parent-integrated at X2; live ledger/indexer/reconciliation and testnet smoke remain open.
 
 ---
 
@@ -217,7 +217,7 @@ reconciliation watermark
 failure/retry results
 ```
 
-**Current state:** wallets funded and Starknet infrastructure deployed; no live Base proof/bind/resolve/revoke sequence has been observed.
+**Current state:** wallets funded and Starknet infrastructure deployed; M3 digest and Prism ID boundary fixes are X2-tested, but the live Base proof/bind/resolve/revoke sequence remains open.
 
 **Exit maturity:** X3 testnet decisive identity evidence.
 
@@ -412,7 +412,7 @@ P8 Testnet Pause evidence
 
 **Mainnet requirement:** if Pause is included in the product promise, all P0–P8 must pass before M9. Pause must govern at least one consequential user action; it must never claim post-finality rollback.
 
-**Current state:** Pause P0–P4 foundation is integration-ready at X2; P0 owner canonicalization, P5 settlement adapters, P6 product/API, P7 observability/red-team, and P8 testnet evidence remain open.
+**Current state:** Pause P0–P7 foundations are parent-integrated at X2; detailed P0 canonicalization, live settlement adapters, Postgres/runtime evidence, and P8 testnet evidence remain open and block Band B M9.
 
 **PrismChannel boundary:** minimal C1/S4 PrismChannel domain slice is integration-ready at X2 for the testnet path; it remains non-blocking for first mainnet unless explicitly promised. No Phase 8 messaging surface is delegated.
 

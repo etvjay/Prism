@@ -382,3 +382,37 @@ This decision authorizes the testnet route only. It does not close M5, promote X
 **Reopen conditions**
 
 Reopen if the pinned helper fails real pool ABI/atomicity tests, the pool rejects the Vesu share-token output, the upstream validator does not recognize Prism contract involvement, or a supported Wallet API/prover path is unavailable.
+
+---
+
+## DEC-PRISM-M0-001 — Band B Pause-enabled mainnet release rule
+
+**Layer:** Product/System/Delivery
+**Status:** Accepted
+**Decision ID:** DEC-PRISM-M0-001
+**Decided by:** Jason
+**Decided at:** 2026-08-24
+**Selected band:** `Band B — Pause-enabled Prism mainnet`
+
+**Decision**
+
+Prism will not enter mainnet until every feature promised in the bounded release is complete and testnet-proven. Prism Pause is part of the mainnet promise and therefore is a release gate, not a post-mainnet enhancement.
+
+The pre-mainnet release contract is:
+
+```text
+M0–M7 implementation and Foundry/AUDIT closeout
++ owner-led Phase 8 product surfaces
++ M8 full SN_SEPOLIA/Base Sepolia rehearsal and evidence acceptance
+→ M9 SN_MAIN deployment and submission
+```
+
+M8 and M9 are not started by this decision. PrismChannel remains a minimal testnet relationship slice, not a full messenger, unless a later decision explicitly promises it as a mainnet feature. Band C future capabilities remain deferred.
+
+**Redeployment rule**
+
+Freeze the complete mainnet contract/configuration set before final testnet rehearsal. Redeploy a clean final testnet release candidate when immutable contract or constructor changes require it, then deploy the same frozen source/class set to SN_MAIN once. Do not use repeated redeployment to postpone unresolved Product/System decisions.
+
+**Reopen conditions**
+
+Reopen if the bounded feature set expands, Pause cannot pass P0–P8, the full testnet rehearsal fails, or a promised feature lacks independent evidence.
