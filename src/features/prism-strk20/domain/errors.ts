@@ -20,6 +20,10 @@ export const STRK20_ERROR_CODE = {
   VIEWING_KEY_FORBIDDEN: "STRK20-015",
   INVALID_AMOUNT: "STRK20-016",
   RELAYER_ATTRIBUTION_FORBIDDEN: "STRK20-017",
+  PROOF_REQUIRED: "STRK20-018",
+  UNSUPPORTED_WALLET_METHOD: "STRK20-019",
+  PROVIDER_REFUSED: "STRK20-020",
+  UNSUPPORTED_WALLET: "STRK20-021",
 } as const;
 
 export type Strk20ErrorCode = (typeof STRK20_ERROR_CODE)[keyof typeof STRK20_ERROR_CODE];
@@ -42,6 +46,10 @@ const ERROR_SHAPES: Record<Strk20ErrorCode, { name: string; category: string; re
   "STRK20-015": { name: "viewing_key_forbidden", category: "privacy", retryable: "no", httpStatusHint: 400, userAction: "remove_viewing_key" },
   "STRK20-016": { name: "invalid_amount", category: "validation", retryable: "no", httpStatusHint: 422, userAction: "correct_amount" },
   "STRK20-017": { name: "relayer_attribution_forbidden", category: "validation", retryable: "no", httpStatusHint: 422, userAction: "use_pool_event" },
+  "STRK20-018": { name: "proof_required", category: "validation", retryable: "no", httpStatusHint: 422, userAction: "prepare_without_simulate" },
+  "STRK20-019": { name: "unsupported_wallet_method", category: "validation", retryable: "no", httpStatusHint: 409, userAction: "use_supported_wallet" },
+  "STRK20-020": { name: "provider_refused", category: "authorization", retryable: "no", httpStatusHint: 403, userAction: "retry_with_user_approval" },
+  "STRK20-021": { name: "unsupported_wallet", category: "validation", retryable: "no", httpStatusHint: 409, userAction: "use_supported_wallet" },
 };
 
 export class Strk20Error extends Error {

@@ -1,7 +1,13 @@
 export * from "./errors";
-export * from "./wallet-capability";
+export { supportsStrk20, detectCapability, classifyWalletEnvironment, getExpectedWalletEnvironment } from "./wallet-capability";
+export type { WalletEnvironment, ExpectedWalletEnvironment, CapabilityDetectionInput, CapabilityResult } from "./wallet-capability";
 export * from "./privacy-guard";
 export * from "./fee-policy";
-export * from "./receipt";
+export { buildShieldReceipt, buildPrivateTransferReceipt, assertNotSenderAttribution, assertReceiptPrivacyHonesty, normalizeHex as receiptNormalizeHex } from "./receipt";
+export type { Hex as ReceiptHex, Strk20Receipt, PoolDepositEvent, TxReceiptLike } from "./receipt";
+export { STRK20_POOL_ADDRESS as RECEIPT_POOL_ADDRESS } from "./receipt";
 export type { Strk20WalletPort, CapabilityObservation, PoolFeeObservation, DepositObservation, PrivateBalanceObservation, TransferObservation } from "./ports";
 export * from "./strk20-state";
+export * from "./strk20-proof";
+export type { Strk20Action, Strk20DepositAction, Strk20WithdrawAction, Strk20TransferAction, Strk20InvokeAction, NormalizedReceipt, ReceiptExecutionStatus, ReceiptFinalityStatus, CapabilityResult as ActionCapabilityResult } from "./strk20-action-port";
+export { normalizeReceipt, validateActions, ensureCapabilityOrThrow, ensureNetworkOrThrow, classifyProviderError, STRK20_POOL_ADDRESS, isSimulatedCallAndProof, transitionProving, createProvingTracker, evaluateCapability, evaluateNetworkGuard } from "./strk20-action-port";

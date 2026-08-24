@@ -15,6 +15,7 @@ export const STRK20_STATES = [
   "confirmed",
   "maturing",
   "privately_available",
+  "proving",
   "transfer_pending",
   "transfer_confirmed",
   "rejected",
@@ -99,17 +100,18 @@ const ALLOWED: Record<Strk20State, ReadonlySet<Strk20State>> = {
   shielding: s("confirmed", "rejected", "dependency_failure", "mismatch"),
   confirmed: s("maturing", "rejected", "dependency_failure"),
   maturing: s("privately_available", "rejected", "dependency_failure", "mismatch"),
-  privately_available: s("transfer_pending", "shielding", "approval_pending", "rejected", "dependency_failure", "mismatch"),
+  privately_available: s("proving", "transfer_pending", "shielding", "approval_pending", "rejected", "dependency_failure", "mismatch"),
+  proving: s("transfer_pending", "rejected", "dependency_failure", "mismatch"),
   transfer_pending: s("transfer_confirmed", "rejected", "dependency_failure", "mismatch"),
   transfer_confirmed: s(),
   rejected: s(),
-  dependency_failure: s("capability_unknown", "approval_pending", "shielding", "maturing", "transfer_pending"),
+  dependency_failure: s("capability_unknown", "approval_pending", "shielding", "maturing", "proving", "transfer_pending"),
 };
 
 export function canTransition(from: Strk20State, to: Strk20State): boolean {
   if (from === to) {
     // Only allow idempotent re-apply for pending/transient states; terminal not
-    const idempotent = new Set<Strk20State>(["shielding", "maturing", "transfer_pending", "dependency_failure", "mismatch"]);
+    const idempotent = new Set<Strk20State>(["shielding", "maturing", "proving", "transfer_pending", "dependency_failure", "mismatch"]);
     return idempotent.has(from);
   }
   const allowed = ALLOWED[from];
@@ -207,6 +209,9 @@ export function transition(flow: Strk20Flow, input: TransitionInput): Transition
   // Shielding requires txHash
   if (input.to === "shielding" && !input.shieldTxHash && !flow.shieldTxHash) {
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "shield_tx_required_for_shielding");
+  }
+  if (input.to === "proving" && flow.state !== "proving" && !input.transferTxHash && !flow.transferTxHash) {
+    // proving is optional pre-transfer proof stage – allow without tx hash but track if provided
   }
   if (input.to === "transfer_pending" && !input.transferTxHash && !flow.transferTxHash) {
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "transfer_tx_required_for_transfer_pending");
