@@ -42,6 +42,7 @@ export interface PrismApplicationDeps {
   readonly operationStore: OperationStore;
   readonly registry: RegistryReadPort;
   readonly submitPort: StarknetSubmitPort;
+  readonly registryVersion?: "v1" | "v2";
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
 }
@@ -213,14 +214,21 @@ export class PrismApplicationService {
       if (!identity) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `identity_not_found:${prismId}`);
       // - controller must match (ERR-004) — never infer from session.
       if (identity.controller !== controllerAddress) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch:expected_${identity.controller}_got_${controllerAddress}`);
-      // - digest not already consumed (ERR-007) — same field-bounded mapping as Starknet calldata boundary
-      let feltDigestForCheck: Hex;
+      // Digest replay boundary is versioned with the registry ABI. V1 uses
+      // the legacy felt mask; V2 preserves the full u256 digest and lets the
+      // exact V2 registry enforce onchain single-use.
+      let digestForCheck: Hex;
       try {
-        feltDigestForCheck = toFieldBoundedDigest(proofDigest as Hex).felt;
+        digestForCheck = this.deps.registryVersion === "v2" ? (proofDigest as Hex) : toFieldBoundedDigest(proofDigest as Hex).felt;
       } catch {
         throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, `malformed_proof_digest:${proofDigest}`);
       }
-      const digestConsumed = await this.deps.registry.isDigestConsumed(feltDigestForCheck);
+      let digestConsumed: boolean;
+      try {
+        digestConsumed = await this.deps.registry.isDigestConsumed(digestForCheck);
+      } catch {
+        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "digest_replay_check_unavailable");
+      }
       if (digestConsumed) throw new AppError(APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED, `digest_already_consumed:${proofDigest}`);
 
       const kind = "bind_execution_identity";

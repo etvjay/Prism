@@ -14,7 +14,7 @@ import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 
 const REGISTRY = "0x1111111111111111111111111111111111111111111111111111111111111111";
-const CONTROLLER = "0x2222222222222222222222222222222222222222222222222222222222222222";
+const CONTROLLER = "0x2222";
 const ACCOUNT_ADDR = "0x3333333333333333333333333333333333333333333333333333333333333333";
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void> | void) {
@@ -221,7 +221,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
   it("injected StarknetSubmitAdapter makes mode STARKNET_INJECTED and isStarknetSubmitConfigured true", () => {
     const fakeAccount = { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } };
     const submitPort = new StarknetSubmitAdapter({ account: fakeAccount as never, registryAddress: REGISTRY });
-    const f = createIsolatedFactory(1_789_000_000, { submitPort });
+    const f = createIsolatedFactory(1_789_000_000, { submitPort, submitPortRegistryVersion: "v1" });
     expect(f.submitPortMode).toBe("STARKNET_INJECTED");
     expect(f.isStarknetSubmitConfigured).toBe(true);
     expect(f.submitPort).toBe(submitPort);
@@ -282,7 +282,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
   it("preserves injected StarknetSubmitAdapter path: submitCreateIdentity via injected account works", async () => {
     const fakeAccount = { address: ACCOUNT_ADDR, async execute(calls: unknown[]) { void calls; return { transaction_hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }; } };
     const submitPort = new StarknetSubmitAdapter({ account: fakeAccount as never, registryAddress: REGISTRY });
-    const f = createIsolatedFactory(1_789_000_000, { submitPort });
+    const f = createIsolatedFactory(1_789_000_000, { submitPort, submitPortRegistryVersion: "v1" });
     const res = await f.submitPort.submitCreateIdentity({ operationId: "op-1", controllerAddress: ACCOUNT_ADDR });
     expect(res.txHash).toBe("0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
   });

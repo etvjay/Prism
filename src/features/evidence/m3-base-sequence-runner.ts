@@ -43,6 +43,7 @@ export type M3RunnerPublicConfig = {
   controllerAddress: string;
   registryAddress?: string;
   rpcUrl?: string;
+  registryVersion?: "v1" | "v2" | "1" | "2";
   starknetNetwork?: string;
   /** Optional signing provider presence signal (injected, not read from file) */
   hasLiveSigningProvider?: boolean;
@@ -55,6 +56,7 @@ export type M3RunnerValidatedConfig = M3RunnerPublicConfig & {
   normalizedExecutionAccount: EvmAddress;
   normalizedControllerAddress: string;
   registryFeltPrismId: Hex;
+  registryVersion: "v1" | "v2";
 };
 
 export type M3Step = {
@@ -133,8 +135,13 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
     if (!/^0x[0-9a-f]{1,64}$/.test(reg)) throw new Error(`M3_CONFIG_BLOCKED: malformed registryAddress ${input.registryAddress}`);
     if (reg === ctrl) throw new Error(`M3_CONFIG_BLOCKED: controller must not equal registry`);
   }
+  const versionRaw = input.registryVersion ?? (input.liveRequested ? undefined : "v1");
+  if (!versionRaw) throw new Error("M3_CONFIG_BLOCKED: registryVersion required for live");
+  const version = versionRaw === "1" ? "v1" : versionRaw === "2" ? "v2" : versionRaw;
+  if (version !== "v1" && version !== "v2") throw new Error(`M3_CONFIG_BLOCKED: invalid registryVersion ${versionRaw}`);
   return {
     ...input,
+    registryVersion: version,
     venue,
     normalizedDomain: domain,
     normalizedExecutionAccount: exec as EvmAddress,
@@ -149,10 +156,8 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
 
 export function detectLiveSigningBlocker(config: M3RunnerPublicConfig, envRecord: Record<string, string | undefined>): { blocked: boolean; blocker: string | null } {
   const liveRequested = !!config.liveRequested;
-  const hasProviderFlag = !!config.hasLiveSigningProvider;
   const hasStarknetKey = !!(envRecord.STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY || envRecord.STARKNET_SEPOLIA_KEYSTORE_PATH || envRecord.CONTROLLER_PRIVATE_KEY || envRecord.STARKNET_PRIVATE_KEY);
   const hasBaseKey = !!(envRecord.BASE_SIGNER_PRIVATE_KEY || envRecord.BASE_PRIVATE_KEY || envRecord.EOA_PRIVATE_KEY);
-  const hasAnySigningMaterial = hasProviderFlag || hasStarknetKey || hasBaseKey;
 
   if (!liveRequested) {
     return {
@@ -160,10 +165,13 @@ export function detectLiveSigningBlocker(config: M3RunnerPublicConfig, envRecord
       blocker: `M3_BLOCKED_BY_SIGNING_ENVIRONMENT: live signing not requested (--live not set). Dry-run preflight only. No bind receipt fabricated. Provide STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY (or keystore) and BASE_SIGNER_PRIVATE_KEY with --live to enable live broadcast.`,
     };
   }
-  if (!hasAnySigningMaterial) {
+  if (!hasStarknetKey || !hasBaseKey) {
+    const missing: string[] = [];
+    if (!hasStarknetKey) missing.push("Starknet controller/deployer signing provider");
+    if (!hasBaseKey) missing.push("Base signing provider");
     return {
       blocked: true,
-      blocker: `M3_BLOCKED_BY_SIGNING_ENVIRONMENT: live signing provider unavailable — missing STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY / STARKNET_SEPOLIA_KEYSTORE_PATH / CONTROLLER_PRIVATE_KEY and BASE_SIGNER_PRIVATE_KEY. No bind receipt fabricated. Set injected signing provider and re-run with --live.`,
+      blocker: `M3_BLOCKED_BY_SIGNING_ENVIRONMENT: missing ${missing.join(" and ")}. No bind receipt fabricated. Set both injected signing providers and re-run with --live.`,
     };
   }
   // Live requested and material present — still require explicit registry/rpc for broadcast
@@ -210,6 +218,7 @@ export async function runM3DryRunSequence(
     operationStore: deps.operationStore,
     registry: deps.registry,
     submitPort: deps.submitPort,
+    registryVersion: validatedConfig.registryVersion,
     clock: deps.clock,
     idGenerator: deps.idGenerator,
   });

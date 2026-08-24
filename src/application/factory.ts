@@ -203,6 +203,9 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
 // ---------------------------------------------------------------------------
 
 function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): AppFactory {
+  if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
+  }
   const ownershipStore = new InMemoryOwnershipProofStore();
   const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
@@ -228,6 +231,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : "v1";
   // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
@@ -243,6 +247,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
     operationStore,
     registry: registryReadPort,
     submitPort,
+    registryVersion,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
@@ -321,6 +326,9 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
 }
 
 async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): Promise<AppFactory> {
+  if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
+  }
   // Validate format synchronously before attempting network
   assertPostgresUrlOrThrow(url);
 
@@ -363,6 +371,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : "v1";
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({
         registryAddress: getStarknetRegistryAddress()!,
@@ -391,6 +400,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     operationStore,
     registry: registryReadPort,
     submitPort,
+    registryVersion,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });

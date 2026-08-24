@@ -42,7 +42,7 @@ export type StarknetEventIndexerOptions = {
   /** Registry contract address to filter events (0x hex). */
   registryAddress: string;
   /** ABI version controls ExecutionIdentityBound digest decoding. */
-  registryVersion?: StarknetRegistryVersion;
+  registryVersion: StarknetRegistryVersion;
   /** Chunk size for getEvents pagination. Defaults to 100. */
   chunkSize?: number;
 };
@@ -79,6 +79,24 @@ const SELECTOR_TO_KIND: Record<string, RegistryEventKind> = {
   [PRISM_EVENT_SELECTORS.ExecutionIdentityBound.toLowerCase()]: "ExecutionIdentityBound",
   [PRISM_EVENT_SELECTORS.BindingRevoked.toLowerCase()]: "BindingRevoked",
 };
+
+const FELT_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
+const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
+
+function isFelt(value: string | undefined): boolean {
+  if (!value || !/^0x[0-9a-fA-F]+$/.test(value)) return false;
+  try {
+    const n = BigInt(value);
+    return n >= 0n && n < FELT_PRIME;
+  } catch {
+    return false;
+  }
+}
+
+function isContractAddress(value: string | undefined): boolean {
+  if (!isFelt(value)) return false;
+  return BigInt(value!) < CONTRACT_ADDRESS_LIMIT;
+}
 
 function normalizeTxHash(value: string): Hex | null {
   const raw = value.trim().toLowerCase();
@@ -126,7 +144,7 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     }
     this.reader = options.reader;
     this.registryAddress = options.registryAddress.toLowerCase();
-    this.registryVersion = options.registryVersion ?? "v1";
+    this.registryVersion = options.registryVersion;
     this.chunkSize = options.chunkSize ?? 100;
   }
 
@@ -171,12 +189,15 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       const ev = raw.events[i];
       const txHash = normalizeTxHash(ev.transaction_hash ?? "");
       if (!txHash) continue; // malformed skipped, not fabricated
+      const eventKeys = ev.keys ?? ev.event?.keys ?? [];
+      const eventData = ev.data ?? ev.event?.data ?? [];
       const blockNumber = typeof ev.block_number === "number" ? ev.block_number : null;
-      if (blockNumber === null || !Number.isFinite(blockNumber)) continue;
-      const eventIndex = typeof ev.event_index === "number" ? ev.event_index : i;
-      const kind = this.inferKind(ev.keys ?? ev.event?.keys ?? []);
+      if (blockNumber === null || !Number.isInteger(blockNumber) || blockNumber < 0) continue;
+      const eventIndex = ev.event_index;
+      if (typeof eventIndex !== "number" || !Number.isInteger(eventIndex) || eventIndex < 0) continue;
+      const kind = this.inferKind(eventKeys);
       if (!kind) continue;
-      const payload = this.inferPayload(kind, ev.data ?? ev.event?.data ?? [], ev.keys ?? ev.event?.keys ?? []);
+      const payload = this.inferPayload(kind, eventData, eventKeys);
       if (!payload) continue;
       mapped.push({
         txHash: txHash as Hex,
@@ -278,11 +299,17 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
         address: this.registryAddress,
         chunk_size: this.chunkSize,
       });
-      const match = raw.events.find((e) => normalizeTxHash(e.transaction_hash ?? "") === canonicalTxHash);
+      const match = raw.events.find((event) => {
+        if (normalizeTxHash(event.transaction_hash ?? "") !== canonicalTxHash) return false;
+        const keys = event.keys ?? event.event?.keys ?? [];
+        const data = event.data ?? event.event?.data ?? [];
+        const kind = this.inferKind(keys);
+        return kind !== null && typeof event.block_number === "number" && Number.isInteger(event.block_number) && typeof event.event_index === "number" && Number.isInteger(event.event_index) && this.inferPayload(kind, data, keys) !== null;
+      });
       if (!match) return { txHash: canonicalTxHash, eventObserved: false, blockNumber: null, eventIndex: null };
-      const blockNumber = typeof match.block_number === "number" ? match.block_number : null;
-      const eventIndex = typeof match.event_index === "number" ? match.event_index : 0;
-      const eventName = this.inferKind(match.keys ?? match.event?.keys ?? []) ?? "Unknown";
+      const blockNumber = match.block_number as number;
+      const eventIndex = match.event_index as number;
+      const eventName = this.inferKind(match.keys ?? match.event?.keys ?? []) as string;
       return {
         txHash: canonicalTxHash,
         eventObserved: true,
@@ -320,24 +347,29 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     // - ExecutionIdentityBound: keys[1]=prism_id, keys[2]=venue, keys[3]=execution_account, data[0]=proof_digest
     // - BindingRevoked: keys[1]=prism_id, keys[2]=venue, keys[3]=execution_account
     if (kind === "PrismIdentityCreated") {
+      if (keys.length !== 2 || data.length !== 1) return null;
       const prismId = keys[1];
       const controller = data[0];
-      if (!prismId || !controller) return null;
+      if (!isFelt(prismId) || !isContractAddress(controller)) return null;
       return { prismId, controller } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "ExecutionIdentityBound") {
+      if (keys.length !== 4) return null;
       const prismId = keys[1];
       const venue = decodeBaseVenue(keys[2]);
       const executionAccount = keys[3];
-      const proofDigest = this.registryVersion === "v2" ? combineU256Limbs(data[0], data[1]) : data[0];
-      if (!prismId || !venue || !executionAccount || !proofDigest) return null;
+      const proofDigest = this.registryVersion === "v2"
+        ? (data.length === 2 ? combineU256Limbs(data[0], data[1]) : null)
+        : (data.length === 1 && isFelt(data[0]) ? data[0] : null);
+      if (!isFelt(prismId) || !venue || !isContractAddress(executionAccount) || !proofDigest) return null;
       return { prismId, venue, executionAccount, proofDigest } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "BindingRevoked") {
+      if (keys.length !== 4 || data.length !== 0) return null;
       const prismId = keys[1];
       const venue = decodeBaseVenue(keys[2]);
       const executionAccount = keys[3];
-      if (!prismId || !venue || !executionAccount) return null;
+      if (!isFelt(prismId) || !venue || !isContractAddress(executionAccount)) return null;
       return { prismId, venue, executionAccount } as unknown as RegistryCanonicalEvent["payload"];
     }
     return null;

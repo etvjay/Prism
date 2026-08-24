@@ -201,12 +201,12 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
     const TX_C: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     const pages = [
       { events: [
-        { block_number: 10, transaction_hash: TX_B, event_index: 1, keys: [PRISM_EVENT_SELECTORS.ExecutionIdentityBound, "0x1", "0x42415345", "0x2"], data: [TX_B] },
+        { block_number: 10, transaction_hash: TX_B, event_index: 1, keys: [PRISM_EVENT_SELECTORS.ExecutionIdentityBound, "0x1", "0x42415345", "0x2"], data: ["0xd1e5"] },
         { block_number: 5, transaction_hash: TX_C, event_index: 0, keys: [PRISM_EVENT_SELECTORS.PrismIdentityCreated, "0x1"], data: ["0x1111"] },
       ], continuation_token: "tok2" },
       { events: [
         { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: [PRISM_EVENT_SELECTORS.PrismIdentityCreated, "0x2"], data: ["0x2222"] },
-        { block_number: 10, transaction_hash: TX_B, event_index: 1, keys: [PRISM_EVENT_SELECTORS.ExecutionIdentityBound, "0x1", "0x42415345", "0x2"], data: [TX_B] }, // duplicate across pages
+        { block_number: 10, transaction_hash: TX_B, event_index: 1, keys: [PRISM_EVENT_SELECTORS.ExecutionIdentityBound, "0x1", "0x42415345", "0x2"], data: ["0xd1e5"] }, // duplicate across pages
       ], continuation_token: null },
     ];
     const reader = {
@@ -216,7 +216,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
         return { events: page.events as never[], continuation_token: page.continuation_token };
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, registryVersion: "v1", chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([

@@ -123,7 +123,8 @@ if (!executionAccount) {
   console.log(`Note: --execution-account not supplied — dry-run will use ephemeral EOA ${executionAccount} (injected signer will own it)`);
 }
 
-const chainId = parseInt(chainIdArg, 10);
+const chainIdText = String(chainIdArg).trim();
+const chainId = /^\d+$/.test(chainIdText) ? Number(chainIdText) : Number.NaN;
 const publicConfig = {
   chainId,
   domain: domainArg,
@@ -175,6 +176,7 @@ let validated;
 try {
   // Dynamic import of validation logic without needing TS build — re-implement minimal checks here for CLI
   // Reuse same rules as TS runner: chainId must equal manifest, domain must contain dot, prismId must be felt-representable
+  if (!Number.isSafeInteger(chainId) || chainId < 0) throw new Error(`invalid chainId ${chainIdArg}`);
   if (chainId !== manifestInfo.chainId) {
     throw new Error(`chainId mismatch: inputs ${chainId} != manifest ${manifestInfo.chainId} — altered_fields:chain_id`);
   }
@@ -193,7 +195,9 @@ try {
   const FELT_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
   if (val >= FELT_PRIME) throw new Error(`prism_id_out_of_range: ${publicConfig.prismId} exceeds felt prime — ERR-023`);
   if (!/^0x[0-9a-f]{40}$/.test(publicConfig.executionAccount.toLowerCase())) throw new Error(`malformed executionAccount ${publicConfig.executionAccount}`);
+  if (BigInt(publicConfig.executionAccount) === 0n) throw new Error("zero executionAccount is not allowed");
   if (!/^0x[0-9a-f]{1,64}$/.test(publicConfig.controllerAddress.toLowerCase())) throw new Error(`malformed controllerAddress ${publicConfig.controllerAddress}`);
+  if (BigInt(publicConfig.controllerAddress) === 0n) throw new Error("zero controllerAddress is not allowed");
   validated = publicConfig;
   console.log(`✓ Config validated — chainId ${chainId}, domain ${publicConfig.domain}, prismId ${publicConfig.prismId} -> felt 0x${val.toString(16)}, executionAccount ${publicConfig.executionAccount}, controller ${publicConfig.controllerAddress}`);
 } catch (e) {
@@ -206,7 +210,10 @@ try {
 // Run dry-run preflight via vitest harness (no live RPC)
 // We spawn the gate test that exercises the full sequence via in-memory doubles
 console.log("\nRunning dry-run preflight gate suite (offline, TEST DOUBLE, X2)...");
-const r = spawnSync("npm", ["test", "--", "src/features/evidence/__tests__/m3-base-sequence-gate.test.ts"], { stdio: "inherit" });
+const gateTests = publicConfig.registryVersion === "v2"
+  ? ["src/features/evidence/__tests__/m3-base-sequence-gate.test.ts", "src/features/prism-identity/__tests__/u256-digest.test.ts", "src/features/prism-operations/__tests__/starknet-submit-v2.test.ts"]
+  : ["src/features/evidence/__tests__/m3-base-sequence-gate.test.ts"];
+const r = spawnSync("npm", ["test", "--", ...gateTests], { stdio: "inherit" });
 if (r.status === 0) {
   console.log("\n✓ Dry-run preflight passed — challenge → EOA/EIP-1271/ERC-6492 → bind (submitted) → resolve ACTIVE → revoke → empty resolve → P persists");
   if (publicConfig.registryVersion === "v2") {

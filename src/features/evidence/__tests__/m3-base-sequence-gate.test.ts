@@ -113,14 +113,28 @@ describe("M3 gate — live signing blocker (no fabricated bind receipt)", () => 
     const res = detectLiveSigningBlocker(cfg, {});
     expect(res.blocked).toBe(true);
     expect(res.blocker).toMatch(/M3_BLOCKED_BY_SIGNING_ENVIRONMENT/);
-    expect(res.blocker).toMatch(/signing provider unavailable/);
+    expect(res.blocker).toMatch(/missing .*signing provider/);
   });
 
   it("blocks when --live + provider but missing registry/rpc — no receipt fabricated", () => {
     const cfg = validPublicConfig({ liveRequested: true, hasLiveSigningProvider: true, registryAddress: undefined, rpcUrl: undefined });
-    const res = detectLiveSigningBlocker(cfg, { STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY: "0xabc" });
+    const res = detectLiveSigningBlocker(cfg, { STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY: "0xabc", BASE_SIGNER_PRIVATE_KEY: "0xdef" });
     expect(res.blocked).toBe(true);
     expect(res.blocker).toMatch(/registryAddress and rpcUrl/);
+  });
+
+  it("blocks when only the Starknet signer is present", () => {
+    const cfg = validPublicConfig({ liveRequested: true, hasLiveSigningProvider: true });
+    const res = detectLiveSigningBlocker(cfg, { STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY: "sentinel" });
+    expect(res.blocked).toBe(true);
+    expect(res.blocker).toMatch(/Base signing provider/);
+  });
+
+  it("blocks when only the Base signer is present", () => {
+    const cfg = validPublicConfig({ liveRequested: true, hasLiveSigningProvider: true });
+    const res = detectLiveSigningBlocker(cfg, { BASE_SIGNER_PRIVATE_KEY: "sentinel" });
+    expect(res.blocked).toBe(true);
+    expect(res.blocker).toMatch(/Starknet controller\/deployer signing provider/);
   });
 
   it("passes blocker when live + provider + registry + rpc present", () => {
