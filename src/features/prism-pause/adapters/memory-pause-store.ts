@@ -4,6 +4,7 @@
 // No DB imports. Fail-closed. Snapshot helpers for restart/race tests.
 
 import type { ExecutionIntent } from "../domain/intent";
+import { sameIntentFingerprint } from "../domain/intent";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import type { ExecutionPause, PauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
@@ -18,6 +19,14 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+export interface InMemoryPauseStoreSnapshot {
+  readonly intents: readonly ExecutionIntent[];
+  readonly plans: readonly ExecutionPlan[];
+  readonly pauses: readonly ExecutionPause[];
+  readonly checks: readonly { pauseId: string; checks: readonly CheckResult[] }[];
+  readonly decisions: readonly { pauseId: string; decisions: readonly PauseDecision[] }[];
+}
+
 export class InMemoryPauseStore implements PauseStore {
   private readonly intents = new Map<string, ExecutionIntent>(); // intentId -> intent
   private readonly intentsByKey = new Map<string, string>(); // clientIdempotencyKey -> intentId
@@ -28,6 +37,27 @@ export class InMemoryPauseStore implements PauseStore {
   private readonly checks = new Map<string, CheckResult[]>(); // pauseId -> checks
   private readonly decisions = new Map<string, PauseDecision[]>(); // pauseId -> decisions
   private closed = false;
+
+  constructor(snapshot?: InMemoryPauseStoreSnapshot) {
+    if (!snapshot) return;
+    for (const intent of snapshot.intents) {
+      const copy = clone(intent);
+      this.intents.set(copy.intentId, copy);
+      this.intentsByKey.set(copy.clientIdempotencyKey, copy.intentId);
+    }
+    for (const plan of snapshot.plans) {
+      const copy = clone(plan);
+      this.plans.set(copy.planHash, copy);
+      this.plansByIntent.set(copy.intentId, copy.planHash);
+    }
+    for (const pause of snapshot.pauses) {
+      const copy = clone(pause);
+      this.pauses.set(copy.pauseId, copy);
+      this.pausesByIntent.set(copy.intentId, copy.pauseId);
+    }
+    for (const entry of snapshot.checks) this.checks.set(entry.pauseId, clone([...entry.checks]));
+    for (const entry of snapshot.decisions) this.decisions.set(entry.pauseId, clone([...entry.decisions]));
+  }
 
   private assertOpen() {
     if (this.closed) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "store_is_closed");
@@ -42,16 +72,7 @@ export class InMemoryPauseStore implements PauseStore {
     if (existingId !== undefined) {
       const existing = this.intents.get(existingId);
       if (!existing) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, "intent_index_corrupt");
-      // same key -> require same payload (compare intent fields that matter: principal, purpose, recipient, asset, amount, route, policyVersion)
-      const fingerprintMismatch =
-        existing.principal !== intent.principal ||
-        existing.purpose !== intent.purpose ||
-        existing.requestedRecipient !== intent.requestedRecipient ||
-        existing.requestedAsset !== intent.requestedAsset ||
-        existing.requestedAmount !== intent.requestedAmount ||
-        existing.requestedRoute !== intent.requestedRoute ||
-        existing.policyVersion !== intent.policyVersion;
-      if (fingerprintMismatch) throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `idempotency_key_conflict:${intent.clientIdempotencyKey}`);
+      if (!sameIntentFingerprint(existing, intent)) throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `idempotency_key_conflict:${intent.clientIdempotencyKey}`);
       return clone(existing);
     }
     if (this.intents.has(intent.intentId)) {
@@ -247,6 +268,15 @@ export class InMemoryPauseStore implements PauseStore {
   }
 
   // test/ops helpers
+  snapshot(): InMemoryPauseStoreSnapshot {
+    return clone({
+      intents: [...this.intents.values()],
+      plans: [...this.plans.values()],
+      pauses: [...this.pauses.values()],
+      checks: [...this.checks.entries()].map(([pauseId, checks]) => ({ pauseId, checks })),
+      decisions: [...this.decisions.entries()].map(([pauseId, decisions]) => ({ pauseId, decisions })),
+    });
+  }
   snapshotPauses(): ExecutionPause[] { return [...this.pauses.values()].map(clone); }
   snapshotIntents(): ExecutionIntent[] { return [...this.intents.values()].map(clone); }
   snapshotPlans(): ExecutionPlan[] { return [...this.plans.values()].map(clone); }

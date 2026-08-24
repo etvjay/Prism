@@ -14,6 +14,7 @@
 import { Pool, type PoolClient } from "pg";
 import type { PoolConfig } from "pg";
 import type { ExecutionIntent } from "../domain/intent";
+import { sameIntentFingerprint } from "../domain/intent";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import type { ExecutionPause, PauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
@@ -260,7 +261,7 @@ export class PostgresPauseStore implements PauseStore {
         if (res.rowCount && res.rowCount>0) existing = rowToIntent(res.rows[0] as Record<string, unknown>);
       } catch (e) { throw new PostgresPauseStoreError("store_read_failed","putIntent conflict read failed", e); }
       if (existing) {
-        const mismatch = existing.principal !== intent.principal || existing.purpose !== intent.purpose || existing.requestedRecipient !== intent.requestedRecipient || existing.requestedAsset !== intent.requestedAsset || existing.requestedAmount !== intent.requestedAmount || existing.requestedRoute !== intent.requestedRoute || existing.policyVersion !== intent.policyVersion;
+        const mismatch = !sameIntentFingerprint(existing, intent);
         if (mismatch) throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `idempotency_key_conflict:${intent.clientIdempotencyKey}`);
         return existing;
       }
@@ -363,8 +364,8 @@ export class PostgresPauseStore implements PauseStore {
     try {
       const res = await this.pool.query(
         `UPDATE execution_pauses SET state=$2, version=$3, reason_codes_json=$4, risk_level=$5, last_verified_at=$6, required_approval_count=$7, approval_scope_hash=$8, settlement_operation_id=$9, decision_ids_json=$10, expires_at=$11, policy_version=$12
-         WHERE pause_id=$1 AND version=$13`,
-        [pause.pauseId, pause.state, pause.version, JSON.stringify(pause.reasonCodes), pause.riskLevel, pause.lastVerifiedAt, pause.requiredApprovalCount, pause.approvalScopeHash, pause.settlementOperationId, JSON.stringify(pause.decisionIds), pause.expiresAt, pause.policyVersion, expectedVersion],
+         WHERE pause_id=$1 AND version=$13 AND plan_hash=$14`,
+        [pause.pauseId, pause.state, pause.version, JSON.stringify(pause.reasonCodes), pause.riskLevel, pause.lastVerifiedAt, pause.requiredApprovalCount, pause.approvalScopeHash, pause.settlementOperationId, JSON.stringify(pause.decisionIds), pause.expiresAt, pause.policyVersion, expectedVersion, pause.planHash],
       );
       if (res.rowCount !==1) throw new PauseError(PAUSE_ERROR_CODE.STALE_VERSION, `stale_version:expected_${expectedVersion}_got_${res.rowCount===0 ? "stale" : "unknown"}`);
       // also persist checks if present (caller should have called putChecks separately if needed; we upsert here if checks non-empty and differ)

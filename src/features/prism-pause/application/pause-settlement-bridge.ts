@@ -52,6 +52,11 @@ export class PauseSettlementBridge {
 
     // Idempotent create: same key + same fingerprint returns existing; different fingerprint conflicts.
     let op = await this.opts.operationStore.getById(operationId);
+    if (op) {
+      if (op.idempotencyKey !== idempotencyKey || op.requestFingerprint !== fingerprint) {
+        throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement_operation_id_conflict:${operationId}`);
+      }
+    }
     if (!op) {
       const existingByKey = await this.opts.operationStore.getByIdempotencyKey(idempotencyKey);
       if (existingByKey) {
@@ -86,8 +91,13 @@ export class PauseSettlementBridge {
     const adapter = this.opts.adapters.get(chain);
     if (!adapter) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `no_adapter_for_chain:${chain}`);
     const submitted = await adapter.submit({ operation: op, pause, plan, correlationId: correlationId ?? null, operationId });
-    // Never auto-complete: guard that adapter did not jump to completed
+    if (submitted.id !== op.id || submitted.id !== operationId) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_operation_id_mismatch");
+    // Never auto-complete: guard that adapter did not jump to completed and
+    // did return a post-submit lifecycle state.
     if (submitted.state === "completed") throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_must_not_mark_completed");
+    if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled"].includes(submitted.state)) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `adapter_submit_returned_invalid_state:${submitted.state}`);
+    }
     this.metrics()?.increment("settlement_operation_submitted", { chain });
     return submitted;
   }

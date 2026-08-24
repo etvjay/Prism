@@ -1,6 +1,7 @@
 import { getAppFactory } from "@/application/factory";
 import { parseHeaders, readJson, requireSession, jsonError } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
+import { PauseError } from "@/features/prism-pause/domain/errors";
 
 // POST /v1/intents/:intentId/pause — create ExecutionPause from intent (injectable)
 export async function POST(req: Request, ctx: { params: Promise<{ intentId: string }> }): Promise<Response> {
@@ -28,6 +29,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ intentId: stri
     if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
     return new Response(JSON.stringify({ ok: true, data: pause, requestId: parsed.requestId ?? null }), { status: 200, headers });
   } catch (e) {
+    if (e instanceof PauseError) {
+      const shape = e.toExternalShape();
+      const headers = new Headers({ "content-type": "application/json" });
+      if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
+      if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
+      return new Response(JSON.stringify({ ok: false, error: shape, requestId: parsed.requestId ?? null }), { status: e.httpStatusHint, headers });
+    }
     const code = (e as { code?: string })?.code ?? APP_ERROR_CODE.STALE_STATE_CONFLICT;
     const detail = (e as { detail?: string })?.detail ?? (e as Error).message;
     const { AppError } = await import("@/application/errors");

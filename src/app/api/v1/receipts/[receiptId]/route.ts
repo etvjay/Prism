@@ -15,6 +15,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ receiptId: stri
     const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
-  const res = await factory.receiptService.getReceipt(decoded, parsed.requestId);
+  let res;
+  try {
+    res = await factory.receiptService.getReceipt(decoded, parsed.requestId);
+  } catch {
+    const response = jsonError(parsed.requestId, "ERR-021", 503, "store_unavailable");
+    if (parsed.correlationId) response.headers.set("x-correlation-id", parsed.correlationId);
+    return response;
+  }
   return toHttpResponse(res, parsed);
 }

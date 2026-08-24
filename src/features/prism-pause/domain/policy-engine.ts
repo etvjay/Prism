@@ -234,11 +234,25 @@ export function evaluatePolicy(input: {
     }
   }
 
-  // Also validate policyVersion binding
-  if (plan.policyVersion !== policy.policyVersion || intent.policyVersion !== policy.policyVersion || pause.policyVersion !== policy.policyVersion) {
-    // Append a synthetic plan-policy version mismatch check (re-uses INTENT_PLAN_MATCH id with variant reason)
-    // Keep stable: we already have checks; this ensures fail-closed on version drift.
-  }
+  // Policy snapshots are part of the exact decision binding. A drifted
+  // version is a blocking check even when all injected observations pass.
+  const policyVersionMatches =
+    plan.policyVersion === policy.policyVersion &&
+    intent.policyVersion === policy.policyVersion &&
+    pause.policyVersion === policy.policyVersion;
+  checks.push(
+    makeCheck(
+      CHECK_ID.POLICY_VERSION,
+      policyVersionMatches ? "PASS" : "FAIL",
+      policyVersionMatches ? "INFO" : "BLOCKING",
+      PAUSE_REASON_CODE.POLICY_VERSION_MISMATCH,
+      "policy",
+      now,
+      `${intent.policyVersion}:${plan.policyVersion}:${pause.policyVersion}`,
+      policy.policyVersion,
+      policyVersionMatches ? null : "policy_version_mismatch",
+    ),
+  );
 
   return checks;
 }

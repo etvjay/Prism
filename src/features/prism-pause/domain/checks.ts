@@ -44,6 +44,7 @@ export const CHECK_ID = {
   SIM_EFFECT_MATCH: "PAUSE-SIM-002",
   SIM_FRESHNESS: "PAUSE-SIM-003",
   SIM_UNKNOWN: "PAUSE-SIM-004",
+  POLICY_VERSION: "PAUSE-POLICY-001",
 } as const;
 
 export function makeCheck(

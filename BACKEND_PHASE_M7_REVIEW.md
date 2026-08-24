@@ -6,6 +6,8 @@
 **Scope:** P0–P4 Pause foundation ONLY — `src/features/prism-pause/**` + `BACK END review` — no frontend/Phase 8, REST/API, SDK, STRK20, PrismChannel, identity contract, `strk20.json`, Linear/Notion, credentials, GitHub push  
 **Verdict:** **ACCEPTABLE_FOR_INTEGRATION** (P0–P4 durable foundation X2; P5 settlement adapters, P6–P8 product/API/testnet remain open by design)
 
+> **Current runtime audit:** `docs/M7_PAUSE_RUNTIME_GAP_AUDIT.md` records the follow-up audit from verified baseline `4c41910`, including local lifecycle/CAS/fail-closed/REST repairs. This historical review remains a P0–P4 foundation snapshot; it does not accept D-P0-001 through D-P0-005 or claim live settlement evidence.
+
 ---
 
 ## 1. Mandate and phase boundary

@@ -15,8 +15,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ pauseId: string
     const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
-  const pause = await factory.pauseService.getPause(decoded);
-  if (!pause) return jsonError(parsed.requestId, "ERR-002", 404, `pause_not_found:${decoded}`);
+  let pause;
+  try {
+    pause = await factory.pauseService.getPause(decoded);
+  } catch {
+    const response = jsonError(parsed.requestId, "ERR-021", 503, "store_unavailable");
+    if (parsed.correlationId) response.headers.set("x-correlation-id", parsed.correlationId);
+    return response;
+  }
+  if (!pause) {
+    const response = jsonError(parsed.requestId, "ERR-002", 404, `pause_not_found:${decoded}`);
+    if (parsed.correlationId) response.headers.set("x-correlation-id", parsed.correlationId);
+    return response;
+  }
   const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
   if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
   if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);

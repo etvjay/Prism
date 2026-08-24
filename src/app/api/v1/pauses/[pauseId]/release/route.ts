@@ -34,12 +34,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   } catch (e) {
     if (e instanceof PauseError) {
       const shape = e.toExternalShape();
-      return new Response(JSON.stringify({ ok: false, error: shape, requestId: parsed.requestId ?? null }), { status: e.httpStatusHint, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ ok: false, error: shape, requestId: parsed.requestId ?? null }), { status: e.httpStatusHint, headers: { "content-type": "application/json", ...(parsed.requestId ? { "x-request-id": parsed.requestId } : {}), ...(parsed.correlationId ? { "x-correlation-id": parsed.correlationId } : {}) } });
     }
     const code = (e as { code?: string })?.code ?? APP_ERROR_CODE.STALE_STATE_CONFLICT;
     const detail = (e as { detail?: string })?.detail ?? (e as Error).message;
     const { AppError } = await import("@/application/errors");
     const appErr = new AppError(code as never, detail);
-    return new Response(JSON.stringify({ ok: false, error: { code: appErr.code, name: appErr.name, category: appErr.category, retryable: appErr.retryable, userAction: appErr.userAction, httpStatusHint: appErr.httpStatusHint, detail: appErr.detail }, requestId: parsed.requestId ?? null }), { status: appErr.httpStatusHint, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: { code: appErr.code, name: appErr.name, category: appErr.category, retryable: appErr.retryable, userAction: appErr.userAction, httpStatusHint: appErr.httpStatusHint, detail: appErr.detail }, requestId: parsed.requestId ?? null }), { status: appErr.httpStatusHint, headers: { "content-type": "application/json", ...(parsed.requestId ? { "x-request-id": parsed.requestId } : {}), ...(parsed.correlationId ? { "x-correlation-id": parsed.correlationId } : {}) } });
   }
 }

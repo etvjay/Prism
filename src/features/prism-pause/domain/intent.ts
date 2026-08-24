@@ -59,7 +59,8 @@ export function createIntent(input: CreateIntentInput): ExecutionIntent {
   const principal = requireNonEmpty(input.principal, "principal");
   const initiator = requireNonEmpty(input.initiator as string, "initiator") as IntentInitiator;
   if (!VALID_INITIATORS.has(initiator)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_INTENT, `initiator_invalid:${initiator}`);
-  if (initiator === "agent" && (!input.agentId || (typeof input.agentId === "string" && input.agentId.trim().length === 0))) {
+  const agentId = input.agentId === undefined || input.agentId === null ? null : requireNonEmpty(input.agentId, "agent_id");
+  if (initiator === "agent" && agentId === null) {
     throw new PauseError(PAUSE_ERROR_CODE.INVALID_INTENT, "agent_initiator_requires_agent_id");
   }
   const purpose = requireNonEmpty(input.purpose as string, "purpose") as IntentPurpose;
@@ -80,7 +81,7 @@ export function createIntent(input: CreateIntentInput): ExecutionIntent {
     intentId,
     principal,
     initiator,
-    agentId: input.agentId ?? null,
+    agentId,
     purpose,
     requestedRecipient,
     requestedAsset,
@@ -92,6 +93,27 @@ export function createIntent(input: CreateIntentInput): ExecutionIntent {
     intentVersion,
     policyVersion,
   };
+}
+
+/**
+ * Compare the immutable business fields covered by an idempotency key.
+ * Generated timestamps and the server-side intent id are deliberately excluded
+ * so a retried request resolves to the original intent instead of creating a
+ * false conflict, while authority-bearing fields cannot drift silently.
+ */
+export function sameIntentFingerprint(a: ExecutionIntent, b: ExecutionIntent): boolean {
+  return (
+    a.principal === b.principal &&
+    a.initiator === b.initiator &&
+    (a.agentId ?? null) === (b.agentId ?? null) &&
+    a.purpose === b.purpose &&
+    a.requestedRecipient === b.requestedRecipient &&
+    a.requestedAsset === b.requestedAsset &&
+    a.requestedAmount === b.requestedAmount &&
+    a.requestedRoute === b.requestedRoute &&
+    a.intentVersion === b.intentVersion &&
+    a.policyVersion === b.policyVersion
+  );
 }
 
 export function isIntentExpired(intent: ExecutionIntent, now: number): boolean {

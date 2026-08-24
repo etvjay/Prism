@@ -18,7 +18,7 @@ import type { ExecutionPause } from "../domain/pause";
 import { evaluatePolicy } from "../domain/policy-engine";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
-import type { OperationStore } from "../../prism-operations/domain/operation-store";
+import type { OperationStore, PersistedOperation } from "../../prism-operations/domain/operation-store";
 import type { PauseExecutionAdapter, SettlementChain } from "../ports/execution-adapter";
 import { resolveChainFromPlan } from "../ports/execution-adapter";
 import type { PauseMetrics } from "../ports/metrics";
@@ -42,6 +42,74 @@ export class PauseService {
     if (!opts.store) this.opts = { store, defaultPauseTtlMs: 10*60*1000 }; else this.opts = opts;
     // Ensure defaults for settlement fields
     if (!this.opts.now) this.opts.now = () => Date.now();
+  }
+
+  private settlementFingerprint(pause: ExecutionPause): string {
+    return `${pause.planHash}:${pause.policyVersion}:${pause.pauseId}`;
+  }
+
+  private async prepareSettlementOperation(input: {
+    pause: ExecutionPause;
+    plan: ExecutionPlan;
+    operationId: string;
+    now: number;
+    correlationId: string | null;
+  }): Promise<{ operation: PersistedOperation; created: boolean }> {
+    const operationStore = this.opts.operationStore;
+    if (!operationStore) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "operation_store_required");
+    const idempotencyKey = `pause_settlement:${input.pause.pauseId}:${input.pause.planHash}`;
+    const requestFingerprint = this.settlementFingerprint(input.pause);
+    const byId = await operationStore.getById(input.operationId);
+    if (byId) {
+      if (byId.idempotencyKey !== idempotencyKey || byId.requestFingerprint !== requestFingerprint) {
+        throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement_operation_id_conflict:${input.operationId}`);
+      }
+      return { operation: byId, created: false };
+    }
+    const byKey = await operationStore.getByIdempotencyKey(idempotencyKey);
+    if (byKey) {
+      if (byKey.id !== input.operationId) {
+        throw new PauseError(PAUSE_ERROR_CODE.OPERATION_ALREADY_LINKED, `settlement idempotency maps to ${byKey.id} not ${input.operationId}`);
+      }
+      if (byKey.requestFingerprint !== requestFingerprint) {
+        throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement idempotency fingerprint mismatch for ${input.operationId}`);
+      }
+      return { operation: byKey, created: false };
+    }
+    const operation = await operationStore.create({
+      id: input.operationId,
+      kind: `pause_settlement:${resolveChainFromPlan(input.plan)}`,
+      idempotencyKey,
+      requestFingerprint,
+      now: input.now,
+      correlationId: input.correlationId,
+    });
+    try { this.opts.metrics?.increment("settlement_operation_created", { chain: resolveChainFromPlan(input.plan) }); } catch {}
+    return { operation, created: true };
+  }
+
+  private async abandonPreparedSettlementOperation(input: {
+    prepared: { operation: PersistedOperation; created: boolean };
+    pauseId: string;
+    operationId: string;
+    now: number;
+  }): Promise<void> {
+    if (!input.prepared.created || !this.opts.operationStore) return;
+    try {
+      const currentPause = await this.store.getPause(input.pauseId);
+      if (currentPause?.state === "RELEASED" && currentPause.settlementOperationId === input.operationId) return;
+      const currentOperation = await this.opts.operationStore.getById(input.operationId);
+      if (currentOperation?.state === "created") {
+        await this.opts.operationStore.transition(input.operationId, {
+          to: "cancelled",
+          now: input.now,
+          expectedVersion: currentOperation.version,
+          errorDetail: "pause_release_cas_failed_before_link",
+        });
+      }
+    } catch {
+      // Cleanup is best-effort; never turn a failed CAS into an unverified release.
+    }
   }
 
   // P1: create intent + normalized plan + pause (idempotent)
@@ -98,7 +166,16 @@ export class PauseService {
       await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: null, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now });
       return next;
     }
-    if (pause.policyVersion !== input.policy.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, `pause ${pause.policyVersion} != policy ${input.policy.policyVersion}`);
+    if (
+      pause.policyVersion !== input.policy.policyVersion ||
+      plan.policyVersion !== input.policy.policyVersion ||
+      intent.policyVersion !== input.policy.policyVersion
+    ) {
+      throw new PauseError(
+        PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH,
+        `bound policy versions differ:pause=${pause.policyVersion}:plan=${plan.policyVersion}:intent=${intent.policyVersion}:policy=${input.policy.policyVersion}`,
+      );
+    }
     // to verifying
     let verifying: ExecutionPause;
     try {
@@ -129,64 +206,70 @@ export class PauseService {
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainRelease(pause, { planHash: input.planHash, approvalScopeHash: input.approvalScopeHash ?? null, settlementOperationId: input.settlementOperationId, now, expectedVersion });
-    const persisted = await this.store.updatePause(next, expectedVersion);
+
+    // The operation row is the durable settlement boundary. Preflight and
+    // persist it before the pause CAS so a store outage cannot leave RELEASED
+    // pointing at an operation that does not exist.
+    let plan: ExecutionPlan | undefined;
+    let prepared: { operation: PersistedOperation; created: boolean } | undefined;
+    if (this.opts.operationStore) {
+      plan = await this.store.getPlan(next.planHash);
+      if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, next.planHash);
+      prepared = await this.prepareSettlementOperation({
+        pause,
+        plan,
+        operationId: input.settlementOperationId,
+        now,
+        correlationId: input.correlationId ?? null,
+      });
+    }
+
+    let persisted: ExecutionPause;
+    try {
+      persisted = await this.store.updatePause(next, expectedVersion);
+    } catch (cause) {
+      if (prepared) {
+        await this.abandonPreparedSettlementOperation({
+          prepared,
+          pauseId: pause.pauseId,
+          operationId: input.settlementOperationId,
+          now,
+        });
+      }
+      throw cause;
+    }
+
     await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...persisted.reasonCodes], createdAt: now });
     try { this.opts.metrics?.increment("pause_released", { state: persisted.state }); } catch {}
-    // P5 settlement bridge: create durable Operation intent/plan link without marking completed; then submit via injected adapter (no live call).
-    if (this.opts.operationStore) {
-      const plan = await this.store.getPlan(persisted.planHash);
-      if (plan) {
-        const fingerprint = `${persisted.planHash}:${persisted.policyVersion}:${persisted.pauseId}`;
-        const idempotencyKey = `pause_settlement:${persisted.pauseId}:${persisted.planHash}`;
-        const opId = input.settlementOperationId;
-        // Idempotent operation creation: same key + fingerprint benign; different fingerprint conflicts
-        let op = await this.opts.operationStore.getById(opId);
-        if (!op) {
-          const existingByKey = await this.opts.operationStore.getByIdempotencyKey(idempotencyKey);
-          if (existingByKey) {
-            if (existingByKey.requestFingerprint !== fingerprint) {
-              throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `settlement idempotency fingerprint mismatch for ${opId}`);
-            }
-            op = existingByKey;
-          } else {
-            op = await this.opts.operationStore.create({
-              id: opId,
-              kind: `pause_settlement:${resolveChainFromPlan(plan)}`,
-              idempotencyKey,
-              requestFingerprint: fingerprint,
-              now,
-              correlationId: input.correlationId ?? null,
-            });
-            try { this.opts.metrics?.increment("settlement_operation_created", { chain: resolveChainFromPlan(plan) }); } catch {}
+
+    // Submit via injected adapter if available and op not yet terminal/completed.
+    // Never mark completed here; reconciliation owns that transition.
+    if (prepared && plan && this.opts.executionAdapters) {
+      const chain = resolveChainFromPlan(plan);
+      const adapter = this.opts.executionAdapters.get(chain);
+      if (adapter) {
+        let op = prepared.operation;
+        if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(op.state)) {
+          if (op.state === "created") {
+            op = await this.opts.operationStore!.transition(op.id, { to: "awaiting_authorization", now, expectedVersion: op.version });
+            op = await this.opts.operationStore!.transition(op.id, { to: "ready", now, expectedVersion: op.version });
+          } else if (op.state === "awaiting_authorization") {
+            op = await this.opts.operationStore!.transition(op.id, { to: "ready", now, expectedVersion: op.version });
           }
-        }
-        // Submit via injected adapter if available and op not yet terminal/completed. Never mark completed.
-        if (this.opts.executionAdapters) {
-          const chain = resolveChainFromPlan(plan);
-          const adapter = this.opts.executionAdapters.get(chain);
-          if (adapter) {
-            // Only submit if op is not already submitted or beyond; otherwise idempotent.
-            if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(op.state)) {
-              // legal path: created -> awaiting_authorization -> ready -> submitted
-              if (op.state === "created") {
-                op = await this.opts.operationStore.transition(op.id, { to: "awaiting_authorization", now, expectedVersion: op.version });
-                op = await this.opts.operationStore.transition(op.id, { to: "ready", now, expectedVersion: op.version });
-              } else if (op.state === "awaiting_authorization") {
-                op = await this.opts.operationStore.transition(op.id, { to: "ready", now, expectedVersion: op.version });
+          if (op.state === "ready") {
+            try {
+              const submitted = await adapter.submit({ operation: op, pause: persisted, plan, correlationId: input.correlationId ?? null, operationId: input.settlementOperationId });
+              if (submitted.id !== op.id || submitted.id !== input.settlementOperationId) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_operation_id_mismatch");
+              if (submitted.state === "completed") throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_must_not_mark_completed");
+              if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled"].includes(submitted.state)) {
+                throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `adapter_submit_returned_invalid_state:${submitted.state}`);
               }
-              if (op.state === "ready") {
-                // deterministic fake txHash via adapter's submit logic (reuse adapter for txHash generation by delegating to transition)
-                // Generate same fake as adapter: if adapter provides custom, use it; otherwise use local submit path.
-                try {
-                  const submitted = await adapter.submit({ operation: op, pause: persisted, plan, correlationId: input.correlationId ?? null, operationId: opId });
-                  if (submitted.state === "completed") throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_must_not_mark_completed");
-                  try { this.opts.metrics?.increment("settlement_operation_submitted", { chain }); } catch {}
-                } catch (e) {
-                  if (e instanceof PauseError) throw e;
-                  // adapter failure is retryable dependency, don't fail the pause release itself — operation remains created/ready for retry
-                  try { this.opts.metrics?.increment("pause_release_blocked", { reason: "adapter_submit_failed" }); } catch {}
-                }
-              }
+              try { this.opts.metrics?.increment("settlement_operation_submitted", { chain }); } catch {}
+            } catch (e) {
+              if (e instanceof PauseError) throw e;
+              // Adapter failure is retryable; the operation remains durable and
+              // the pause remains RELEASED without claiming settlement success.
+              try { this.opts.metrics?.increment("pause_release_blocked", { reason: "adapter_submit_failed" }); } catch {}
             }
           }
         }
@@ -262,7 +345,18 @@ export class PauseService {
       try {
         const next = await this.expire({ pauseId: p.pauseId, now: n });
         results.push(next);
-      } catch {}
+      } catch (e) {
+        // Concurrent sweepers may legitimately lose the CAS or observe a
+        // terminal transition. Operational/store failures must propagate so a
+        // caller cannot mistake an incomplete sweep for a successful one.
+        if (
+          e instanceof PauseError &&
+          ([PAUSE_ERROR_CODE.STALE_VERSION, PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, PAUSE_ERROR_CODE.PAUSE_EXPIRED, PAUSE_ERROR_CODE.PAUSE_NOT_FOUND] as readonly string[]).includes(e.code)
+        ) {
+          continue;
+        }
+        throw e;
+      }
     }
     try { this.opts.metrics?.increment("pause_sweep", { count: String(results.length) }); } catch {}
     return results;
