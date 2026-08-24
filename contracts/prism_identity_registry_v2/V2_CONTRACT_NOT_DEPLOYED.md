@@ -3,7 +3,7 @@
 ```text
 source: implemented locally
 build: verified locally
-snforge: 39 passed
+snforge: 40 passed
 class hash: NOT_DEPLOYED
 registry address: NOT_DEPLOYED
 declaration transaction: NOT_BROADCAST

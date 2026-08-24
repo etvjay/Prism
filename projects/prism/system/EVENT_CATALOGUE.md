@@ -76,6 +76,34 @@ signature: n/a
 consumer_responsibilities: resolution must flip to NO_ACTIVE_DESTINATION; identity projection MUST NOT be deleted or mutated (INV-SYS-006)
 ```
 
+## Registry ABI-version boundary
+
+The canonical event names and key positions are shared, but the immutable registry
+ABI is versioned and consumers must select it explicitly; unknown or missing
+versions must fail closed. V1 remains the current/legacy boundary and is not
+rewritten by V2.
+
+```text
+Registry V1 (schema_version: 1)
+  ExecutionIdentityBound keys = [selector, prism_id, venue, execution_account]
+  data = [proof_digest: felt252]
+  replay map = Map<felt252, bool>
+
+Registry V2 (schema_version: 2, separate immutable deployment)
+  ExecutionIdentityBound keys = [selector, prism_id, venue, execution_account]
+  data = [proof_digest.low: u128, proof_digest.high: u128]
+  replay map = Map<u256, bool>
+
+  The full digest is reconstructed as low + (high << 128). No mask, modulo,
+  truncation, or alternate hash is permitted. PrismIdentityCreated and
+  BindingRevoked retain schema_version 1 because their payloads are unchanged.
+```
+
+The registry address/version pair is one authority boundary: a V2 address must
+never be decoded with the V1 felt payload, and a V1 address must never be
+interpreted as carrying V2 limbs. See `REGISTRY_V2_MIGRATION_PACKET.md` and
+`REGISTRY_V2_SECURITY_REVIEW.md` for the not-deployed cutover/evidence gates.
+
 ---
 
 ## Reconstruction guarantee (testable)

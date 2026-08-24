@@ -23,6 +23,18 @@ events:
     source_authority: PrismIdentityRegistry_OP-8-01
     object_ref: OBJ-PRISM-003
     schema_version: 1
+    abi_variants:
+      - registry_version: v1
+        schema_version: 1
+        proof_digest_type: felt252
+        data: [proof_digest]
+        replay_map_key: felt252
+      - registry_version: v2
+        schema_version: 2
+        proof_digest_type: u256
+        data: [proof_digest_low_u128, proof_digest_high_u128]
+        replay_map_key: u256
+        limb_order: low_then_high
     event_key: prism_id+venue+execution_account+bound_at_block
     object_version: binding_sequence_per_key
     payload: [prism_id, venue, execution_account, proof_digest]

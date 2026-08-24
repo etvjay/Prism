@@ -51,7 +51,7 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     const challengeService = new PrismChallengeService({ clock, crypto: viemChallengeCrypto, checker, store: ownershipStore, policy:{ defaultTtlSeconds:600, defaultDomain:"prism.example", defaultChainId:84532 }});
     const operationStore = new InMemoryOperationStore(); const registry = new InMemoryRegistry();
     registry.seedIdentity(PRISM_ID, CONTROLLER);
-    let n=1; const app = new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator:{ generateOperationId: () => `op-${n++}`} });
+    let n=1; const app = new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator:{ generateOperationId: () => `op-${n++}`} });
     const owner = makeEoaSigner(); const executionAccount = owner.address.toLowerCase();
     const session={ sessionId:"sess_12345678", userId:"user-1", issuedAt:clock.now()-10, expiresAt:clock.now()+600 };
     const issued = await app.issueChallenge({ headers:{requestId:"r1"}, session, payload:{ prismId:PRISM_ID, venue:VENUE, executionAccount }});
@@ -82,7 +82,7 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     const {PrismChallengeService}=await import("../../prism-identity/application/challenge-service");
     const challengeService=new PrismChallengeService({clock, crypto:viemChallengeCrypto, checker, store:ownershipStore, policy:{defaultTtlSeconds:600, defaultDomain:"prism.example", defaultChainId:84532}});
     const operationStore=new InMemoryOperationStore(); const registry=new InMemoryRegistry(); registry.seedIdentity(PRISM_ID, CONTROLLER);
-    let n=1; const app=new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
+    let n=1; const app=new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
     const owner=makeEoaSigner(); const executionAccount=owner.address.toLowerCase();
     const session={sessionId:"sess_12345678", userId:"user-1", issuedAt:clock.now()-10, expiresAt:clock.now()+600};
     const issued=await app.issueChallenge({headers:{requestId:"r1"}, session, payload:{prismId:PRISM_ID, venue:VENUE, executionAccount}});
@@ -109,7 +109,7 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     const {PrismChallengeService}=await import("../../prism-identity/application/challenge-service");
     const challengeService=new PrismChallengeService({clock, crypto:viemChallengeCrypto, checker, store:ownershipStore, policy:{defaultTtlSeconds:600, defaultDomain:"prism.example", defaultChainId:84532}});
     const operationStore=new InMemoryOperationStore(); const registry=new InMemoryRegistry(); registry.seedIdentity(PRISM_ID, CONTROLLER);
-    let n=1; const app=new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
+    let n=1; const app=new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
     const owner=makeEoaSigner(); const executionAccount=owner.address.toLowerCase();
     const session={sessionId:"sess_12345678", userId:"user-1", issuedAt:clock.now()-10, expiresAt:clock.now()+600};
     const issued=await app.issueChallenge({headers:{requestId:"r1"}, session, payload:{prismId:PRISM_ID, venue:VENUE, executionAccount}});
@@ -146,7 +146,7 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     const {PrismChallengeService}=await import("../../prism-identity/application/challenge-service");
     const cs=new PrismChallengeService({clock, crypto:viemChallengeCrypto, checker, store:ownershipStore, policy:{defaultTtlSeconds:600, defaultDomain:"prism.example", defaultChainId:84532}});
     const opStore=new InMemoryOperationStore(); const registry=new InMemoryRegistry(); registry.seedIdentity(PRISM_ID, CONTROLLER);
-    let n=1; const app=new PrismApplicationService({ challengeService:cs, operationStore:opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
+    let n=1; const app=new PrismApplicationService({ challengeService:cs, operationStore:opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
     const owner=makeEoaSigner(); const acct=owner.address.toLowerCase();
     const session={sessionId:"sess_12345678", userId:"user-1", issuedAt:clock.now()-10, expiresAt:clock.now()+600};
     const issued=await app.issueChallenge({headers:{requestId:"r1"}, session, payload:{prismId:PRISM_ID, venue:VENUE, executionAccount:acct}});
@@ -210,7 +210,7 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     const {PrismChallengeService}=await import("../../prism-identity/application/challenge-service");
     const cs=new PrismChallengeService({clock, crypto:viemChallengeCrypto, checker, store:ownershipStore, policy:{defaultTtlSeconds:600, defaultDomain:"prism.example", defaultChainId:84532}});
     const opStore=new InMemoryOperationStore(); const registry=new InMemoryRegistry();
-    let n=1; const app=new PrismApplicationService({ challengeService:cs, operationStore:opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
+    let n=1; const app=new PrismApplicationService({ challengeService:cs, operationStore:opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator:{generateOperationId:()=>`op-${n++}`} });
     const session={sessionId:"sess_12345678", userId:"user-1", issuedAt:clock.now()-10, expiresAt:clock.now()+600};
     // Inject dependency failure
     const depErr=new Error("rpc_unavailable"); (depErr as unknown as {code?:string}).code="ERR-021";

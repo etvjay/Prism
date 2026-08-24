@@ -42,6 +42,10 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
     }
   }
 
+  get registryVersion(): "v1" | "v2" {
+    return this.digestMode;
+  }
+
   setDigestMode(mode: "v1" | "v2"): void {
     this.digestMode = mode;
   }

@@ -49,6 +49,7 @@ function build(now = 1_789_000_000) {
     operationStore,
     registry,
     submitPort: registry,
+    registryVersion: "v1",
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });

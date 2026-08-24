@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildM3DryRunDeps, runM3DryRunSequence, validateM3PublicConfig } from "../m3-base-sequence-runner";
 import { StarknetSubmitAdapterV2 } from "../../prism-operations/adapters/starknet-submit-v2";
 import type { InMemoryRegistry } from "../../../application/adapters/in-memory-registry";
+import { PrismApplicationService } from "../../../application/prism-application";
 
 const CONTROLLER = "0x1111";
 const V2_REGISTRY = "0x2222";
@@ -35,5 +36,18 @@ describe("M3 V2 application boundary", () => {
     const bind = result.steps.find((step) => step.step === "bind (submitted)");
     expect(bind?.detail).toMatch(/u256 low\/high/);
     expect(bind?.calldata).toHaveLength(5);
+  });
+
+  it("rejects a missing application registry version instead of silently selecting V1", async () => {
+    const deps = await buildM3DryRunDeps({});
+    expect(() => new PrismApplicationService({
+      challengeService: deps.challengeService,
+      operationStore: deps.operationStore,
+      registry: deps.registry,
+      submitPort: deps.submitPort,
+      registryVersion: undefined as never,
+      clock: deps.clock,
+      idGenerator: deps.idGenerator,
+    })).toThrow(/registryVersion must be explicitly v1 or v2/);
   });
 });

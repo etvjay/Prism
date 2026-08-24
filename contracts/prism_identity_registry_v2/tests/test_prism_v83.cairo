@@ -97,6 +97,36 @@ fn test_8_u256_high_limb_is_part_of_replay_key() {
 }
 
 #[test]
+fn test_8_u256_max_value_is_accepted_without_limb_loss() {
+    let (registry, registry_address) = deploy_registry();
+    let controller = address(0x111);
+    let base_account = address(0xabc);
+    let max_digest = u256 { low: 0xffffffffffffffffffffffffffffffff, high: 0xffffffffffffffffffffffffffffffff };
+    let prism_id = create_as(registry_address, controller);
+
+    let mut spy = spy_events();
+    bind_as(registry_address, controller, prism_id, base_account, max_digest);
+
+    assert!(registry.resolve(prism_id, VENUE_BASE) == Resolution::ActiveDestination(base_account));
+    spy
+        .assert_emitted(
+            @array![
+                (
+                    registry_address,
+                    prism_identity_registry_v2::PrismIdentityRegistry::Event::ExecutionIdentityBound(
+                        prism_identity_registry_v2::PrismIdentityRegistry::ExecutionIdentityBound {
+                            prism_id,
+                            venue: VENUE_BASE,
+                            execution_account: base_account,
+                            proof_digest: max_digest,
+                        },
+                    ),
+                ),
+            ],
+        );
+}
+
+#[test]
 fn test_8_unknown_identity_reads_not_found() {
     let (registry, _) = deploy_registry();
     assert!(registry.get_identity(999).is_none(), "unknown id must be None");

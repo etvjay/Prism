@@ -116,7 +116,7 @@ export async function runDecisiveFixture(
 
   let n = 1;
   const idGenerator = { generateOperationId: () => `op-${n++}-${Date.now()}` };
-  const app = new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../application/ports").StarknetSubmitPort, clock, idGenerator });
+  const app = new PrismApplicationService({ challengeService, operationStore, registry, submitPort: registry as unknown as import("../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator });
 
   const session = { sessionId: "sess_12345678", userId: "user-1", issuedAt: clock.now() - 10, expiresAt: clock.now() + 600 };
 

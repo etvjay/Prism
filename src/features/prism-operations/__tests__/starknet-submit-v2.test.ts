@@ -36,6 +36,20 @@ describe("StarknetSubmitAdapterV2", () => {
     ]);
   });
 
+  it("canonicalizes accepted venue casing before ABI calldata", async () => {
+    const calls: Array<unknown[]> = [];
+    const adapter = new StarknetSubmitAdapterV2({ account: account(calls), registryAddress: REGISTRY });
+    await adapter.submitBind({
+      operationId: "op-v2-venue",
+      prismId: "prism:1",
+      venue: " base ",
+      executionAccount: "0xabc",
+      controllerAddress: ACCOUNT,
+      proofDigest: `0x${"1".repeat(64)}` as never,
+    });
+    expect(calls[0][1]).toBe("BASE");
+  });
+
   it("rejects noncanonical prism IDs before execute", async () => {
     const calls: Array<unknown[]> = [];
     const adapter = new StarknetSubmitAdapterV2({ account: account(calls), registryAddress: REGISTRY });

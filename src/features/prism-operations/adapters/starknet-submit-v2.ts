@@ -42,6 +42,7 @@ function registryId(value: string): string {
 }
 
 export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
+  readonly registryVersion = "v2" as const;
   private readonly account: StarknetAccountLike;
   private readonly registryAddress: string;
 
@@ -65,7 +66,8 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
   async submitBind(input: { operationId: string; prismId: string; venue: string; executionAccount: string; proofDigest: Hex; controllerAddress: string }): Promise<{ txHash: Hex }> {
     assertController(this.account, input.controllerAddress);
     const executionAccount = address(input.executionAccount);
-    if (input.venue.toUpperCase() !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
+    const venue = input.venue.trim().toUpperCase();
+    if (venue !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
     let digestLimbs: readonly [Hex, Hex];
     try {
       digestLimbs = toU256Calldata(input.proofDigest);
@@ -78,7 +80,7 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
       const result = await this.account.execute([{
         contractAddress: this.registryAddress,
         entrypoint: "bind_execution_identity",
-        calldata: [prismIdFelt, input.venue, executionAccount, digestLow, digestHigh],
+        calldata: [prismIdFelt, venue, executionAccount, digestLow, digestHigh],
       }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {
@@ -90,13 +92,14 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
   async submitRevoke(input: { operationId: string; prismId: string; venue: string; executionAccount: string; controllerAddress: string }): Promise<{ txHash: Hex }> {
     assertController(this.account, input.controllerAddress);
     const executionAccount = address(input.executionAccount);
-    if (input.venue.toUpperCase() !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
+    const venue = input.venue.trim().toUpperCase();
+    if (venue !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
     const prismIdFelt = registryId(input.prismId);
     try {
       const result = await this.account.execute([{
         contractAddress: this.registryAddress,
         entrypoint: "revoke_binding",
-        calldata: [prismIdFelt, input.venue, executionAccount],
+        calldata: [prismIdFelt, venue, executionAccount],
       }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {

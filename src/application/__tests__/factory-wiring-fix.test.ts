@@ -9,6 +9,7 @@ import { StarknetRegistryReadAdapter, StarknetRegistryReadError } from "../../fe
 import { StarknetRegistryReader, StarknetRegistryReaderError } from "../adapters/starknet-registry-reader";
 import { StarknetEventIndexerAdapter, PRISM_EVENT_SELECTORS } from "../../features/prism-operations/adapters/starknet-event-indexer";
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
+import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapters/starknet-submit-v2";
 import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, resetFactory, isStarknetSubmitConfiguredForFactory } from "../factory";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
@@ -262,6 +263,14 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       expect(factory.submitPort).toBe(submitPort);
       expect(factory.isStarknetSubmitConfigured).toBe(true);
     });
+  });
+
+  it("rejects a concrete V2 submit adapter mislabeled as V1", () => {
+    const submitPort = new StarknetSubmitAdapterV2({
+      account: { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } },
+      registryAddress: REGISTRY,
+    });
+    expect(() => createIsolatedFactory(1_789_000_000, { submitPort, submitPortRegistryVersion: "v1" })).toThrow(/submit_port_abi_version_mismatch/);
   });
 
   it("missing submit config: factory does not secretly wire private keys from env", async () => {

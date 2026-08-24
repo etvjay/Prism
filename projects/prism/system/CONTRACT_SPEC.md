@@ -64,6 +64,19 @@ gas_execution_notes: view function
 
 ## OP-8-01 — bind_execution_identity(prism_id, venue, execution_account, proof_digest)
 
+The immutable registry ABI has an explicit version boundary. V1 keeps the
+legacy `felt252` proof-digest parameter and `Map<felt252, bool>` replay key.
+Separate Registry V2 uses the accepted exact `u256` parameter and
+`Map<u256, bool>` replay key; Cairo calldata/event serialization is
+`low:u128` followed by `high:u128`. A configured V2 address must never fall
+through to V1 decoding or masking, and V1 remains isolated/current until an
+observed V2 cutover.
+
+```text
+V1: bind(..., proof_digest: felt252)
+V2: bind(..., proof_digest: u256) → calldata [low, high]
+```
+
 ```yaml
 operation: OP-8-01 bind_execution_identity
 purpose: Accept a verified Base ownership proof as a canonical ACTIVE binding

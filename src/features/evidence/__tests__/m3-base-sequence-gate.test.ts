@@ -231,7 +231,7 @@ describe("M3 gate — felt digest/prismId exact calldata (Starknet boundary)", (
     const verified = await challengeService.submitProof({ challengeId: view.challengeId, presented: presented as unknown as import("../../prism-identity/domain/verification").PresentedChallengeFields, signature: sig as Hex });
     const { PrismApplicationService } = await import("../../../application/prism-application");
     let n = 1;
-    const app = new PrismApplicationService({ challengeService, operationStore: opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, clock, idGenerator: { generateOperationId: () => `op-${n++}` } });
+    const app = new PrismApplicationService({ challengeService, operationStore: opStore, registry, submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort, registryVersion: "v1", clock, idGenerator: { generateOperationId: () => `op-${n++}` } });
     const session = { sessionId: "sess_12345678", userId: "user-1", issuedAt: clock.now() - 5, expiresAt: clock.now() + 600 };
     const bindRes = await app.bind({
       headers: { requestId: "r1", idempotencyKey: "idem-submitted" },
@@ -355,6 +355,7 @@ describe("M3 gate — signature class ladder + wrong signer / expiry / replay", 
       operationStore: opStore,
       registry,
       submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort,
+      registryVersion: "v1",
       clock,
       idGenerator: { generateOperationId: () => `op-replay-${n++}` },
     });
@@ -430,6 +431,7 @@ describe("M3 gate — chain/domain/venue/controller mismatch (fail closed)", () 
       operationStore: opStore,
       registry,
       submitPort: registry as unknown as import("../../../application/ports").StarknetSubmitPort,
+      registryVersion: "v1",
       clock,
       idGenerator: { generateOperationId: () => `op-ctrl-${n++}` },
     });

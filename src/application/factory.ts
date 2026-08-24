@@ -158,6 +158,13 @@ function getStarknetRegistryVersion(): StarknetRegistryVersion {
   return value;
 }
 
+function assertSubmitPortAbiVersion(submitPort: StarknetSubmitPort | undefined, registryVersion: StarknetRegistryVersion): void {
+  const declared = submitPort?.registryVersion;
+  if (declared !== undefined && declared !== registryVersion) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_abi_version_mismatch");
+  }
+}
+
 function getProjectionStartBlock(): number {
   const raw = (process.env.PRISM_STARKNET_INDEXER_START_BLOCK ?? "0").trim();
   const value = Number(raw);
@@ -186,6 +193,7 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   const reader = new StarknetRegistryReader({ rpcUrl: cfg.rpcUrl, registryAddress: cfg.registryAddress, reader: provider as unknown as import("./adapters/starknet-registry-reader").StarknetRegistryReaderRpc });
   const ledger = new StarknetLedgerStatusAdapter({ rpcUrl: cfg.rpcUrl, reader: provider as unknown as import("../features/prism-operations/adapters/starknet-ledger-status").StarknetRpcReader });
   const registryVersion = getStarknetRegistryVersion();
+  assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   if (overrides?.submitPort && overrides.submitPortRegistryVersion !== registryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_mismatch");
   }
@@ -232,6 +240,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
   const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
@@ -373,6 +382,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
   const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({

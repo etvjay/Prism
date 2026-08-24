@@ -115,6 +115,26 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     expect((result.events[0].payload as { proofDigest: string }).proofDigest).toBe(`0x${(0x1234n << 128n | 0x42n).toString(16).padStart(64, "0")}`);
   });
 
+  it("reconstructs the maximum exact V2 u256 digest from max limbs", async () => {
+    const reader = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: [SEL_BOUND, "0x1", "0x42415345", "0xabc"], data: [`0x${"f".repeat(32)}`, `0x${"f".repeat(32)}`] },
+    ]);
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v2", requireEventOrigin: false });
+    const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
+    expect((result.events[0].payload as { proofDigest: string }).proofDigest).toBe(`0x${"f".repeat(64)}`);
+  });
+
+  it("rejects cross-version bound-event data shapes instead of guessing a digest", async () => {
+    const v2WithV1Data = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismBoundKeys(), data: ["0xd1e5"] },
+    ]);
+    const v1WithV2Data = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: prismBoundKeys(), data: ["0xd1e5", "0x1"] },
+    ]);
+    expect((await new StarknetEventIndexerAdapter({ reader: v2WithV1Data, registryAddress: REGISTRY, registryVersion: "v2", requireEventOrigin: false }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+    expect((await new StarknetEventIndexerAdapter({ reader: v1WithV2Data, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false }).fetchRegistryEvents({ fromBlock: 0 })).events).toHaveLength(0);
+  });
+
   it("rejects V2 bound events with unsupported venue or missing execution key", async () => {
     const unsupported = readerWithEvents([
       { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: [SEL_BOUND, "0x1", "0xdead", "0xabc"], data: ["0x42", "0x1234"] },

@@ -32,6 +32,8 @@ export interface RegistryReadPort {
  *  The port never marks submitted as completed; it returns the txHash and
  *  the operation lifecycle advances via reconciliation (INV-SYS-005). */
 export interface StarknetSubmitPort {
+  /** Concrete adapters declare their ABI; test doubles may omit this only when the factory receives explicit metadata. */
+  readonly registryVersion?: "v1" | "v2";
   /** Submits create_identity; returns txHash. May throw dependency error (ERR-021). */
   submitCreateIdentity(input: { operationId: string; controllerAddress: string }): Promise<{ txHash: Hex }>;
   /** Submits bind_execution_identity; returns txHash. */

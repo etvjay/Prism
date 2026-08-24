@@ -62,6 +62,7 @@ function buildHarness(start = 1_789_000_000): Harness {
     operationStore,
     registry,
     submitPort: registry,
+    registryVersion: "v1",
     clock,
     idGenerator: idGen(),
   });

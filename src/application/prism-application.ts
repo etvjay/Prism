@@ -42,7 +42,8 @@ export interface PrismApplicationDeps {
   readonly operationStore: OperationStore;
   readonly registry: RegistryReadPort;
   readonly submitPort: StarknetSubmitPort;
-  readonly registryVersion?: "v1" | "v2";
+  /** Explicit registry ABI version; omission must never silently select V1. */
+  readonly registryVersion: "v1" | "v2";
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
 }
@@ -66,7 +67,11 @@ function normalizeStarknetAddress(value: string): string {
 }
 
 export class PrismApplicationService {
-  constructor(private readonly deps: PrismApplicationDeps) {}
+  constructor(private readonly deps: PrismApplicationDeps) {
+    if (deps.registryVersion !== "v1" && deps.registryVersion !== "v2") {
+      throw new Error("invariant_violation: registryVersion must be explicitly v1 or v2");
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Issue / Verify (challenge lifecycle — sync, no Operation row)
