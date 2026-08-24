@@ -191,7 +191,7 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   }
   let indexer: StarknetEventIndexerAdapter;
   try {
-    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion, requireEventOrigin: process.env.VITEST !== "true", chunkSize: 100 });
+    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100 });
   } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }
@@ -232,6 +232,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
   const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  registry.setDigestMode(registryVersion);
   // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
@@ -372,6 +373,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
   const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  registry.setDigestMode(registryVersion);
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({
         registryAddress: getStarknetRegistryAddress()!,

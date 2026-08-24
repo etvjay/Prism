@@ -12,6 +12,8 @@ import { StarknetSubmitError } from "./starknet-submit";
 function address(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!/^0x[0-9a-f]{1,64}$/.test(normalized)) throw new StarknetSubmitError("ERR-005", `malformed_address:${value}`);
+  const numeric = BigInt(normalized);
+  if (numeric === 0n || numeric >= (1n << 251n)) throw new StarknetSubmitError("ERR-005", `address_out_of_range:${value}`);
   return normalized;
 }
 

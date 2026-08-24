@@ -29,11 +29,19 @@ export interface StarknetRegistryReaderRpc {
 // Re-export canonical error as legacy name so callers catching StarknetRegistryReaderError catch the same codes.
 export { StarknetRegistryReadError as StarknetRegistryReaderError };
 
+const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
+
+function isValidContractAddress(value: string): boolean {
+  if (!/^0x[0-9a-f]{1,64}$/i.test(value.trim())) return false;
+  const n = BigInt(value.trim());
+  return n > 0n && n < CONTRACT_ADDRESS_LIMIT;
+}
+
 export class StarknetRegistryReader implements RegistryReadPort {
   private readonly delegate: StarknetRegistryReadAdapter;
 
   constructor(options: StarknetRegistryReaderOptions) {
-    if (!options.registryAddress || !/^0x[0-9a-f]{1,64}$/i.test(options.registryAddress.trim())) {
+    if (!options.registryAddress || !isValidContractAddress(options.registryAddress)) {
       throw new StarknetRegistryReadError("ERR-002", `invalid_registry_address:${options.registryAddress}`);
     }
     if (!options.rpcUrl || !/^https?:\/\//i.test(options.rpcUrl.trim())) {

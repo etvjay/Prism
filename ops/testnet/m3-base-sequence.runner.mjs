@@ -40,9 +40,24 @@ function loadManifestChainId(env) {
   if (!existsSync(p)) throw new Error("target-network manifest missing");
   if (!["testnet", "mainnet", "SN_SEPOLIA", "SN_MAIN"].includes(env)) throw new Error(`unknown environment ${env}`);
   const raw = readFileSync(p, "utf8");
+  const artifactStatus = raw.match(/^status:\s*([A-Z_]+)/m)?.[1];
+  const ownerStart = raw.indexOf("owner_decision:");
+  const ownerBlock = ownerStart >= 0 ? raw.slice(ownerStart) : "";
+  const ownerStatus = ownerBlock.match(/^\s+status:\s*([A-Z_]+)/m)?.[1];
+  const selectedEnvironment = ownerBlock.match(/^\s+selected_environment:\s*([a-z_]+)/m)?.[1];
+  if (artifactStatus !== "ACCEPTED" || ownerStatus !== "ACCEPTED") throw new Error("target-network manifest is not owner-accepted");
   const isTestnet = env === "testnet" || env === "SN_SEPOLIA";
   const section = isTestnet ? "testnet" : "mainnet";
-  const m = raw.match(new RegExp(`${section}:[\\s\\S]*?base:[\\s\\S]*?chain_id:\\s*(\\d+)`));
+  const start = raw.indexOf(`\n  ${section}:`);
+  const end = raw.indexOf(isTestnet ? "\n  mainnet:" : "\nowner_decision:", start);
+  const sectionBlock = start >= 0 ? raw.slice(start, end >= 0 ? end : raw.length) : "";
+  const sectionStatus = sectionBlock.match(/^\s+status:\s*([A-Z_]+)/m)?.[1];
+  if (isTestnet) {
+    if (selectedEnvironment !== "testnet" || sectionStatus !== "ACCEPTED") throw new Error("testnet is not the selected accepted environment");
+  } else if (selectedEnvironment !== "mainnet" || sectionStatus !== "ACCEPTED") {
+    throw new Error("mainnet is release-gated and not the selected accepted environment");
+  }
+  const m = sectionBlock.match(/base:[\s\S]*?chain_id:\s*(\d+)/);
   if (!m) throw new Error(`manifest base chain_id missing for ${section}`);
   return { chainId: Number(m[1]), network: isTestnet ? "SN_SEPOLIA" : "SN_MAIN" };
 }
@@ -59,7 +74,11 @@ if (has("--self-test")) {
   process.exit(r.status ?? 1);
 }
 
-const envArg = get("--env", process.env.PRISM_ENV ?? "testnet");
+const envArg = get("--env", process.env.PRISM_ENV ?? null);
+if (!envArg) {
+  console.error("✕ explicit --env testnet|mainnet is required; no implicit environment default");
+  process.exit(1);
+}
 let manifestInfo;
 try {
   manifestInfo = loadManifestChainId(envArg);
@@ -219,7 +238,7 @@ try {
 // We spawn the gate test that exercises the full sequence via in-memory doubles
 console.log("\nRunning dry-run preflight gate suite (offline, TEST DOUBLE, X2)...");
 const gateTests = publicConfig.registryVersion === "v2"
-  ? ["src/features/evidence/__tests__/m3-base-sequence-gate.test.ts", "src/features/prism-identity/__tests__/u256-digest.test.ts", "src/features/prism-operations/__tests__/starknet-submit-v2.test.ts"]
+  ? ["src/features/evidence/__tests__/m3-base-sequence-gate.test.ts", "src/features/evidence/__tests__/m3-v2-application-boundary.test.ts", "src/features/prism-identity/__tests__/u256-digest.test.ts", "src/features/prism-operations/__tests__/starknet-submit-v2.test.ts"]
   : ["src/features/evidence/__tests__/m3-base-sequence-gate.test.ts"];
 const r = spawnSync("npm", ["test", "--", ...gateTests], { stdio: "inherit" });
 if (r.status === 0) {

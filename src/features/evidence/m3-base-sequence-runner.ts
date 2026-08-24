@@ -18,6 +18,7 @@
 import type { Hex } from "../prism-identity/domain/hex";
 import type { EvmAddress } from "../prism-identity/domain/identifiers";
 import { toFieldBoundedDigest, prismIdToRegistryFelt, FELT_PRIME, DIGEST_MASK_250 } from "../prism-identity/domain/felt-digest";
+import { toU256Calldata } from "../prism-identity/domain/u256-digest";
 import type { Clock } from "../prism-identity/domain/ports";
 import { PrismChallengeService } from "../prism-identity/application/challenge-service";
 import type { PrismChallengeService as PrismChallengeServiceType } from "../prism-identity/application/challenge-service";
@@ -343,13 +344,19 @@ export async function runM3DryRunSequence(
     return { label: M3_RUNNER_LABEL, config: validatedConfig, steps, verdict: "M3_FAILED", blockers, submittedNotCompleted: false, dryRun: true };
   }
 
-  // Ensure digest maps to felt correctly — exact calldata check (no silent fallback)
-  let feltDigest: Hex;
+  // Ensure digest maps to the selected registry ABI exactly.
+  let feltDigest: Hex | null = null;
+  let u256Digest: readonly [Hex, Hex] | null = null;
   let feltPrismId: Hex;
   try {
-    feltDigest = feltDigestForCalldata(verifiedEoa.digest);
     feltPrismId = prismFeltForCalldata(validatedConfig.prismId);
-    steps.push({ step: "felt boundary precheck", status: "ok", detail: `prismId ${validatedConfig.prismId} -> felt ${feltPrismId} digest ${verifiedEoa.digest} -> felt ${feltDigest} bounded=${BigInt(verifiedEoa.digest) > DIGEST_MASK_250}` });
+    if (validatedConfig.registryVersion === "v2") {
+      u256Digest = toU256Calldata(verifiedEoa.digest);
+      steps.push({ step: "u256 boundary precheck", status: "ok", detail: `prismId ${validatedConfig.prismId} -> felt ${feltPrismId} digest -> low ${u256Digest[0]} high ${u256Digest[1]}` });
+    } else {
+      feltDigest = feltDigestForCalldata(verifiedEoa.digest);
+      steps.push({ step: "felt boundary precheck", status: "ok", detail: `prismId ${validatedConfig.prismId} -> felt ${feltPrismId} digest ${verifiedEoa.digest} -> felt ${feltDigest} bounded=${BigInt(verifiedEoa.digest) > DIGEST_MASK_250}` });
+    }
   } catch (cause) {
     const msg = cause instanceof Error ? cause.message : String(cause);
     steps.push({ step: "felt boundary precheck", status: "blocked", code: "ERR-002/023", detail: msg });
@@ -380,7 +387,9 @@ export async function runM3DryRunSequence(
         // For InMemoryRegistry, capture doesn't apply; for StarknetSubmitAdapter with fake account, we can capture via adapter's account.execute
         const res = await originalSubmitBind(input);
         // Try to infer calldata from input + felt mapping
-        captured = [feltPrismId, validatedConfig.venue, (input.executionAccount as string).toLowerCase(), feltDigest];
+        captured = validatedConfig.registryVersion === "v2"
+          ? [feltPrismId, validatedConfig.venue, (input.executionAccount as string).toLowerCase(), ...(u256Digest ?? [])]
+          : [feltPrismId, validatedConfig.venue, (input.executionAccount as string).toLowerCase(), feltDigest];
         bindCalldata = captured;
         return res;
       },
@@ -420,8 +429,15 @@ export async function runM3DryRunSequence(
     }
     bindTxHash = (await deps.operationStore.getById(bindRes.data.operationId))?.txHash as Hex | null ?? null;
     bindOperationId = bindRes.data.operationId;
-    if (!bindCalldata) bindCalldata = [feltPrismId, validatedConfig.venue, (signer.address.toLowerCase() as string), feltDigest];
-    steps.push({ step: "bind (submitted)", status: "ok", operationId: bindOperationId, state: bindRes.data.state, txHash: bindTxHash, calldata: bindCalldata, detail: `calldata[0] ${feltPrismId} [3] ${feltDigest}` });
+    if (!bindCalldata) {
+      bindCalldata = validatedConfig.registryVersion === "v2"
+        ? [feltPrismId, validatedConfig.venue, (signer.address.toLowerCase() as string), ...(u256Digest ?? [])]
+        : [feltPrismId, validatedConfig.venue, (signer.address.toLowerCase() as string), feltDigest];
+    }
+    const calldataDetail = validatedConfig.registryVersion === "v2"
+      ? `calldata[0] ${feltPrismId} [3:4] u256 low/high`
+      : `calldata[0] ${feltPrismId} [3] ${feltDigest}`;
+    steps.push({ step: "bind (submitted)", status: "ok", operationId: bindOperationId, state: bindRes.data.state, txHash: bindTxHash, calldata: bindCalldata, detail: calldataDetail });
   } catch (cause) {
     const code = (cause as { code?: string })?.code ?? "ERR-004/007/021";
     const msg = cause instanceof Error ? cause.message : String(cause);

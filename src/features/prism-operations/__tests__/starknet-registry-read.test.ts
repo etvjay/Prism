@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { Hex } from "../domain/operation";
 import { StarknetRegistryReadAdapter, StarknetRegistryReadError } from "../adapters/starknet-registry-read";
 
-const REGISTRY = "0x1111111111111111111111111111111111111111111111111111111111111111";
-const CONTROLLER = "0x2222222222222222222222222222222222222222222222222222222222222222";
+const REGISTRY = "0x1111";
+const CONTROLLER = "0x2222";
+const CONTROLLER_PADDED = `0x${"0".repeat(60)}2222`;
 const PRISM_ID = "prism:1";
 const PRISM_ID_2 = "prism:2";
 
@@ -26,7 +27,7 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
     });
     const res = await adapter.getIdentity(PRISM_ID);
     expect(res).toEqual({
-      controller: "0x2222222222222222222222222222222222222222222222222222222222222222",
+      controller: CONTROLLER_PADDED,
       createdAtBlock: 12345,
       version: 0,
     });
@@ -93,13 +94,13 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
   });
 
   it("resolve returns ACTIVE when tagged Some", async () => {
-    const acct = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const acct = "0xaaaa";
     const adapter = new StarknetRegistryReadAdapter({
       reader: readerReturning(["0x0", acct]),
       registryAddress: REGISTRY,
     });
     const res = await adapter.resolve(PRISM_ID, "BASE");
-    expect(res.executionAccount?.toLowerCase()).toBe(acct);
+    expect(res.executionAccount?.toLowerCase()).toBe(`0x${"0".repeat(60)}aaaa`);
   });
 
   it("resolve for unsupported venue returns null without calling chain (fail-closed)", async () => {

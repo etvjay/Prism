@@ -11,9 +11,10 @@ import type { RegistryReadPort, StarknetSubmitPort } from "../ports";
 // In-memory double must mimic onchain felt keying: a full 256-bit keccak that
 // maps to same felt as already-consumed should be rejected as replay (ERR-007).
 const DIGEST_MASK_250 = (1n << 250n) - 1n;
-function toFeltDigestHex(digest: Hex): string {
+function toDigestKey(digest: Hex, mode: "v1" | "v2"): string {
   if (!/^0x[0-9a-fA-F]{64}$/.test(digest)) return digest.toLowerCase();
   const v = BigInt(digest);
+  if (mode === "v2") return `0x${v.toString(16).padStart(64, "0")}`.toLowerCase();
   const masked = v <= DIGEST_MASK_250 ? v : v & DIGEST_MASK_250;
   return `0x${masked.toString(16).padStart(64, "0")}`.toLowerCase();
 }
@@ -31,6 +32,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   private readonly identities = new Map<string, { controller: string; createdAtBlock: number; version: number }>();
   private readonly bindings = new Map<string, { status: "ACTIVE" | "REVOKED" }>();
   private readonly consumedDigests = new Set<string>();
+  private digestMode: "v1" | "v2" = "v1";
   private failNextSubmitWith?: Error;
   private txCounter = 1;
 
@@ -40,7 +42,10 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
     }
   }
 
-  // Helper to seed identity for tests without going through submit flow.
+  setDigestMode(mode: "v1" | "v2"): void {
+    this.digestMode = mode;
+  }
+
   seedIdentity(prismId: string, controller: string): void {
     this.identities.set(prismId, { controller: controller.toLowerCase(), createdAtBlock: 1, version: 0 });
   }
@@ -48,7 +53,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   seedBinding(prismId: string, venue: string, executionAccount: string, digest?: Hex): void {
     const key = bindingKey(prismId, venue, executionAccount);
     this.bindings.set(key, { status: "ACTIVE" });
-    if (digest) this.consumedDigests.add(toFeltDigestHex(digest));
+    if (digest) this.consumedDigests.add(toDigestKey(digest, this.digestMode));
   }
 
   // RegistryReadPort
@@ -74,7 +79,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   }
 
   async isDigestConsumed(digest: Hex): Promise<boolean> {
-    return this.consumedDigests.has(toFeltDigestHex(digest));
+    return this.consumedDigests.has(toDigestKey(digest, this.digestMode));
   }
 
   // StarknetSubmitPort — fail-closed on dependency error injection.
@@ -109,7 +114,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
       (err as unknown as { code?: string }).code = "ERR-004";
       throw err;
     }
-    if (this.consumedDigests.has(toFeltDigestHex(input.proofDigest))) {
+    if (this.consumedDigests.has(toDigestKey(input.proofDigest, this.digestMode))) {
       const err = new Error("proof_digest_already_consumed");
       (err as unknown as { code?: string }).code = "ERR-007";
       throw err;
@@ -157,7 +162,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
   // Test helper to simulate reconciliation making a bind visible
   applyBindForTest(prismId: string, venue: string, executionAccount: string, digest: Hex): void {
     this.bindings.set(bindingKey(prismId, venue, executionAccount), { status: "ACTIVE" });
-    this.consumedDigests.add(toFeltDigestHex(digest));
+    this.consumedDigests.add(toDigestKey(digest, this.digestMode));
   }
   applyRevokeForTest(prismId: string, venue: string, executionAccount: string): void {
     this.bindings.set(bindingKey(prismId, venue, executionAccount), { status: "REVOKED" });

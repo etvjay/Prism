@@ -15,7 +15,7 @@ import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 
 const REGISTRY = "0x1111";
 const CONTROLLER = "0x2222";
-const ACCOUNT_ADDR = "0x3333333333333333333333333333333333333333333333333333333333333333";
+const ACCOUNT_ADDR = "0x3333";
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void> | void) {
   const effective = { ...overrides };

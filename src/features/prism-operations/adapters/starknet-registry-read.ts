@@ -32,10 +32,16 @@ export class StarknetRegistryReadError extends Error {
   }
 }
 
+const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
+
 function assertHexAddress(value: string, label: string): string {
   const trimmed = value.trim().toLowerCase();
   if (!/^0x[0-9a-f]{1,64}$/.test(trimmed)) {
     throw new StarknetRegistryReadError("ERR-002", `malformed_address:${label}:${value}`);
+  }
+  const numeric = BigInt(trimmed);
+  if (numeric === 0n || numeric >= CONTRACT_ADDRESS_LIMIT) {
+    throw new StarknetRegistryReadError("ERR-002", `address_out_of_range:${label}:${value}`);
   }
   return trimmed;
 }
@@ -46,8 +52,10 @@ function normalizeController(raw: string): string {
   if (!v.startsWith("0x")) return raw;
   try {
     const n = BigInt(v);
+    if (n === 0n || n >= CONTRACT_ADDRESS_LIMIT) throw new StarknetRegistryReadError("ERR-002", `address_out_of_range:controller:${raw}`);
     return `0x${n.toString(16).padStart(64, "0")}`;
-  } catch {
+  } catch (cause) {
+    if (cause instanceof StarknetRegistryReadError) throw cause;
     throw new StarknetRegistryReadError("ERR-002", `malformed_controller:${raw}`);
   }
 }
