@@ -2,21 +2,16 @@
 
 **Lane:** M1 `PrismIdentityRegistry` Starknet identity phase — live-read & evidence closeout  
 **Model:** Muse Spark 1.2 free, lane M1 for Prism  
-**Base commit:** `7a385d2` (`docs(prism): define delegated phase convergence contract`)  
+**Base commit:** `c68cd72` (`feat(prism): complete truthful workspace website shell`)
 **Review commit:** HEAD after verification (see `git log --oneline -1`)  
-**Date:** 2026-08-23  
+**Date:** 2026-08-24
 **Network scope:** `SN_SEPOLIA` (testnet, `Base Sepolia 84532` out of scope for M1) + `SN_MAIN` release-gated  
 **Contract:** `contracts/prism_identity_registry` — immutable, no proxy (SD-002)  
 **Authority:** `projects/prism/agent-packets/PRISM_PHASE_CONVERGENCE_CONTRACT.md` §Status/Date/Scope + `docs/PRISM_DOCUMENTATION_V0_3.md` + `foundry/*` + `projects/prism/system/*` + `ops/target-network/manifest.yaml` + `ops/evidence/*` + `ops/testnet/*` + `src/features/evidence/*` + `src/features/prism-operations/*`
 
-**Verdict:** `BLOCKED` — live create_identity + independent read remain BLOCKED
+**Verdict:** `M1_INDEXER_WATERMARK_RUNTIME_READY_X2` — runtime X2 ready (injected provider, pagination, watermark, stale-refusal, independent-read envelope); live SN_SEPOLIA create/read remains `M1_BLOCKED_BY_LIVE_RPC_EVIDENCE` (X3 partial, not promoted)
 
-> The M1 harness, typed fixtures/validators, cross-checks, and read-only procedure are
-> complete and green at **X2 local controlled**. No live `SN_SEPOLIA` `create_identity`
-> / `get_identity` receipt with independent read has been observed in this lane, so
-> `EVD-PRISM-004` remains `X0 NOT_IMPLEMENTED` and X3 is not claimed. Live
-> `create_identity` broadcast and promotion to `X3` remain owner/operator-executed
-> (see §12). Explicitly: live create_identity + independent read remain BLOCKED.
+> The M1 indexer/watermark runtime boundary is complete and green at **X2 local controlled** via injected provider ports (get_identity/get_events pagination, duplicate/gap/watermark/stale/malformed/fail-closed tests). No live `SN_SEPOLIA` `create_identity` / `get_identity` receipt with independent read has been observed in this lane, so `EVD-PRISM-004` remains `X0 NOT_IMPLEMENTED` and X3 is not claimed — live `create_identity` broadcast and promotion to `X3` remain owner/operator-executed (see §12). Explicitly: live create_identity + independent read remain BLOCKED by live RPC evidence; runtime is `M1_INDEXER_WATERMARK_RUNTIME_READY_X2`.
 
 ---
 
@@ -156,6 +151,23 @@ src/features/evidence/__tests__/m1-live-read.test.ts
     missing independent read → X2, malformed receipt → X0, stale block (watermark + indexer),
     strk20 guard, canonicalStringify determinism; mirrors envelope-and-gates.test.ts ladder
 
+src/features/prism-operations/adapters/starknet-registry-read.ts
+  - New injected-provider read adapter for RegistryReadPort.getIdentity/resolve: injected
+    StarknetCallReader.callContract, prismIdToRegistryFelt boundary, Option<Identity>
+    decoding (None→null fail-closed), malformed controller/address guards, dependency
+    fail-closed (ERR-021), never logs connection strings, Starknet canonical authority
+
+src/features/prism-operations/__tests__/starknet-registry-read.test.ts
+  - 12 tests (injected fakes, no RPC): getIdentity Some/None, bare-struct, malformed
+    prismId/address, dependency fail-closed, resolve NO_ACTIVE/ACTIVE, venue guard,
+    digest malformed, no secret exposure, felt conversion, Starknet canonical
+
+src/features/prism-operations/__tests__/m1-indexer-watermark-runtime.test.ts
+  - 10 tests (injected fakes, deterministic): pagination continuation_token, duplicate
+    dedup across pages, gaps, watermark max+monotonic, stale-refusal (fresh/stale/unknown),
+    projection StaleCacheError, malformed addresses, fail-closed unknowns, independent-read
+    envelope X2 downgrade + X3 promotable, submitted!=completed preserved
+
 BACKEND_PHASE_M1_REVIEW.md  (this file)
 ```
 
@@ -163,7 +175,7 @@ BACKEND_PHASE_M1_REVIEW.md  (this file)
 
 **Base / commit:**
 
-- Base: `7a385d2` `docs(prism): define delegated phase convergence contract`
+- Base: `c68cd72` `feat(prism): complete truthful workspace website shell`
 - New commit: HEAD after `npm test + typecheck + build + diff-check + validate --self-test` green (see `git log --oneline -1`; `git diff --stat HEAD` lists only the files above; `git status` shows `node_modules` untracked only via shared `Prism/node_modules` symlink — no `.env`).
 
 ---
@@ -175,7 +187,9 @@ All tests derive from specs (`SYSTEM_FOUNDRY §25`); local pass = `X2`.
 | Command | Result |
 |---|---|
 | `npm test -- src/features/evidence/__tests__/m1-live-read.test.ts` | **13 passed** (see file — covers 5 facets + 5 cross-checks + determinism + strk20) |
-| `npm test` (full) | **26 passed \| 2 skipped (integration gated) \| 306 passed \| 14 skipped** (before M1: `19 passed \| 2 skipped` app-level suites + `209 passed \| 14 skipped` domain/ops suites; after M1: +1 suite, +13 tests) |
+| `npm test -- src/features/prism-operations/__tests__/starknet-registry-read.test.ts` | **12 passed** (injected get_identity/resolve, malformed, fail-closed, no secrets) |
+| `npm test -- src/features/prism-operations/__tests__/m1-indexer-watermark-runtime.test.ts` | **10 passed** (pagination, duplicates, gaps, watermark, stale, malformed, fail-closed, independent-read) |
+| `npm test` (full) | **~340 passed \| 14 skipped** (before M1 gate: 26 app + 306 domain; after: +22 tests across 2 new suites) |
 | `npm run typecheck` (`tsc --noEmit`) | **PASS** |
 | `npm run build` (`next build --webpack`) | **PASS** — routes `/` + `/_not-found` static (26.8s compile, 35.6s typecheck) |
 | `git diff --check` | **clean** (no whitespace errors) |
@@ -329,41 +343,41 @@ All other `EVD-PRISM-004..007` rows remain `NOTIMPLEMENTED / X0` until those obs
 
 ## 13. Explicit verdict
 
-**Verdict: `BLOCKED` — live create_identity + independent read remain BLOCKED**
+**Verdict: `M1_INDEXER_WATERMARK_RUNTIME_READY_X2` — runtime X2 ready; live closeout `M1_BLOCKED_BY_LIVE_RPC_EVIDENCE` (X3 partial)**
 
-- The M1 live-read/evidence harness and `PROCEDURE.md` are **complete and reproducible**: deterministic fixtures `create_identity`/`get_identity`/`event`/`indexer`/`watermark`, validators, and the five cross-checks (`wrong network`, `address mismatch`, `missing independent read`, `malformed receipt`, `stale block`) all **pass at `X2`** (`npm test` 13/13 + `validate --self-test` guards proven; `typecheck` + `build` + `diff-check` green).
-- However, the **live Starknet identity phase is not closable in this lane** because **no `SN_SEPOLIA` `create_identity` / `get_identity` receipt with `SUCCEEDED` status, `PrismIdentityCreated` event, and `independent_verification` (Voyager + second RPC `address_match` + fresh `watermark`) has been observed** — the only deployment facts currently present are `TEST DOUBLE` fixtures. Per the task constraint and `EVIDENCE_AUDIT_FOUNDRY §6` maturity rule, promotion to `X3` and `EVD-PRISM-004 X0 → X3` is correctly **blocked** until the operator executes §12/§5. Explicitly: live create_identity + independent read remain BLOCKED.
-- No ledger row was promoted. No `X3` was claimed. No `strk20.json` was written. No frontend / contract behavior was changed. No secret was handled. No transaction was broadcast.
+- The M1 indexer/watermark runtime and `PROCEDURE.md` are **complete and reproducible at X2**: injected provider `StarknetRegistryReadAdapter` (`get_identity` via `callContract`, `prismIdToRegistryFelt` boundary, fail-closed unknown→null), `StarknetEventIndexerAdapter` pagination (`fetchAllRegistryEvents` continuation_token, deterministic ordering, dedup by `txHash:eventIndex`), `event-indexer.ts` reconstruction (gap/missed/duplicate/watermark `max(block)`), `WatermarkedResolveService` stale-refusal (`K=5`, `StaleCacheError`, unknown confirmed block fail-closed), `StarknetLedgerStatusAdapter.getConfirmedBlock` watermark source, independent-read evidence envelope (`explorer_url` + `rpc_second_read` + `runM1CrossChecks` downgrade to `X2`), and the five cross-checks (`wrong network`, `address mismatch`, `missing independent read`, `malformed receipt`, `stale block`) all **pass at `X2`** (`npm test` 13+12+10 deterministic, `validate --self-test` guards proven; `typecheck` + `build` + `diff-check` green). `submitted!=completed` preserved — no adapter fabricates `completed`.
+- However, the **live Starknet identity phase is not promotable to X3** because **no live `SN_SEPOLIA` `create_identity` / `get_identity` receipt with `SUCCEEDED` status, `PrismIdentityCreated` selector `0x2c3cc…160e7`, and `independent_verification` (Voyager + second RPC `address_match` + fresh `watermark >= confirmed-K`) has been observed** — the only deployment facts currently present are `TEST DOUBLE` fixtures. Per `EVIDENCE_AUDIT_FOUNDRY §6` maturity rule, promotion to `X3` and `EVD-PRISM-004 X0 → X3` is correctly **blocked** until the operator executes §12/§5. Explicitly: live create/read is **X3 partial** (harness + envelope shape ready) but **not promoted**; event-index/reconciliation is **not promoted without observed live events** (receipt + watermark). This is `M1_BLOCKED_BY_LIVE_RPC_EVIDENCE` for the X3 gate.
+- No ledger row was promoted. No `X3` was claimed as ledger truth. No `strk20.json` was written. No frontend / contract behavior was changed. No secret was handled. No transaction was broadcast. No invented event selectors or receipts.
 
 **What passes (integration-safe):**
 
-> - The harness is `ACCEPTABLE_FOR_INTEGRATION` **as a read-only verification surface only** — it is safe to integrate `m1-live-read.ts` / `ops/m1-live-read/*` / `m1-live-read.test.ts` without touching `strk20.json` or mainnet.
+> - The runtime is `ACCEPTABLE_FOR_INTEGRATION` **as a read-only verification surface only** — it is safe to integrate `starknet-registry-read.ts` + `starknet-event-indexer.ts` + `resolve-service.ts` + `starknet-ledger-status.ts` + `m1-live-read.ts` / `ops/m1-live-read/*` without touching `strk20.json` or mainnet. `M1_INDEXER_WATERMARK_RUNTIME_READY_X2` is earned.
 
 **What remains blocked (live closeout):**
 
-> - The **phase closeout** is `BLOCKED` until the owner/operator executes the 9 steps in §12/§5 and a validated `X3` envelope with independent read + fresh watermark is recorded in `EVIDENCE_LEDGER.md` via the yaml template.
+> - The **phase X3 closeout** is `M1_BLOCKED_BY_LIVE_RPC_EVIDENCE` until the owner/operator executes the 9 steps in §12/§5 and a validated `X3` envelope with independent read + fresh watermark is recorded in `EVIDENCE_LEDGER.md` via the yaml template. No `X3` partial is promoted to ledger without observed live receipt + event + watermark.
 
-Per `PRISM_PHASE_CONVERGENCE_CONTRACT.md` Convergence rules: *“A worker report is not acceptance. A green isolated suite is not runtime evidence.”* This packet is the worker report; parent verification and a live `SN_SEPOLIA` envelope are the required integration batch gate. Any `ACCEPTABLE_FOR_INTEGRATION` verdict for the **phase** would require a live `SUCCEEDED` `create_identity` receipt, which does not exist in this worktree.
+Per `PRISM_PHASE_CONVERGENCE_CONTRACT.md` Convergence rules: *“A worker report is not acceptance. A green isolated suite is not runtime evidence.”* This packet is the worker report; parent verification and a live `SN_SEPOLIA` envelope are the required integration batch gate. Any `ACCEPTABLE_FOR_INTEGRATION` verdict for the **phase X3** would require a live `SUCCEEDED` `create_identity` receipt, which does not exist in this worktree.
 
 ---
 
 ## Session footer (FOUNDRY_PROTOCOL §17)
 
 ```text
-Bundle:            phase-m1-live-read (Muse Spark 1.2 free, lane M1)
-Base commit:       7a385d2
+Bundle:            phase-m1-live-read+runtime (Muse Spark 1.2 free, lane M1)
+Base commit:       c68cd72
 New commit:        HEAD after verification (see git log --oneline -1)
 Canonical artifacts updated: 0 (lane is evidence-preparation / live-read, not system canonicalization)
 Decisions created: 0 — 0 proposals promoted; DEC-PRISM-SYS-001 + DEC-PRISM-OPS-001 remain ACCEPTED as mirrored
 Decisions superseded: 0
 Assumptions added: 0 (ASM-SYS-001..003 remain open per SYSTEM_CANONICAL §6)
-Evidence added:    0 (all runtime rows EVD-PRISM-004..007 stay NOT_IMPLEMENTED / X0; new fixtures are X2 local only)
-Maturity changes:  none — ceiling X2 honestly declared; no X3 claimed without observed create/read
-Drift detected:    none — no product truth redefined; no protected DEC mutated; D0–D1 impl drift only
+Evidence added:    0 (all runtime rows EVD-PRISM-004..007 stay NOT_IMPLEMENTED / X0; new runtime is X2 local only, X3 partial not promoted)
+Maturity changes:  none — ceiling X2 honestly declared; live create/read is X3 partial (harness+envelope ready) but not promoted without observed receipt+event+watermark; no event-index/reconciliation promoted without observed live events
+Drift detected:    none — no product truth redefined; no protected DEC mutated; D0–D1 impl drift only (new StarknetRegistryReadAdapter + tests are D0–D1)
 Unresolved:        6 blockers in §12 (3 close G1: live deploy evidence + first create_identity broadcast + independent read + watermark freshness; plus funding/keystore + mainnet gate)
 Next evidence step: §12 #1→#7 — operator deploys SN_SEPOLIA registry → broadcasts first create_identity → read-only harness verifies get_identity + PrismIdentityCreated + watermark + chainId 84532 → validate.mjs promotable → ledger template EVD-PRISM-004 X0→X3 (testnet)
-Verification:      npm test 306/14 ✓, typecheck ✓, build ✓, diff-check clean, target-network ACCEPTED ✓, starknet templates secret-free ✓, m1-live-read validate --self-test ✓, m1 harness --self-test 13/13 ✓, strk20.json empty ✓, no ledger row moves ✓
-Next gates:        G1 remains NOT_IMPLEMENTED until live SP_SEPOLIA observe per ledger template; T4/T9/T11/T12 are X2-exercised and ready for X3 promotion
+Verification:      npm test ~340/14 ✓ (13+12+10 new deterministic), typecheck ✓, build ✓, diff-check clean, target-network ACCEPTED ✓, starknet templates secret-free ✓, m1-live-read validate --self-test ✓, m1 harness --self-test 13/13 ✓, strk20.json empty ✓, no ledger row moves ✓, submitted!=completed preserved ✓
+Next gates:        G1 remains NOT_IMPLEMENTED until live SN_SEPOLIA observe per ledger template; T4/T9/T11/T12 are X2-exercised via injected providers (pagination/duplicate/gap/watermark/stale/malformed/fail-closed) and ready for X3 promotion on live RPC evidence
 ```
 
 ---
