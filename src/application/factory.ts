@@ -310,7 +310,8 @@ export function getStarknetProjectionConfig(env: StarknetProjectionConfigEnv = p
   if (registryVersion === "v2" && network === "SN_SEPOLIA" && registryAddress !== CANONICAL_TESTNET_V2.registryAddress) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_registry_address_mismatch");
   }
-  if (registryVersion === "v2" && classHash !== null && classHash !== CANONICAL_TESTNET_V2.classHash) {
+  const canonicalClassHash = normalizedOptionalClassHash(CANONICAL_TESTNET_V2.classHash)!;
+  if (registryVersion === "v2" && classHash !== null && classHash !== canonicalClassHash) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_class_hash_mismatch");
   }
 

@@ -65,6 +65,21 @@ describe("canonical SN_SEPOLIA Registry V2 runtime configuration", () => {
     });
   });
 
+  it("accepts the observed short-form V2 class hash after canonical normalization", () => {
+    withEnv({
+      STARKNET_CHAIN_ID: "SN_SEPOLIA",
+      NEXT_PUBLIC_STARKNET_NETWORK: "SN_SEPOLIA",
+      STARKNET_REGISTRY_ADDRESS: CANONICAL_TESTNET_V2.registryAddress,
+      STARKNET_REGISTRY_VERSION: "v2",
+      STARKNET_REGISTRY_CLASS_HASH: CANONICAL_TESTNET_V2.classHash,
+      PRISM_STARKNET_INDEXER_START_BLOCK: undefined,
+    }, () => {
+      expect(getStarknetProjectionConfig().classHash).toBe(
+        `0x0${CANONICAL_TESTNET_V2.classHash.slice(2)}`,
+      );
+    });
+  });
+
   it("rejects a V2 address, version, network, or start block that is not the deployed canonical scope", () => {
     const base = {
       STARKNET_CHAIN_ID: "SN_SEPOLIA",
