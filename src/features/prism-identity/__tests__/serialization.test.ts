@@ -35,6 +35,17 @@ describe("canonical challenge serialization (TEST-8-1-1)", () => {
     expect(first).toContain('"expires_at":1789000600');
   });
 
+  it("rejects v1 challenge material instead of silently treating it as v2", () => {
+    expect(() => serializeCanonicalChallenge({ ...BASE_FIELDS, schemaVersion: 1 })).toThrow(/schema_version/i);
+    expect(() =>
+      buildChallenge(
+        { schemaVersion: 1, chainId: CHALLENGE_CHAIN_ID, domain: CHALLENGE_DOMAIN, venue: "BASE", executionAccount: BASE_FIELDS.executionAccount, prismId: PRISM_ID },
+        { nonce: BASE_FIELDS.nonce, issuedAt: BASE_FIELDS.issuedAt, ttlSeconds: 600 },
+        viemChallengeCrypto,
+      ),
+    ).toThrow(/schema_version/i);
+  });
+
   it("changes the digest when any single bound field changes", () => {
     const baseline = buildChallenge(
       { schemaVersion: 2, chainId: CHALLENGE_CHAIN_ID, domain: CHALLENGE_DOMAIN, venue: "BASE", executionAccount: BASE_FIELDS.executionAccount, prismId: PRISM_ID },
@@ -111,6 +122,7 @@ describe("canonical challenge serialization (TEST-8-1-1)", () => {
     const message = renderSignableMessage(record);
     for (const binding of [
       CHALLENGE_DOMAIN,
+      `Schema version: ${record.schemaVersion}`,
       "BASE",
       `Chain ID: ${record.chainId}`,
       record.executionAccount,

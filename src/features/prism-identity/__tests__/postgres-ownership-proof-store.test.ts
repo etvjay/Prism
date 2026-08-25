@@ -17,6 +17,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { QueryResult } from "pg";
 import {
+  OWNERSHIP_STORE_MIGRATION_LOCK_SQL,
   OWNERSHIP_STORE_MIGRATION_SQL,
   PostgresOwnershipProofStore,
   PostgresOwnershipProofStoreError,
@@ -125,6 +126,7 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
       1_789_000_600,
       "0xdead000000000000000000000000000000000000000000000000000000000001",
       "ISSUED",
+      "UNUSED",
       "UNUSED",
       null,
       null,
@@ -293,6 +295,48 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
     expect(await store.consumeNonce("0x404" as Hex)).toBe("unknown");
   });
 
+  it("claimVerifiedBinding uses an exact, one-shot CAS over proof correspondence", async () => {
+    const fake = installFakePool({ queryResult: { rowCount: 1, rows: [] } });
+    const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
+    const store = new Store({});
+    const result = await store.claimVerifiedBinding({
+      challengeId: "0xC1" as Hex,
+      proofDigest: "0xD1" as Hex,
+      prismId: "prism:P7F21",
+      venue: "BASE",
+      executionAccount: "0xABC0000000000000000000000000000000000001" as Hex,
+      chainId: 84532,
+      expiresAt: 1_789_000_600,
+      now: 1_789_000_100,
+    });
+    expect(result).toBe("claimed");
+    expect(fake.queries[0].text).toContain("state = 'VERIFIED'");
+    expect(fake.queries[0].text).toContain("binding_use_state = 'UNUSED'");
+    expect(fake.queries[0].text).toContain("AND prism_id = $2");
+    expect(fake.queries[0].text).toContain("AND chain_id = $5");
+    expect(fake.queries[0].text).toContain("AND expires_at > $7");
+    expect(fake.queries[0].values).toEqual([
+      "0xc1",
+      "prism:P7F21",
+      "BASE",
+      "0xabc0000000000000000000000000000000000001",
+      84532,
+      1_789_000_600,
+      1_789_000_100,
+      "0xd1",
+    ]);
+  });
+
+  it("rejects non-v2 records and VERIFIED rows without complete evidence before writing", async () => {
+    const fake = installFakePool();
+    const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
+    const store = new Store({});
+    await expect(store.putIssued(makeRecord({ schemaVersion: 1 }))).rejects.toMatchObject({ code: "invalid_record" });
+    await expect(store.putIssued(makeRecord({ state: "VERIFIED", verifiedAt: undefined, verifiedSignatureClass: "EOA" }))).rejects.toMatchObject({ code: "invalid_record" });
+    await expect(store.putIssued(makeRecord({ state: "VERIFIED", verifiedAt: 7, verifiedSignatureClass: undefined }))).rejects.toMatchObject({ code: "invalid_record" });
+    expect(fake.queries).toHaveLength(0);
+  });
+
   it("transitionState writes only present patch fields and pins from-state", async () => {
     const fake = installFakePool({ queryResult: { rowCount: 1, rows: [] } });
     const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
@@ -311,14 +355,12 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
     expect(fake.queries[0].values).toEqual(["0xc1", "VERIFIED", "ERC6492", 7, "ISSUED"]);
   });
 
-  it("transitionState with empty patch changes state only (preservation)", async () => {
+  it("rejects a VERIFIED transition without complete evidence before touching the database", async () => {
     const fake = installFakePool({ queryResult: { rowCount: 0, rows: [] } });
     const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
     const store = new Store({});
-    expect(await store.transitionState("0xc1" as Hex, "ISSUED", "VERIFIED", {})).toBe(false);
-    expect(fake.queries[0].text.replace(/\s+/g, " ")).toBe(
-      "UPDATE ownership_challenges SET state = $2 WHERE challenge_id = $1 AND state = $3",
-    );
+    await expect(store.transitionState("0xc1" as Hex, "ISSUED", "VERIFIED", {})).rejects.toMatchObject({ code: "invalid_record" });
+    expect(fake.queries).toHaveLength(0);
   });
 
   it("transitionState can explicitly clear rejection with NULL", async () => {
@@ -353,7 +395,7 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
     const { PostgresOwnershipProofStore: Store } = await loadStoreModule();
     const store = new Store({});
     await expect(store.consumeNonce("0xc1" as Hex)).rejects.toMatchObject({ code: "store_write_failed" });
-    await expect(store.transitionState("0xc1" as Hex, "ISSUED", "VERIFIED", {})).rejects.toMatchObject({
+    await expect(store.transitionState("0xc1" as Hex, "ISSUED", "REJECTED", {})).rejects.toMatchObject({
       code: "store_write_failed",
     });
   });
@@ -373,8 +415,11 @@ describe("PostgresOwnershipProofStore (unit/SQL contract)", () => {
   });
 
   it("exposes versioned migration SQL with typed state/nonce checks", () => {
+    expect(OWNERSHIP_STORE_MIGRATION_LOCK_SQL).toMatch(/pg_advisory_xact_lock/i);
     expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("challenge_id TEXT PRIMARY KEY");
+    expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("schema_version INTEGER NOT NULL");
     expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("nonce_state TEXT NOT NULL CHECK (nonce_state IN ('UNUSED','CONSUMED'))");
+    expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("binding_use_state TEXT NOT NULL DEFAULT 'UNUSED' CHECK (binding_use_state IN ('UNUSED','CONSUMED'))");
     expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("state TEXT NOT NULL CHECK (state IN ('ISSUED','VERIFIED','REJECTED','EXPIRED'))");
     expect(OWNERSHIP_STORE_MIGRATION_SQL).toContain("expires_at BIGINT NOT NULL");
   });

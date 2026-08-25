@@ -27,23 +27,32 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type {
+  BindingClaimResult,
   ChallengeState,
   NonceState,
   OwnershipProofStore,
   SignatureClass,
   StoredOwnershipChallenge,
+  VerifiedBindingClaim,
 } from "../domain/ports";
 import type { Hex } from "../domain/hex";
+import { normalizeProofDigestIdentity } from "../domain/proof-digest";
+import {
+  assertStoredOwnershipChallenge,
+  assertVerifiedEvidencePatch,
+  hasVerifiedEvidence,
+} from "../domain/ownership-challenge-validation";
 
 /** Current schema version of the durable challenge table. */
-export const OWNERSHIP_STORE_SCHEMA_VERSION = 2;
+export const OWNERSHIP_STORE_SCHEMA_VERSION = 3;
 
 export type OwnershipStoreErrorCode =
   | "store_open_failed"
   | "store_migrate_failed"
   | "duplicate_challenge_id"
   | "store_write_failed"
-  | "store_read_failed";
+  | "store_read_failed"
+  | "invalid_record";
 
 export class SqliteOwnershipProofStoreError extends Error {
   readonly code: OwnershipStoreErrorCode;
@@ -68,6 +77,7 @@ const COLUMNS = [
   "digest",
   "state",
   "nonceState",
+  "bindingUseState",
   "verifiedSignatureClass",
   "verifiedAt",
   "rejectionJson",
@@ -87,6 +97,7 @@ interface Row {
   digest: string;
   state: string;
   nonceState: string;
+  bindingUseState?: string | null;
   verifiedSignatureClass: string | null;
   verifiedAt: number | null;
   rejectionJson: string | null;
@@ -95,26 +106,31 @@ interface Row {
 function rowToRecord(row: Row): StoredOwnershipChallenge {
   const rejection =
     row.rejectionJson === null ? undefined : (JSON.parse(row.rejectionJson) as { code: string; detail?: string });
-  return {
+  const record: StoredOwnershipChallenge = {
     schemaVersion: row.schemaVersion,
     chainId: row.chainId,
-    challengeId: row.challengeId as Hex,
+    challengeId: normalizeProofDigestIdentity(row.challengeId),
     nonce: row.nonce as Hex,
     domain: row.domain,
     venue: row.venue as StoredOwnershipChallenge["venue"],
-    executionAccount: row.executionAccount as StoredOwnershipChallenge["executionAccount"],
+    executionAccount: row.executionAccount.toLowerCase() as StoredOwnershipChallenge["executionAccount"],
     prismId: row.prismId as StoredOwnershipChallenge["prismId"],
     issuedAt: row.issuedAt,
     expiresAt: row.expiresAt,
-    digest: row.digest as Hex,
+    digest: normalizeProofDigestIdentity(row.digest),
     state: row.state as ChallengeState,
     nonceState: row.nonceState as NonceState,
+    ...(row.bindingUseState !== undefined && row.bindingUseState !== null
+      ? { bindingUseState: row.bindingUseState as StoredOwnershipChallenge["bindingUseState"] }
+      : {}),
     ...(row.verifiedSignatureClass !== null
       ? { verifiedSignatureClass: row.verifiedSignatureClass as SignatureClass }
       : {}),
     ...(row.verifiedAt !== null ? { verifiedAt: row.verifiedAt } : {}),
     ...(rejection !== undefined ? { rejection } : {}),
   };
+  assertStoredOwnershipChallenge(record);
+  return record;
 }
 
 export interface SqliteOwnershipProofStoreOptions {
@@ -155,7 +171,7 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
         value TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS ownership_challenges (
-        schemaVersion INTEGER NOT NULL,
+        schemaVersion INTEGER NOT NULL CHECK (schemaVersion = 2),
         chainId INTEGER NOT NULL CHECK (chainId > 0),
         challengeId TEXT PRIMARY KEY,
         nonce TEXT NOT NULL,
@@ -168,6 +184,7 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
         digest TEXT NOT NULL,
         state TEXT NOT NULL CHECK (state IN ('ISSUED','VERIFIED','REJECTED','EXPIRED')),
         nonceState TEXT NOT NULL CHECK (nonceState IN ('UNUSED','CONSUMED')),
+        bindingUseState TEXT NOT NULL DEFAULT 'UNUSED' CHECK (bindingUseState IN ('UNUSED','CONSUMED')),
         verifiedSignatureClass TEXT,
         verifiedAt INTEGER,
         rejectionJson TEXT
@@ -176,6 +193,28 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
     const columns = db.prepare("PRAGMA table_info(ownership_challenges)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "chainId")) {
       db.exec("ALTER TABLE ownership_challenges ADD COLUMN chainId INTEGER");
+    }
+    if (!columns.some((column) => column.name === "bindingUseState")) {
+      db.exec("ALTER TABLE ownership_challenges ADD COLUMN bindingUseState TEXT NOT NULL DEFAULT 'UNUSED'");
+    }
+    db.exec("UPDATE ownership_challenges SET bindingUseState = 'UNUSED' WHERE bindingUseState IS NULL");
+    const invalidBindingUseState = db
+      .prepare("SELECT COUNT(*) AS count FROM ownership_challenges WHERE bindingUseState NOT IN ('UNUSED','CONSUMED')")
+      .get() as { count: number };
+    if (invalidBindingUseState.count !== 0) {
+      throw new SqliteOwnershipProofStoreError(
+        "store_migrate_failed",
+        "legacy challenge rows contain an invalid binding-use state",
+      );
+    }
+    const incompatibleSchema = db
+      .prepare("SELECT COUNT(*) AS count FROM ownership_challenges WHERE schemaVersion IS NULL OR schemaVersion <> 2")
+      .get() as { count: number };
+    if (incompatibleSchema.count !== 0) {
+      throw new SqliteOwnershipProofStoreError(
+        "store_migrate_failed",
+        "legacy challenge rows are not schema-v2 and require explicit invalidation",
+      );
     }
     const legacy = db
       .prepare("SELECT COUNT(*) AS count FROM ownership_challenges WHERE chainId IS NULL")
@@ -207,6 +246,23 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
   }
 
   async putIssued(record: StoredOwnershipChallenge): Promise<void> {
+    let normalized: StoredOwnershipChallenge;
+    try {
+      assertStoredOwnershipChallenge(record);
+      normalized = {
+        ...record,
+        challengeId: normalizeProofDigestIdentity(record.challengeId),
+        digest: normalizeProofDigestIdentity(record.digest),
+        executionAccount: record.executionAccount.toLowerCase() as StoredOwnershipChallenge["executionAccount"],
+        bindingUseState: record.bindingUseState ?? "UNUSED",
+      };
+    } catch (cause) {
+      throw new SqliteOwnershipProofStoreError(
+        "invalid_record",
+        cause instanceof Error ? cause.message : String(cause),
+        cause,
+      );
+    }
     try {
       this.db
         .prepare(
@@ -214,22 +270,23 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
            VALUES (${COLUMNS.map((c) => `@${c}`).join(", ")})`,
         )
         .run({
-          schemaVersion: record.schemaVersion,
-          chainId: record.chainId,
-          challengeId: record.challengeId,
-          nonce: record.nonce,
-          domain: record.domain,
-          venue: record.venue,
-          executionAccount: record.executionAccount,
-          prismId: record.prismId,
-          issuedAt: record.issuedAt,
-          expiresAt: record.expiresAt,
-          digest: record.digest,
-          state: record.state,
-          nonceState: record.nonceState,
-          verifiedSignatureClass: record.verifiedSignatureClass ?? null,
-          verifiedAt: record.verifiedAt ?? null,
-          rejectionJson: record.rejection === undefined ? null : JSON.stringify(record.rejection),
+          schemaVersion: normalized.schemaVersion,
+          chainId: normalized.chainId,
+          challengeId: normalized.challengeId,
+          nonce: normalized.nonce,
+          domain: normalized.domain,
+          venue: normalized.venue,
+          executionAccount: normalized.executionAccount,
+          prismId: normalized.prismId,
+          issuedAt: normalized.issuedAt,
+          expiresAt: normalized.expiresAt,
+          digest: normalized.digest,
+          state: normalized.state,
+          nonceState: normalized.nonceState,
+          bindingUseState: normalized.bindingUseState ?? "UNUSED",
+          verifiedSignatureClass: normalized.verifiedSignatureClass ?? null,
+          verifiedAt: normalized.verifiedAt ?? null,
+          rejectionJson: normalized.rejection === undefined ? null : JSON.stringify(normalized.rejection),
         });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -248,7 +305,7 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
     try {
       const row = this.db
         .prepare(`SELECT ${COLUMNS.join(", ")} FROM ownership_challenges WHERE challengeId = ?`)
-        .get(challengeId) as Row | undefined;
+        .get(normalizeProofDigestIdentity(challengeId)) as Row | undefined;
       return row === undefined ? undefined : rowToRecord(row);
     } catch (cause) {
       throw new SqliteOwnershipProofStoreError("store_read_failed", "getById failed", cause);
@@ -261,13 +318,14 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
   async consumeNonce(
     challengeId: Hex,
   ): Promise<"consumed" | "already_consumed" | "unknown"> {
+    const normalizedChallengeId = normalizeProofDigestIdentity(challengeId);
     let changes: number | bigint;
     try {
       ({ changes } = this.db
         .prepare(
           "UPDATE ownership_challenges SET nonceState = 'CONSUMED' WHERE challengeId = ? AND nonceState = 'UNUSED'",
         )
-        .run(challengeId));
+        .run(normalizedChallengeId));
     } catch (cause) {
       throw new SqliteOwnershipProofStoreError("store_write_failed", "consumeNonce failed", cause);
     }
@@ -275,12 +333,56 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
     try {
       const row = this.db
         .prepare("SELECT nonceState FROM ownership_challenges WHERE challengeId = ?")
-        .get(challengeId) as { nonceState: string } | undefined;
+        .get(normalizedChallengeId) as { nonceState: string } | undefined;
       if (row === undefined) return "unknown";
       return row.nonceState === "CONSUMED" ? "already_consumed" : "already_consumed";
     } catch (cause) {
       throw new SqliteOwnershipProofStoreError("store_read_failed", "consumeNonce lookup failed", cause);
     }
+  }
+
+  async claimVerifiedBinding(input: VerifiedBindingClaim): Promise<BindingClaimResult> {
+    const normalizedInput = {
+      ...input,
+      challengeId: normalizeProofDigestIdentity(input.challengeId),
+      proofDigest: normalizeProofDigestIdentity(input.proofDigest),
+      executionAccount: input.executionAccount.toLowerCase() as VerifiedBindingClaim["executionAccount"],
+    };
+    const current = await this.getById(normalizedInput.challengeId);
+    const initial = classifyBindingClaim(current, normalizedInput);
+    if (initial !== "claimable") return initial;
+
+    let changes: number | bigint;
+    try {
+      ({ changes } = this.db
+        .prepare(
+          `UPDATE ownership_challenges
+           SET bindingUseState = 'CONSUMED'
+           WHERE challengeId = @challengeId
+             AND state = 'VERIFIED'
+             AND nonceState = 'CONSUMED'
+             AND bindingUseState = 'UNUSED'
+             AND verifiedSignatureClass IN ('EOA','EIP1271','ERC6492')
+             AND verifiedAt IS NOT NULL
+             AND prismId = @prismId
+             AND venue = @venue
+             AND executionAccount = @executionAccount
+             AND chainId = @chainId
+             AND expiresAt = @expiresAt
+             AND expiresAt > @now
+             AND digest = @proofDigest`,
+        )
+        .run(normalizedInput as unknown as Record<string, string | number>));
+    } catch (cause) {
+      throw new SqliteOwnershipProofStoreError("store_write_failed", "claimVerifiedBinding failed", cause);
+    }
+    if (Number(changes) === 1) return "claimed";
+
+    // A competing caller may have won the CAS. Re-read to classify the
+    // committed terminal state rather than guessing from a zero row count.
+    const latest = await this.getById(normalizedInput.challengeId);
+    const after = classifyBindingClaim(latest, normalizedInput);
+    return after === "claimable" ? "already_claimed" : after;
   }
 
   // Guarded transition: current-state compare-and-set over the same atomic
@@ -292,8 +394,19 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
     to: ChallengeState,
     patch: Partial<Pick<StoredOwnershipChallenge, "verifiedSignatureClass" | "verifiedAt" | "rejection">>,
   ): Promise<boolean> {
+    if (to === "VERIFIED") {
+      try {
+        assertVerifiedEvidencePatch(patch);
+      } catch (cause) {
+        throw new SqliteOwnershipProofStoreError(
+          "invalid_record",
+          cause instanceof Error ? cause.message : String(cause),
+          cause,
+        );
+      }
+    }
     const sets: string[] = ["state = @to"];
-    const params: Record<string, string | number> = { challengeId, from, to };
+    const params: Record<string, string | number> = { challengeId: normalizeProofDigestIdentity(challengeId), from, to };
     if ("verifiedSignatureClass" in patch) {
       sets.push("verifiedSignatureClass = @verifiedSignatureClass");
       params.verifiedSignatureClass = patch.verifiedSignatureClass ?? null as unknown as string;
@@ -328,4 +441,36 @@ export class SqliteOwnershipProofStore implements OwnershipProofStore {
       throw new SqliteOwnershipProofStoreError("store_open_failed", "close failed", cause);
     }
   }
+}
+
+function classifyBindingClaim(
+  record: StoredOwnershipChallenge | undefined,
+  input: VerifiedBindingClaim,
+): BindingClaimResult | "claimable" {
+  if (!record) return "unknown";
+  const challengeId = normalizeProofDigestIdentity(input.challengeId);
+  const proofDigest = normalizeProofDigestIdentity(input.proofDigest);
+  const executionAccount = input.executionAccount.toLowerCase();
+  if (
+    record.challengeId !== challengeId ||
+    record.digest !== proofDigest ||
+    record.prismId !== input.prismId ||
+    record.venue !== input.venue ||
+    record.executionAccount !== executionAccount ||
+    record.chainId !== input.chainId ||
+    record.expiresAt !== input.expiresAt
+  ) {
+    return "mismatch";
+  }
+  if (record.bindingUseState === "CONSUMED") return "already_claimed";
+  if (record.bindingUseState !== undefined && record.bindingUseState !== "UNUSED") return "mismatch";
+  if (input.now >= record.expiresAt || record.state === "EXPIRED") return "expired";
+  if (
+    record.state !== "VERIFIED" ||
+    record.nonceState !== "CONSUMED" ||
+    !hasVerifiedEvidence(record)
+  ) {
+    return "not_verified";
+  }
+  return "claimable";
 }

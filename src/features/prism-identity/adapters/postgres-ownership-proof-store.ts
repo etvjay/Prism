@@ -40,17 +40,30 @@
 
 import { Pool, type PoolClient } from "pg";
 import type {
+  BindingClaimResult,
   ChallengeState,
   NonceState,
   OwnershipProofStore,
   SignatureClass,
   StoredOwnershipChallenge,
+  VerifiedBindingClaim,
 } from "../domain/ports";
+import { CHALLENGE_SCHEMA_VERSION } from "../domain/ports";
 import type { Hex } from "../domain/hex";
 import type { PoolConfig } from "pg";
+import { normalizeProofDigestIdentity } from "../domain/proof-digest";
+import {
+  assertStoredOwnershipChallenge,
+  assertVerifiedEvidencePatch,
+  hasVerifiedEvidence,
+} from "../domain/ownership-challenge-validation";
 
 /** Current schema version of the durable challenge table. */
-export const OWNERSHIP_STORE_SCHEMA_VERSION = 2;
+export const OWNERSHIP_STORE_SCHEMA_VERSION = 3;
+
+/** Serialize all instances migrating the same PostgreSQL schema. */
+export const OWNERSHIP_STORE_MIGRATION_LOCK_SQL =
+  "SELECT pg_advisory_xact_lock(hashtext(current_schema() || ':prism:ownership-proof-store:migration'))";
 
 /** Versioned migration applied at construction (idempotent). */
 export const OWNERSHIP_STORE_MIGRATION_SQL = `
@@ -59,7 +72,7 @@ CREATE TABLE IF NOT EXISTS prism_store_meta (
   value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ownership_challenges (
-  schema_version INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL CONSTRAINT ownership_challenges_schema_version_v2 CHECK (schema_version = 2),
   chain_id INTEGER NOT NULL CHECK (chain_id > 0),
   challenge_id TEXT PRIMARY KEY,
   nonce TEXT NOT NULL,
@@ -72,6 +85,7 @@ CREATE TABLE IF NOT EXISTS ownership_challenges (
   digest TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('ISSUED','VERIFIED','REJECTED','EXPIRED')),
   nonce_state TEXT NOT NULL CHECK (nonce_state IN ('UNUSED','CONSUMED')),
+  binding_use_state TEXT NOT NULL DEFAULT 'UNUSED' CHECK (binding_use_state IN ('UNUSED','CONSUMED')),
   verified_signature_class TEXT,
   verified_at BIGINT,
   rejection_json TEXT
@@ -109,6 +123,7 @@ const COLUMNS = [
   "digest",
   "state",
   "nonce_state",
+  "binding_use_state",
   "verified_signature_class",
   "verified_at",
   "rejection_json",
@@ -128,6 +143,7 @@ interface Row {
   digest: string;
   state: string;
   nonce_state: string;
+  binding_use_state?: string | null;
   verified_signature_class: string | null;
   verified_at: string | number | null;
   rejection_json: string | null;
@@ -151,26 +167,39 @@ function rowToRecord(row: Row): StoredOwnershipChallenge {
       );
     }
   }
-  return {
+  const record: StoredOwnershipChallenge = {
     schemaVersion: row.schema_version,
     chainId: row.chain_id,
-    challengeId: row.challenge_id as Hex,
+    challengeId: normalizeProofDigestIdentity(row.challenge_id),
     nonce: row.nonce as Hex,
     domain: row.domain,
     venue: row.venue as StoredOwnershipChallenge["venue"],
-    executionAccount: row.execution_account as StoredOwnershipChallenge["executionAccount"],
+    executionAccount: row.execution_account.toLowerCase() as StoredOwnershipChallenge["executionAccount"],
     prismId: row.prism_id as StoredOwnershipChallenge["prismId"],
     issuedAt: toInt(row.issued_at),
     expiresAt: toInt(row.expires_at),
-    digest: row.digest as Hex,
+    digest: normalizeProofDigestIdentity(row.digest),
     state: row.state as ChallengeState,
     nonceState: row.nonce_state as NonceState,
+    ...(row.binding_use_state !== undefined && row.binding_use_state !== null
+      ? { bindingUseState: row.binding_use_state as StoredOwnershipChallenge["bindingUseState"] }
+      : {}),
     ...(row.verified_signature_class !== null
       ? { verifiedSignatureClass: row.verified_signature_class as SignatureClass }
       : {}),
     ...(row.verified_at !== null ? { verifiedAt: toInt(row.verified_at) } : {}),
     ...(rejection !== undefined ? { rejection } : {}),
   };
+  try {
+    assertStoredOwnershipChallenge(record);
+  } catch (cause) {
+    throw new PostgresOwnershipProofStoreError(
+      "store_read_failed",
+      cause instanceof Error ? cause.message : String(cause),
+      cause,
+    );
+  }
+  return record;
 }
 
 export interface PostgresOwnershipProofStoreOptions extends Pick<PoolConfig, keyof PoolConfig> {
@@ -215,6 +244,11 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
     try {
       await client.query("BEGIN");
       try {
+        // Every instance takes the same transaction-scoped lock before any
+        // catalog inspection or DDL. Without this, two cold starts can both
+        // observe a missing column/meta row and race into duplicate_object or
+        // unique_violation errors.
+        await client.query(OWNERSHIP_STORE_MIGRATION_LOCK_SQL);
         await client.query(OWNERSHIP_STORE_MIGRATION_SQL);
         const chainColumn = await client.query<{ exists: boolean }>(
           `SELECT EXISTS (
@@ -227,6 +261,39 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
         if (!chainColumn.rows[0]?.exists) {
           await client.query("ALTER TABLE ownership_challenges ADD COLUMN chain_id INTEGER");
         }
+        const bindingUseColumn = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'ownership_challenges'
+               AND column_name = 'binding_use_state'
+           ) AS exists`,
+        );
+        if (!bindingUseColumn.rows[0]?.exists) {
+          await client.query("ALTER TABLE ownership_challenges ADD COLUMN binding_use_state TEXT NOT NULL DEFAULT 'UNUSED'");
+        }
+        await client.query("UPDATE ownership_challenges SET binding_use_state = 'UNUSED' WHERE binding_use_state IS NULL");
+        const invalidBindingUseState = await client.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM ownership_challenges WHERE binding_use_state NOT IN ('UNUSED','CONSUMED')",
+        );
+        if (invalidBindingUseState.rows[0]?.count !== "0") {
+          throw new PostgresOwnershipProofStoreError(
+            "store_migrate_failed",
+            "legacy challenge rows contain an invalid binding-use state",
+          );
+        }
+        await client.query("ALTER TABLE ownership_challenges ALTER COLUMN binding_use_state SET NOT NULL");
+        const incompatibleSchema = await client.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM ownership_challenges WHERE schema_version IS NULL OR schema_version <> $1",
+          [CHALLENGE_SCHEMA_VERSION],
+        );
+        if (incompatibleSchema.rows[0]?.count !== "0") {
+          throw new PostgresOwnershipProofStoreError(
+            "store_migrate_failed",
+            "legacy challenge rows are not schema-v2 and require explicit invalidation",
+          );
+        }
+        await client.query("ALTER TABLE ownership_challenges ALTER COLUMN schema_version SET NOT NULL");
         const legacy = await client.query<{ count: string }>(
           "SELECT COUNT(*)::text AS count FROM ownership_challenges WHERE chain_id IS NULL",
         );
@@ -248,6 +315,17 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
           await client.query("ALTER TABLE ownership_challenges ADD CONSTRAINT ownership_challenges_chain_id_positive CHECK (chain_id > 0) NOT VALID");
         }
         await client.query("ALTER TABLE ownership_challenges VALIDATE CONSTRAINT ownership_challenges_chain_id_positive");
+        const schemaConstraint = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'ownership_challenges'::regclass
+               AND conname = 'ownership_challenges_schema_version_v2'
+           ) AS exists`,
+        );
+        if (!schemaConstraint.rows[0]?.exists) {
+          await client.query("ALTER TABLE ownership_challenges ADD CONSTRAINT ownership_challenges_schema_version_v2 CHECK (schema_version = 2) NOT VALID");
+        }
+        await client.query("ALTER TABLE ownership_challenges VALIDATE CONSTRAINT ownership_challenges_schema_version_v2");
         const meta = await client.query<{ value: string }>(
           "SELECT value FROM prism_store_meta WHERE key = 'schema_version' FOR UPDATE",
         );
@@ -294,35 +372,43 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
 
   async putIssued(record: StoredOwnershipChallenge): Promise<void> {
     this.assertOpen();
-    validateRecord(record);
+    const normalized: StoredOwnershipChallenge = {
+      ...record,
+      challengeId: normalizeProofDigestIdentity(record.challengeId),
+      digest: normalizeProofDigestIdentity(record.digest),
+      executionAccount: record.executionAccount.toLowerCase() as StoredOwnershipChallenge["executionAccount"],
+      bindingUseState: record.bindingUseState ?? "UNUSED",
+    };
+    validateRecord(normalized);
     try {
       await this.pool.query(
         `INSERT INTO ownership_challenges (${COLUMNS.join(", ")})
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         VALUES (${COLUMNS.map((_, index) => `$${index + 1}`).join(",")})`,
         [
-          record.schemaVersion,
-          record.chainId,
-          record.challengeId,
-          record.nonce,
-          record.domain,
-          record.venue,
-          record.executionAccount,
-          record.prismId,
-          record.issuedAt,
-          record.expiresAt,
-          record.digest,
-          record.state,
-          record.nonceState,
-          record.verifiedSignatureClass ?? null,
-          record.verifiedAt ?? null,
-          record.rejection === undefined ? null : JSON.stringify(record.rejection),
+          normalized.schemaVersion,
+          normalized.chainId,
+          normalized.challengeId,
+          normalized.nonce,
+          normalized.domain,
+          normalized.venue,
+          normalized.executionAccount,
+          normalized.prismId,
+          normalized.issuedAt,
+          normalized.expiresAt,
+          normalized.digest,
+          normalized.state,
+          normalized.nonceState,
+          normalized.bindingUseState ?? "UNUSED",
+          normalized.verifiedSignatureClass ?? null,
+          normalized.verifiedAt ?? null,
+          normalized.rejection === undefined ? null : JSON.stringify(normalized.rejection),
         ],
       );
     } catch (cause) {
       if (isUniqueViolation(cause, "ownership_challenges_pkey")) {
         throw new PostgresOwnershipProofStoreError(
           "duplicate_challenge_id",
-          `challenge ${record.challengeId} already exists`,
+          `challenge ${normalized.challengeId} already exists`,
           cause,
         );
       }
@@ -335,11 +421,12 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
 
   async getById(challengeId: Hex): Promise<StoredOwnershipChallenge | undefined> {
     this.assertOpen();
+    const normalizedChallengeId = normalizeProofDigestIdentity(challengeId);
     let result;
     try {
       result = await this.pool.query<Row>(
         `SELECT ${COLUMNS.join(", ")} FROM ownership_challenges WHERE challenge_id = $1`,
-        [challengeId],
+        [normalizedChallengeId],
       );
     } catch (cause) {
       throw new PostgresOwnershipProofStoreError("store_read_failed", "getById failed", cause);
@@ -356,11 +443,12 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
     challengeId: Hex,
   ): Promise<"consumed" | "already_consumed" | "unknown"> {
     this.assertOpen();
+    const normalizedChallengeId = normalizeProofDigestIdentity(challengeId);
     let changes: number | null;
     try {
       const result = await this.pool.query(
         "UPDATE ownership_challenges SET nonce_state = 'CONSUMED' WHERE challenge_id = $1 AND nonce_state = 'UNUSED'",
-        [challengeId],
+        [normalizedChallengeId],
       );
       changes = result.rowCount;
     } catch (cause) {
@@ -370,13 +458,61 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
     try {
       const row = await this.pool.query<{ nonce_state: string }>(
         "SELECT nonce_state FROM ownership_challenges WHERE challenge_id = $1",
-        [challengeId],
+        [normalizedChallengeId],
       );
       if (row.rowCount === 0) return "unknown";
       return "already_consumed";
     } catch (cause) {
       throw new PostgresOwnershipProofStoreError("store_read_failed", "consumeNonce lookup failed", cause);
     }
+  }
+
+  async claimVerifiedBinding(input: VerifiedBindingClaim): Promise<BindingClaimResult> {
+    this.assertOpen();
+    const normalizedInput = {
+      ...input,
+      challengeId: normalizeProofDigestIdentity(input.challengeId),
+      proofDigest: normalizeProofDigestIdentity(input.proofDigest),
+      executionAccount: input.executionAccount.toLowerCase() as VerifiedBindingClaim["executionAccount"],
+    };
+    let changes: number | null;
+    try {
+      const result = await this.pool.query(
+        `UPDATE ownership_challenges
+         SET binding_use_state = 'CONSUMED'
+         WHERE challenge_id = $1
+           AND state = 'VERIFIED'
+           AND nonce_state = 'CONSUMED'
+           AND binding_use_state = 'UNUSED'
+           AND verified_signature_class IN ('EOA','EIP1271','ERC6492')
+           AND verified_at IS NOT NULL
+           AND prism_id = $2
+           AND venue = $3
+           AND execution_account = $4
+           AND chain_id = $5
+           AND expires_at = $6
+           AND expires_at > $7
+           AND digest = $8`,
+        [
+          normalizedInput.challengeId,
+          normalizedInput.prismId,
+          normalizedInput.venue,
+          normalizedInput.executionAccount,
+          normalizedInput.chainId,
+          normalizedInput.expiresAt,
+          normalizedInput.now,
+          normalizedInput.proofDigest,
+        ],
+      );
+      changes = result.rowCount;
+    } catch (cause) {
+      throw new PostgresOwnershipProofStoreError("store_write_failed", "claimVerifiedBinding failed", cause);
+    }
+    if (changes === 1) return "claimed";
+
+    const latest = await this.getById(normalizedInput.challengeId);
+    const after = classifyBindingClaim(latest, normalizedInput);
+    return after === "claimable" ? "already_claimed" : after;
   }
 
   // Guarded transition: current-state compare-and-set over the same atomic
@@ -392,8 +528,19 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
     if (!VALID_STATES.has(from) || !VALID_STATES.has(to)) {
       throw new PostgresOwnershipProofStoreError("invalid_record", `invalid state in transition ${from} -> ${to}`);
     }
+    if (to === "VERIFIED") {
+      try {
+        assertVerifiedEvidencePatch(patch);
+      } catch (cause) {
+        throw new PostgresOwnershipProofStoreError(
+          "invalid_record",
+          cause instanceof Error ? cause.message : String(cause),
+          cause,
+        );
+      }
+    }
     const sets = ["state = $2"];
-    const params: Array<string | number | null> = [challengeId, to];
+    const params: Array<string | number | null> = [normalizeProofDigestIdentity(challengeId), to];
     const push = (column: string, value: string | number | null) => {
       params.push(value);
       sets.push(`${column} = $${params.length}`);
@@ -430,16 +577,57 @@ export class PostgresOwnershipProofStore implements OwnershipProofStore {
   }
 }
 
+function classifyBindingClaim(
+  record: StoredOwnershipChallenge | undefined,
+  input: VerifiedBindingClaim,
+): BindingClaimResult | "claimable" {
+  if (!record) return "unknown";
+  const challengeId = normalizeProofDigestIdentity(input.challengeId);
+  const proofDigest = normalizeProofDigestIdentity(input.proofDigest);
+  if (
+    record.challengeId !== challengeId ||
+    record.digest !== proofDigest ||
+    record.prismId !== input.prismId ||
+    record.venue !== input.venue ||
+    record.executionAccount.toLowerCase() !== input.executionAccount.toLowerCase() ||
+    record.chainId !== input.chainId ||
+    record.expiresAt !== input.expiresAt
+  ) {
+    return "mismatch";
+  }
+  if (record.bindingUseState === "CONSUMED") return "already_claimed";
+  if (record.bindingUseState !== undefined && record.bindingUseState !== "UNUSED") return "mismatch";
+  if (input.now >= record.expiresAt || record.state === "EXPIRED") return "expired";
+  if (
+    record.state !== "VERIFIED" ||
+    record.nonceState !== "CONSUMED" ||
+    !hasVerifiedEvidence(record)
+  ) {
+    return "not_verified";
+  }
+  return "claimable";
+}
+
 function validateRecord(record: StoredOwnershipChallenge): void {
+  try {
+    assertStoredOwnershipChallenge(record);
+  } catch (cause) {
+    throw new PostgresOwnershipProofStoreError(
+      "invalid_record",
+      cause instanceof Error ? cause.message : String(cause),
+      cause,
+    );
+  }
   if (!VALID_STATES.has(record.state)) {
     throw new PostgresOwnershipProofStoreError("invalid_record", `invalid state ${String(record.state)}`);
   }
   if (record.nonceState !== "UNUSED" && record.nonceState !== "CONSUMED") {
     throw new PostgresOwnershipProofStoreError("invalid_record", `invalid nonceState ${String(record.nonceState)}`);
   }
-  if (!Number.isSafeInteger(record.chainId) || record.chainId <= 0) {
-    throw new PostgresOwnershipProofStoreError("invalid_record", "invalid chainId");
+  if (record.bindingUseState !== undefined && record.bindingUseState !== "UNUSED" && record.bindingUseState !== "CONSUMED") {
+    throw new PostgresOwnershipProofStoreError("invalid_record", `invalid bindingUseState ${String(record.bindingUseState)}`);
   }
+
   if (!Number.isFinite(record.schemaVersion) || !Number.isFinite(record.issuedAt) || !Number.isFinite(record.expiresAt)) {
     throw new PostgresOwnershipProofStoreError("invalid_record", "non-finite numeric field");
   }

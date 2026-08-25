@@ -27,13 +27,16 @@ import type {
   SubmitProofPayload,
 } from "./schemas";
 import { ok, err } from "./schemas";
-import { isConcreteStarknetSubmitAdapter, type IdGenerator, type RegistryReadPort, type StarknetSubmitPort } from "./ports";
+import { isConcreteStarknetSubmitAdapter, type ChallengeProofApplicationPort, type IdGenerator, type RegistryReadPort, type StarknetSubmitPort } from "./ports";
 import type { OperationStore, PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { Clock } from "../features/prism-identity/domain/ports";
 import { PrismChallengeService } from "../features/prism-identity/application/challenge-service";
-import { assertValidPrismId, assertSupportedVenue, assertValidExecutionAccount } from "../features/prism-identity/domain/identifiers";
+import { CHALLENGE_SCHEMA_VERSION } from "../features/prism-identity/domain/ports";
+import { hasVerifiedEvidence } from "../features/prism-identity/domain/ownership-challenge-validation";
+import { assertValidPrismId, assertSupportedVenue, assertValidExecutionAccount, isValidChainId, type EvmAddress, type Venue } from "../features/prism-identity/domain/identifiers";
 import { toFieldBoundedDigest } from "../features/prism-identity/domain/felt-digest";
+import { normalizeProofDigestIdentity } from "../features/prism-identity/domain/proof-digest";
 import { normalizeStarknetContractAddress, sameStarknetContractAddress, StarknetContractAddressError } from "../features/prism-identity/domain/starknet-boundary";
 import { OperationError } from "../features/prism-operations/domain/errors";
 import { PrismError } from "../features/prism-identity/domain/errors";
@@ -74,25 +77,32 @@ function normalizeStarknetAddress(value: string): string {
 
 type RetrySubmission =
   | { kind: "create_identity"; controllerAddress: string }
-  | { kind: "bind_execution_identity"; prismId: string; venue: string; executionAccount: string; proofDigest: Hex; controllerAddress: string }
+  | { kind: "bind_execution_identity"; prismId: string; venue: Venue; executionAccount: EvmAddress; proofDigest: Hex; challengeId: Hex; chainId: number; expiresAt: number; controllerAddress: string }
   | { kind: "revoke_binding"; prismId: string; venue: string; executionAccount: string; controllerAddress: string };
 
 function parseRetrySubmission(operationKind: string, requestFingerprint: string): RetrySubmission {
   try {
     const value = JSON.parse(requestFingerprint) as Record<string, unknown>;
-    const kind = typeof value.kind === "string" ? value.kind : operationKind;
+    if (typeof value.kind === "string" && value.kind !== operationKind) {
+      throw new Error("retry_operation_kind_mismatch");
+    }
+    const kind = operationKind;
     if (kind === "create_identity" && typeof value.controllerAddress === "string") {
       return { kind, controllerAddress: normalizeStarknetAddress(value.controllerAddress) };
     }
-    if (kind === "bind_execution_identity" && typeof value.prismId === "string" && typeof value.venue === "string" && typeof value.executionAccount === "string" && typeof value.proofDigest === "string" && typeof value.controllerAddress === "string") {
-      const proofDigest = value.proofDigest;
-      if (!/^0x[0-9a-fA-F]{64}$/.test(proofDigest)) throw new Error("malformed_proof_digest");
+    if (kind === "bind_execution_identity" && typeof value.prismId === "string" && typeof value.venue === "string" && typeof value.executionAccount === "string" && typeof value.proofDigest === "string" && typeof value.challengeId === "string" && typeof value.chainId === "number" && typeof value.expiresAt === "number" && typeof value.controllerAddress === "string") {
+      const proofDigest = normalizeProofDigestIdentity(value.proofDigest);
+      const challengeId = value.challengeId;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(proofDigest) || !/^0x[0-9a-fA-F]{64}$/.test(challengeId) || !isValidChainId(value.chainId) || !Number.isSafeInteger(value.expiresAt)) throw new Error("malformed_proof_binding_reference");
       return {
         kind,
         prismId: assertValidPrismId(value.prismId),
         venue: assertSupportedVenue(value.venue),
         executionAccount: assertValidExecutionAccount(value.executionAccount),
         proofDigest: proofDigest as Hex,
+        challengeId: normalizeProofDigestIdentity(challengeId),
+        chainId: value.chainId,
+        expiresAt: value.expiresAt,
         controllerAddress: normalizeStarknetAddress(value.controllerAddress),
       };
     }
@@ -165,10 +175,13 @@ function failureResponseDetail(operationId: string, failure: SubmitFailure): str
   return `terminal_submission_failure:op_${operationId}:${failure.detail}`;
 }
 
-export class PrismApplicationService {
+export class PrismApplicationService implements ChallengeProofApplicationPort {
   constructor(private readonly deps: PrismApplicationDeps) {
     if (deps.registryVersion !== "v1" && deps.registryVersion !== "v2") {
       throw new Error("invariant_violation: registryVersion must be explicitly v1 or v2");
+    }
+    if (deps.submitPort.registryVersion !== undefined && deps.submitPort.registryVersion !== deps.registryVersion) {
+      throw new Error(`invariant_violation: registryVersion mismatch application=${deps.registryVersion} submitPort=${deps.submitPort.registryVersion}`);
     }
   }
 
@@ -364,8 +377,13 @@ export class PrismApplicationService {
       const venue = assertSupportedVenue(req.payload.venue);
       const executionAccount = assertValidExecutionAccount(req.payload.executionAccount);
       const controllerAddress = normalizeStarknetAddress(req.payload.controllerAddress);
-      const proofDigest = req.payload.proofDigest;
+      const proofDigest = normalizeProofDigestIdentity(req.payload.proofDigest);
       if (!proofDigest || !/^0x[0-9a-fA-F]{64}$/.test(proofDigest)) throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "malformed_proof_digest");
+      // A digest is evidence only when it resolves to the server-issued
+      // challenge record. Legacy callers may omit challengeId, but the digest
+      // is then used only as a lookup key — never accepted on format alone.
+      const challengeId = normalizeProofDigestIdentity(req.payload.challengeId ?? proofDigest);
+      if (!/^0x[0-9a-fA-F]{64}$/.test(challengeId)) throw new AppError(APP_ERROR_CODE.ALTERED_MESSAGE, "malformed_challenge_reference");
 
       // Execution-authority checks separate from session auth:
       // - identity must exist (ERR-002)
@@ -374,6 +392,56 @@ export class PrismApplicationService {
       // - controller must match (ERR-004) — never infer from session.
       const identityController = normalizeStarknetAddress(identity.controller);
       if (!sameStarknetContractAddress(identityController, controllerAddress)) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch:expected_${identityController}_got_${controllerAddress}`);
+
+      const challengeReference = normalizeProofDigestIdentity(challengeId);
+      const challenge = await this.deps.challengeService.getChallenge(challengeReference);
+      if (!challenge) throw new AppError(APP_ERROR_CODE.ALTERED_MESSAGE, "challenge_not_found");
+      const mismatchedFields: string[] = [];
+      if (normalizeProofDigestIdentity(challenge.challengeId) !== challengeReference) mismatchedFields.push("challenge_id");
+      if (normalizeProofDigestIdentity(challenge.digest) !== proofDigest) mismatchedFields.push("digest");
+      if (challenge.schemaVersion !== CHALLENGE_SCHEMA_VERSION) mismatchedFields.push("schema_version");
+      if (challenge.prismId !== prismId) mismatchedFields.push("prism_id");
+      if (challenge.venue !== venue) mismatchedFields.push("venue");
+      if (challenge.executionAccount.toLowerCase() !== executionAccount.toLowerCase()) mismatchedFields.push("execution_account");
+      if (!isValidChainId(challenge.chainId)) mismatchedFields.push("chain_id");
+      if (req.payload.chainId !== undefined && (!isValidChainId(req.payload.chainId) || req.payload.chainId !== challenge.chainId)) mismatchedFields.push("chain_id");
+      if (!Number.isSafeInteger(challenge.expiresAt)) mismatchedFields.push("expiry");
+      if (req.payload.expiresAt !== undefined && (req.payload.expiresAt !== challenge.expiresAt || !Number.isSafeInteger(req.payload.expiresAt))) mismatchedFields.push("expiry");
+      if (mismatchedFields.length > 0) {
+        throw new AppError(APP_ERROR_CODE.ALTERED_MESSAGE, `challenge_binding_mismatch:${[...new Set(mismatchedFields)].sort().join("+")}`);
+      }
+
+      const fingerprint = fingerprintFor({
+        prismId,
+        venue,
+        executionAccount,
+        proofDigest,
+        challengeId: challengeReference,
+        chainId: challenge.chainId,
+        expiresAt: challenge.expiresAt,
+        controllerAddress,
+      });
+      const kind = "bind_execution_identity";
+      const operationId = this.deps.idGenerator.generateOperationId();
+      // Resolve an existing idempotency key before dynamic proof state checks:
+      // a retry of the same submitted request must return its durable operation,
+      // not be mistaken for a fresh proof replay.
+      const existingByKey = await this.deps.operationStore.getByIdempotencyKey(idempotencyKey);
+      if (existingByKey) {
+        const existing = await this.deps.operationStore.create({ id: operationId, kind, idempotencyKey, requestFingerprint: fingerprint, now, correlationId });
+        return ok<BindData>({ operationId: existing.id, state: existing.state }, { operationId: existing.id, state: existing.state, version: existing.version }, requestId);
+      }
+
+      if (challenge.bindingUseState === "CONSUMED") throw new AppError(APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED, `digest_already_claimed:${proofDigest}`);
+      if (challenge.state === "EXPIRED" || now >= challenge.expiresAt) throw new AppError(APP_ERROR_CODE.PROOF_EXPIRED, `proof_expired:${challengeReference}`);
+      if (
+        challenge.state !== "VERIFIED" ||
+        challenge.nonceState !== "CONSUMED" ||
+        !hasVerifiedEvidence(challenge)
+      ) {
+        throw new AppError(APP_ERROR_CODE.ALTERED_MESSAGE, `challenge_not_verified:${challenge.state.toLowerCase()}`);
+      }
+
       // Digest replay boundary is versioned with the registry ABI. V1 uses
       // the legacy felt mask; V2 preserves the full u256 digest and lets the
       // exact V2 registry enforce onchain single-use.
@@ -391,10 +459,6 @@ export class PrismApplicationService {
       }
       if (digestConsumed) throw new AppError(APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED, `digest_already_consumed:${proofDigest}`);
 
-      const kind = "bind_execution_identity";
-      const fingerprint = fingerprintFor({ prismId, venue, executionAccount, proofDigest, controllerAddress });
-      const operationId = this.deps.idGenerator.generateOperationId();
-
       let op = await this.deps.operationStore.create({ id: operationId, kind, idempotencyKey, requestFingerprint: fingerprint, now, correlationId });
       if (op.id !== operationId) {
         return ok<BindData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
@@ -407,6 +471,39 @@ export class PrismApplicationService {
 
       op = await this.deps.operationStore.transition(op.id, { to: "awaiting_authorization", now: now + 1, expectedVersion: op.version });
       op = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 2, expectedVersion: op.version });
+
+      // Durable proof-to-bind CAS: exact fields and VERIFIED state are checked
+      // again at the write boundary, so concurrent requests have one winner.
+      const claimResult = await this.deps.challengeService.claimVerifiedProof({
+        challengeId: challengeReference,
+        proofDigest: proofDigest as Hex,
+        prismId,
+        venue,
+        executionAccount,
+        chainId: challenge.chainId,
+        expiresAt: challenge.expiresAt,
+        now,
+      });
+      if (claimResult !== "claimed") {
+        const claimCode = claimResult === "already_claimed"
+          ? APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED
+          : claimResult === "expired"
+            ? APP_ERROR_CODE.PROOF_EXPIRED
+            : claimResult === "unknown"
+              ? APP_ERROR_CODE.RPC_UNAVAILABLE
+              : APP_ERROR_CODE.ALTERED_MESSAGE;
+        const claimDetail = `proof_bind_claim_${claimResult}:${challengeReference}`;
+        try {
+          await this.deps.operationStore.transition(op.id, {
+            to: "failed_terminal",
+            now: now + 3,
+            expectedVersion: op.version,
+            errorCode: claimCode,
+            errorDetail: claimDetail,
+          });
+        } catch {}
+        throw new AppError(claimCode, claimDetail);
+      }
 
       let attempted: PersistedOperation;
       try {
@@ -615,6 +712,49 @@ export class PrismApplicationService {
         throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "retry_submission_already_attempted");
       }
       const submission = parseRetrySubmission(op.kind, op.requestFingerprint);
+
+      // Legacy operation rows may predate the proof-to-bind fence. A retry of
+      // a bind must acquire that same durable claim before it can re-enter the
+      // ready/submission path; never replay from the operation fingerprint
+      // alone. A consumed or otherwise invalid proof is terminal for this
+      // retry, while an unavailable store remains fail-closed and retryable.
+      if (submission.kind === "bind_execution_identity") {
+        const claimResult = await this.deps.challengeService.claimVerifiedProof({
+          challengeId: submission.challengeId,
+          proofDigest: submission.proofDigest,
+          prismId: submission.prismId,
+          venue: submission.venue,
+          executionAccount: submission.executionAccount,
+          chainId: submission.chainId,
+          expiresAt: submission.expiresAt,
+          now,
+        });
+        if (claimResult !== "claimed") {
+          const claimCode = claimResult === "already_claimed"
+            ? APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED
+            : claimResult === "expired"
+              ? APP_ERROR_CODE.PROOF_EXPIRED
+              : claimResult === "unknown"
+                ? APP_ERROR_CODE.RPC_UNAVAILABLE
+                : APP_ERROR_CODE.ALTERED_MESSAGE;
+          const claimDetail = `proof_bind_claim_${claimResult}:${submission.challengeId}`;
+          if (claimCode !== APP_ERROR_CODE.RPC_UNAVAILABLE) {
+            try {
+              await this.deps.operationStore.transition(op.id, {
+                to: "failed_terminal",
+                now: now + 1,
+                expectedVersion: op.version,
+                errorCode: claimCode,
+                errorDetail: claimDetail,
+              });
+            } catch {
+              // A concurrent retry may have advanced the row; either way no
+              // adapter call is permitted after a failed proof claim.
+            }
+          }
+          throw new AppError(claimCode, claimDetail);
+        }
+      }
 
       // Move back to ready only for an unfenced, pre-submit failure, then fence
       // it again immediately before crossing into the adapter.

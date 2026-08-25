@@ -34,6 +34,7 @@ import type {
   SmartWalletSignatureChecker,
   StoredOwnershipChallenge,
 } from "./ports";
+import { CHALLENGE_SCHEMA_VERSION as CURRENT_CHALLENGE_SCHEMA_VERSION } from "./ports";
 
 /** The client echoes the challenge fields it signed; the server recomputes
  * the digest against its authoritative stored copy (CMD-B-02 / ERR-012). */
@@ -79,6 +80,9 @@ export function assertPresentedFaithful(
     presented: PresentedChallengeFields;
   },
 ): EvmAddress {
+  if (input.stored.schemaVersion !== CURRENT_CHALLENGE_SCHEMA_VERSION) {
+    throw new PrismError(PRISM_ERROR_CODE.ALTERED_MESSAGE, "altered_fields:schema_version");
+  }
   if (
     typeof input.presented !== "object" ||
     input.presented === null ||
@@ -132,6 +136,7 @@ export async function verifyChallengeSignature(
   });
 
   const message = renderSignableMessage({
+    schemaVersion: input.stored.schemaVersion,
     chainId: input.stored.chainId,
     domain: input.stored.domain,
     venue: input.stored.venue,

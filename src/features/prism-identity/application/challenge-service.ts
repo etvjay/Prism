@@ -6,8 +6,10 @@
 // acceptance and is deliberately absent here).
 //
 // Boundary statement (INV-SYS-003): a VERIFIED result confers zero canonical
-// effect. This slice implements no binding, no resolve, no revoke, and no
-// registry mutation of any kind.
+// effect. This slice implements no canonical binding, no resolve, no revoke,
+// and no registry mutation of any kind. `claimVerifiedProof` is only an
+// offchain single-use reservation of already-verified evidence before the
+// separate controller-authorized registry submission.
 
 import { buildChallenge, renderSignableMessage } from "../domain/challenge";
 import {
@@ -27,12 +29,14 @@ import {
 } from "../domain/identifiers";
 import {
   CHALLENGE_SCHEMA_VERSION,
+  type BindingClaimResult,
   type ChallengeCrypto,
   type Clock,
   type OwnershipProofStore,
   type SignatureClass,
   type SmartWalletSignatureChecker,
   type StoredOwnershipChallenge,
+  type VerifiedBindingClaim,
 } from "../domain/ports";
 import {
   assertPresentedFaithful,
@@ -167,6 +171,9 @@ export class PrismChallengeService {
       // faithful echo of any issued challenge (ERR-012 family, distinct detail).
       throw new PrismError(PRISM_ERROR_CODE.ALTERED_MESSAGE, PRISM_ERROR_DETAIL.UNKNOWN_CHALLENGE);
     }
+    if (stored.schemaVersion !== CHALLENGE_SCHEMA_VERSION) {
+      throw new PrismError(PRISM_ERROR_CODE.ALTERED_MESSAGE, "altered_fields:schema_version");
+    }
 
     // Step 1: structural form + faithful echo (ERR-001/002/005/012).
     const expected = assertPresentedFaithful({
@@ -199,6 +206,7 @@ export class PrismChallengeService {
     // Step 4: verification ladder (EOA → EIP-1271 → ERC-6492).
     try {
       const message = renderSignableMessage({
+        schemaVersion: stored.schemaVersion,
         chainId: stored.chainId,
         domain: stored.domain,
         venue: stored.venue,
@@ -240,6 +248,11 @@ export class PrismChallengeService {
     return storeOrThrow(() => this.deps.store.getById(challengeId));
   }
 
+  /** Reserve a verified challenge for the bind handoff with a durable CAS. */
+  async claimVerifiedProof(input: VerifiedBindingClaim): Promise<BindingClaimResult> {
+    return storeOrThrow(() => this.deps.store.claimVerifiedBinding(input));
+  }
+
   private async markExpiredIfPossible(challengeId: Hex, currentState: StoredOwnershipChallenge["state"]): Promise<void> {
     if (currentState !== "ISSUED") return;
     try {
@@ -274,6 +287,7 @@ function toIssuedView(record: StoredOwnershipChallenge): IssuedChallengeView {
     issuedAt: record.issuedAt,
     expiresAt: record.expiresAt,
     messageToSign: renderSignableMessage({
+      schemaVersion: record.schemaVersion,
       chainId: record.chainId,
       domain: record.domain,
       venue: record.venue,

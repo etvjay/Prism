@@ -14,6 +14,7 @@ import {
 import type { ChallengeCrypto } from "./ports";
 import { utf8ToBytes } from "./hex";
 import type { Hex } from "./hex";
+import { normalizeProofDigestIdentity } from "./proof-digest";
 
 export const CHALLENGE_TTL_BOUNDS = {
   /** Spec ceiling: challenge_ttl ≤ 10 minutes (SM-PRISM-001). */
@@ -36,6 +37,9 @@ export function serializeCanonicalChallenge(
     expiresAt: number;
   },
 ): string {
+  if (fields.schemaVersion !== CHALLENGE_SCHEMA_VERSION) {
+    throw new Error(`invariant_violation: unsupported_challenge_schema_version:${String(fields.schemaVersion)}`);
+  }
   const ordered: Array<[string, string | number]> = [
     ["chain_id", fields.chainId],
     ["domain", fields.domain],
@@ -58,6 +62,7 @@ export function serializeCanonicalChallenge(
  * field is visible; wallets sign exactly these bytes via personal_sign.
  */
 export function renderSignableMessage(challenge: {
+  schemaVersion: number;
   chainId: number;
   domain: string;
   venue: string;
@@ -71,6 +76,7 @@ export function renderSignableMessage(challenge: {
     "Prism wants you to prove control of a Base account.",
     "",
     `Domain: ${challenge.domain}`,
+    `Schema version: ${challenge.schemaVersion}`,
     `Venue: ${challenge.venue}`,
     `Chain ID: ${challenge.chainId}`,
     `Execution account: ${challenge.executionAccount}`,
@@ -92,6 +98,9 @@ export function buildChallenge(
   inputs: { nonce: Hex; issuedAt: number; ttlSeconds: number },
   crypto: ChallengeCrypto,
 ): StoredOwnershipChallenge {
+  if (fields.schemaVersion !== CHALLENGE_SCHEMA_VERSION) {
+    throw new Error(`invariant_violation: unsupported_challenge_schema_version:${String(fields.schemaVersion)}`);
+  }
   const ttlSeconds = Math.floor(inputs.ttlSeconds);
   if (!Number.isFinite(ttlSeconds)) {
     throw new Error("invariant_violation: ttl_seconds_not_finite");
@@ -105,7 +114,7 @@ export function buildChallenge(
     issuedAt: inputs.issuedAt,
     expiresAt,
   });
-  const digest = crypto.keccak256Utf8(canonical);
+  const digest = normalizeProofDigestIdentity(crypto.keccak256Utf8(canonical));
   return {
     ...fields,
     schemaVersion: CHALLENGE_SCHEMA_VERSION,
@@ -116,6 +125,7 @@ export function buildChallenge(
     digest,
     state: "ISSUED",
     nonceState: "UNUSED",
+    bindingUseState: "UNUSED",
   };
 }
 

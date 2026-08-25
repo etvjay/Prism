@@ -22,9 +22,14 @@ import type { Hex } from "../domain/hex";
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
 const TEST_SCHEMA = `prism_identity_${process.pid}`;
+const MIGRATION_RACE_SCHEMA = `prism_identity_migration_race_${process.pid}`;
+
+function storeOptionsForSchema(schema: string, extra: Record<string, unknown> = {}) {
+  return { connectionString: TEST_URL, options: `-c search_path=${schema}`, ...extra };
+}
 
 function storeOptions(extra: Record<string, unknown> = {}) {
-  return { connectionString: TEST_URL, options: `-c search_path=${TEST_SCHEMA}`, ...extra };
+  return storeOptionsForSchema(TEST_SCHEMA, extra);
 }
 
 function createStore(extra: Record<string, unknown> = {}) {
@@ -46,6 +51,7 @@ function makeRecord(suffix: string, overrides: Partial<StoredOwnershipChallenge>
     digest: (`0xdead${suffix}000000000000000000000000000000000000000000000000000000`) as Hex,
     state: "ISSUED",
     nonceState: "UNUSED",
+    bindingUseState: "UNUSED",
     ...overrides,
   };
 }
@@ -104,6 +110,61 @@ suite("PostgresOwnershipProofStore (LIVE integration, INV-SYS-010)", () => {
       expect(results.filter((r) => r === "already_consumed")).toHaveLength(7);
     } finally {
       await Promise.all(contenders.map((c) => c.close()));
+    }
+  });
+
+  it("serializes concurrent cold-start migrations without weakening fail-closed checks", async () => {
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${MIGRATION_RACE_SCHEMA} CASCADE`);
+    await adminPool.query(`CREATE SCHEMA ${MIGRATION_RACE_SCHEMA}`);
+    const contenders: PostgresOwnershipProofStore[] = [];
+    try {
+      const created = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          PostgresOwnershipProofStore.create(storeOptionsForSchema(MIGRATION_RACE_SCHEMA, { max: 2 })),
+        ),
+      );
+      contenders.push(...created);
+      expect(contenders).toHaveLength(8);
+      const meta = await adminPool.query<{ value: string }>(
+        `SELECT value FROM ${MIGRATION_RACE_SCHEMA}.prism_store_meta WHERE key = 'schema_version'`,
+      );
+      expect(meta.rows[0]?.value).toBe("3");
+    } finally {
+      await Promise.all(contenders.map((candidate) => candidate.close()));
+      await adminPool.query(`DROP SCHEMA IF EXISTS ${MIGRATION_RACE_SCHEMA} CASCADE`);
+    }
+  });
+
+  it("binding-claim race across independent pools has exactly one winner", async () => {
+    const record = makeRecord("cf", {
+      state: "VERIFIED",
+      nonceState: "CONSUMED",
+      verifiedSignatureClass: "EOA",
+      verifiedAt: 1_789_000_100,
+    });
+    await store.putIssued(record);
+    const contenders = await Promise.all(
+      Array.from({ length: 8 }, () => createStore({ max: 2, skipMigration: true })),
+    );
+    try {
+      const results = await Promise.all(
+        contenders.map((candidate) =>
+          candidate.claimVerifiedBinding({
+            challengeId: record.challengeId,
+            proofDigest: record.digest,
+            prismId: record.prismId,
+            venue: record.venue,
+            executionAccount: record.executionAccount,
+            chainId: record.chainId,
+            expiresAt: record.expiresAt,
+            now: 1_789_000_200,
+          }),
+        ),
+      );
+      expect(results.filter((result) => result === "claimed")).toHaveLength(1);
+      expect(results.filter((result) => result === "already_claimed")).toHaveLength(7);
+    } finally {
+      await Promise.all(contenders.map((candidate) => candidate.close()));
     }
   });
 
