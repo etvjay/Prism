@@ -3,6 +3,7 @@
 // Spec: PRISM_PAUSE_PHASE_PLAN §2 (ExecutionIntent) + idempotency/expiry semantics.
 
 import { PauseError, PAUSE_ERROR_CODE } from "./errors";
+import { canonicalizeRecipient } from "./recipient";
 
 export type IntentInitiator = "user" | "agent" | "service";
 export type IntentPurpose = "payment" | "transfer" | "contract_call" | "private_action" | "other";
@@ -65,7 +66,7 @@ export function createIntent(input: CreateIntentInput): ExecutionIntent {
   }
   const purpose = requireNonEmpty(input.purpose as string, "purpose") as IntentPurpose;
   if (!VALID_PURPOSES.has(purpose)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_INTENT, `purpose_invalid:${purpose}`);
-  const requestedRecipient = requireNonEmpty(input.requestedRecipient, "requested_recipient");
+  const requestedRecipient = canonicalizeRecipient(input.requestedRecipient, "requested_recipient", PAUSE_ERROR_CODE.INVALID_INTENT);
   const requestedAsset = requireNonEmpty(input.requestedAsset, "requested_asset");
   const requestedAmount = requireNonEmpty(input.requestedAmount, "requested_amount");
   const requestedRoute = requireNonEmpty(input.requestedRoute, "requested_route");

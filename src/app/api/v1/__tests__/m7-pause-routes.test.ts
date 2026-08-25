@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PauseError, PAUSE_ERROR_CODE } from "../../../../features/prism-pause/domain/errors";
 import { getAppFactory } from "../../../../application/factory";
+import { POST as createIntentPost } from "../intents/route";
 import { POST as pauseIntentPost } from "../intents/[intentId]/pause/route";
 import { POST as verifyPausePost } from "../pauses/[pauseId]/verify/route";
 import { POST as approvePausePost } from "../pauses/[pauseId]/approve/route";
@@ -13,6 +14,7 @@ vi.mock("@/application/factory", () => ({
 }));
 
 const pauseService = {
+  createIntent: vi.fn(),
   pauseIntent: vi.fn(),
   verifyPause: vi.fn(),
   approvePause: vi.fn(),
@@ -40,6 +42,28 @@ describe("M7 Pause REST boundary regressions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getAppFactory).mockResolvedValue({ pauseService, receiptService: pauseService.receiptService } as never);
+  });
+
+  it("preserves the stable recipient mismatch error at the REST boundary", async () => {
+    pauseService.createIntent.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, "recipient_mismatch"));
+
+    const response = await createIntentPost(
+      request({
+        prismId: "prism:source",
+        recipientPrismId: "prism:dest",
+        recipientAddress: "0xdef",
+        idempotencyKey: "idem-rest-recipient-mismatch",
+      }, { "x-request-id": "req-recipient-mismatch" }),
+    );
+    const body = (await response.json()) as { error: { code: string; detail: string } };
+
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.INVALID_PLAN);
+    expect(body.error.detail).toBe("recipient_mismatch");
+    expect(pauseService.createIntent).toHaveBeenCalledWith(expect.objectContaining({
+      recipientPrismId: "prism:dest",
+      recipientAddress: "0xdef",
+    }));
   });
 
   it("does not treat an app session or request claim as approval/release authority", async () => {

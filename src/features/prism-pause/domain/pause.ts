@@ -8,7 +8,7 @@
 // - approval binding: approval_scope_hash ties plan_hash + decision.
 // - fail-closed UNKNOWN blocking checks prevent RELEASE_READY.
 
-import { PauseError, PAUSE_ERROR_CODE } from "./errors";
+import { PauseError, PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "./errors";
 import type { Hex } from "./execution-plan";
 import type { CheckResult, RiskLevel } from "./checks";
 import { hasBlockingFailure, deriveRiskLevel } from "./checks";
@@ -239,8 +239,8 @@ export function approveEscalation(pause: ExecutionPause, input: ApproveInput): E
   }
   // Approval reduces required count by 1 (quorum simplified to 1 in this lane)
   // After approval, pause moves to RELEASE_READY if no blocking checks remain
-  if (hasBlockingFailure(pause.checks) && pause.checks.some((c) => c.reasonCode === "PAUSE-UNKNOWN-001")) {
-    // Still blocking UNKNOWN — remain escalated (fail-closed)
+  if (pause.checks.some((check) => check.status === "UNKNOWN") || pause.reasonCodes.includes(PAUSE_REASON_CODE.UNKNOWN_BLOCKING)) {
+    // Every UNKNOWN verification result remains blocking until D-P0-003 is decided.
     throw new PauseError(PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING, "unknown_blocking_cannot_approve_to_release");
   }
   return {

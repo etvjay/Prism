@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { PauseError, PAUSE_ERROR_CODE } from "./errors";
+import { canonicalizeRecipient } from "./recipient";
 
 export type Hex = `0x${string}`;
 
@@ -112,7 +113,7 @@ export function computePlanHash(payload: CanonicalPlanPayload): Hex {
 export function createExecutionPlan(input: CreateExecutionPlanInput): ExecutionPlan {
   const chainId = normalizeChainId(input.chainId);
   const asset = normalizeAddressLike(input.asset, "asset");
-  const recipient = normalizeAddressLike(input.recipient, "recipient");
+  const recipient = canonicalizeRecipient(input.recipient, "recipient", PAUSE_ERROR_CODE.INVALID_PLAN);
   const calls = normalizeCalls(input.calls);
   validateValueLimits(input.valueLimits);
   const policyVersion = requireNonEmpty(input.policyVersion, "policy_version");

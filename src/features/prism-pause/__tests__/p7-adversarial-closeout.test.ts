@@ -124,6 +124,19 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
     await expect(svc.release({ pauseId: pause.pauseId, planHash: plan.planHash, settlementOperationId: "op_unknown", now: 1400 })).rejects.toThrow();
   });
 
+  it("6a. unknown checks with specific reason codes cannot be cleared by escalation approval", async () => {
+    const { pauseStore, svc } = await bootstrap();
+    const intent = await svc.createIntent({ intentId: "intent_unknown_approve", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20000, clientIdempotencyKey: "idem_unknown_approve", policyVersion: "v1" });
+    const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
+    const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
+    const escalated = await svc.verify({ pauseId: pause.pauseId, policy, sources: unknownSources, now: 1300 });
+    const scope = computeApprovalScopeHash(escalated.pauseId, escalated.planHash, escalated.policyVersion);
+
+    expect((await pauseStore.getChecks(pause.pauseId)).some((check) => check.status === "UNKNOWN" && check.reasonCode !== "PAUSE-UNKNOWN-001")).toBe(true);
+    await expect(svc.approve({ pauseId: pause.pauseId, planHash: plan.planHash, approvalScopeHash: scope, now: 1400 })).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING });
+    expect((await svc.getPause(pause.pauseId))?.state).toBe("ESCALATED");
+  });
+
   it("7. adapter failure: failing adapter does not mark completed, pause remains RELEASED and op is retryable", async () => {
     const pauseStore = new InMemoryPauseStore();
     const opStore = new InMemoryOperationStore();

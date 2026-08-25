@@ -5,6 +5,7 @@ import { createIntent } from "../domain/intent";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { computeApprovalScopeHash } from "../domain/pause";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
+import { PAUSE_ERROR_CODE } from "../domain/errors";
 import { testPauseAuthorityResolver } from "./test-authority";
 
 const policy: Policy = {
@@ -81,6 +82,27 @@ describe("P4 explicit commands with binding", () => {
     // approve with correct hash succeeds
     const approved = await svc.approve({ pauseId: pause.pauseId, planHash: plan.planHash, approvalScopeHash: scope, now: 1400 });
     expect(approved.state).toBe("RELEASE_READY");
+  });
+
+  it("blocks approval for a specific UNKNOWN check reason while D-P0-003 is open", async () => {
+    const store = new InMemoryPauseStore();
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
+    const intent = await svc.createIntent({ intentId: "intent_unknown_approval", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_unknown_approval", policyVersion: "v1" });
+    const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
+    const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
+    const escalated = await svc.verify({
+      pauseId: pause.pauseId,
+      policy,
+      sources: { ...passingSources, simulation: { success: null, effectMatches: null, freshnessOk: null, unknown: true } },
+      now: 1300,
+    });
+
+    expect(escalated.state).toBe("ESCALATED");
+    expect(escalated.checks.some((check) => check.status === "UNKNOWN" && check.reasonCode !== "PAUSE-UNKNOWN-001")).toBe(true);
+    await expect(
+      svc.approve({ pauseId: escalated.pauseId, planHash: plan.planHash, now: 1400 }),
+    ).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING });
+    expect((await svc.getPause(escalated.pauseId))?.state).toBe("ESCALATED");
   });
 
   it("expire command and expired pause cannot release", async () => {

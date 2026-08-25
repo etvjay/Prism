@@ -75,6 +75,7 @@ export interface PauseService {
 // ---------------------------------------------------------------------------
 
 import { AppError, APP_ERROR_CODE } from "./errors";
+import { canonicalizeOptionalRecipient } from "../features/prism-pause/domain/recipient";
 import { InMemoryPauseStore } from "../features/prism-pause/adapters/memory-pause-store";
 import type { PauseStore } from "../features/prism-pause/ports/pause-store";
 import { PauseService as DomainPauseService } from "../features/prism-pause/application/pause-service";
@@ -93,6 +94,8 @@ function toMs(clockNow: number): number {
   if (clockNow > 1e12) return clockNow;
   return clockNow * 1000;
 }
+
+const DEFAULT_RECIPIENT = "0x0000000000000000000000000000000000000000";
 
 function mapDomainIntentToRest(domainIntent: DomainIntent, domainPlan: DomainPlan | undefined, correlationId: string | null, restInput?: CreateIntentInput): ExecutionIntent {
   // Derive venue etc from stored restInput if available, else from domain intent fields.
@@ -207,12 +210,19 @@ export class InMemoryPauseService implements PauseService {
     if (!input.prismId || !input.prismId.startsWith("prism:")) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, "invalid_prism_id");
     if (!input.idempotencyKey || input.idempotencyKey.trim().length === 0) throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "missing_idempotency_key");
 
+    const recipientPrismId = canonicalizeOptionalRecipient(input.recipientPrismId, "recipientPrismId", PAUSE_ERROR_CODE.INVALID_PLAN);
+    const recipientAddress = canonicalizeOptionalRecipient(input.recipientAddress, "recipientAddress", PAUSE_ERROR_CODE.INVALID_PLAN);
+    const requestedRecipient = recipientPrismId ?? recipientAddress ?? DEFAULT_RECIPIENT;
+    if (recipientPrismId !== null && recipientAddress !== null && recipientPrismId !== recipientAddress) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, "recipient_mismatch");
+    }
+    const normalizedInput: CreateIntentInput = { ...input, recipientPrismId, recipientAddress };
+
     const nowMs = toMs(this.clock.now());
 
     const intentId = `intent-${this.intentCounter++}-${Date.now()}`;
 
     // Build domain intent input
-    const requestedRecipient = input.recipientPrismId ?? input.recipientAddress ?? "0x0000000000000000000000000000000000000000";
     const requestedAsset = input.asset ?? "0x0000000000000000000000000000000000000000";
     const requestedAmount = input.amount ?? "0";
     const requestedRoute = `${input.venue ?? "BASE"}:${requestedAsset}:${requestedRecipient}`;
@@ -248,7 +258,7 @@ export class InMemoryPauseService implements PauseService {
     // Create plan for this intent
     const chainId = (input.venue ?? "base").toLowerCase();
     const assetNorm = (input.asset ?? "0xdead").toLowerCase();
-    const recipientNorm = (input.recipientAddress ?? input.recipientPrismId ?? "0xabc").toLowerCase();
+    const recipientNorm = requestedRecipient;
     const calls = ["transfer"];
     const planInput = {
       chainId,
@@ -268,10 +278,10 @@ export class InMemoryPauseService implements PauseService {
       throw e;
     }
 
-    this.restInputs.set(domainIntent.intentId, input);
+    this.restInputs.set(domainIntent.intentId, normalizedInput);
     this.correlationByIntent.set(domainIntent.intentId, input.correlationId ?? null);
 
-    return mapDomainIntentToRest(domainIntent, domainPlan, input.correlationId ?? null, input);
+    return mapDomainIntentToRest(domainIntent, domainPlan, input.correlationId ?? null, normalizedInput);
   }
 
   async getIntent(intentId: string): Promise<ExecutionIntent | null> {

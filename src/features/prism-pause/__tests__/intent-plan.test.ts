@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createIntent } from "../domain/intent";
 import { createExecutionPlan, computePlanHash } from "../domain/execution-plan";
+import { InMemoryPauseStore } from "../adapters/memory-pause-store";
+import { PauseService } from "../application/pause-service";
+import { PAUSE_ERROR_CODE } from "../domain/errors";
 
 const baseIntent = () => createIntent({
   intentId: "intent_1",
@@ -61,5 +64,26 @@ describe("P1 Intent and normalized ExecutionPlan", () => {
 
   it("agent initiator requires agentId", () => {
     expect(() => createIntent({ intentId: "i2", principal: "p", initiator: "agent", purpose: "payment", requestedRecipient: "r", requestedAsset: "a", requestedAmount: "1", requestedRoute: "route", createdAt: 1000, expiresAt: 2000, clientIdempotencyKey: "k2", policyVersion: "v1" })).toThrow();
+  });
+
+  it("domain createPlan rejects a recipient mismatch before plan persistence", async () => {
+    const store = new InMemoryPauseStore();
+    const service = new PauseService(store, { store });
+    const intent = await service.createIntent(baseIntent());
+
+    await expect(
+      service.createPlan({
+        chainId: "base",
+        asset: "0xdead",
+        recipient: "0xdef",
+        calls: ["transfer"],
+        valueLimits: { maxValue: "100" },
+        policyVersion: "v1",
+        intentId: intent.intentId,
+        createdAt: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.INVALID_PLAN, detail: "recipient_mismatch" });
+
+    expect(await store.getPlanByIntent(intent.intentId)).toBeUndefined();
   });
 });

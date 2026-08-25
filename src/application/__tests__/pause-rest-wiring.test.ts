@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createIsolatedFactory, resetFactory } from "../factory";
 import { PAUSE_ERROR_CODE } from "../../features/prism-pause/domain/errors";
+import { InMemoryPauseStore } from "../../features/prism-pause/adapters/memory-pause-store";
 import { computeApprovalScopeHash } from "../../features/prism-pause/domain/pause";
 import { testPauseAuthorityResolver } from "../../features/prism-pause/__tests__/test-authority";
 
@@ -16,6 +17,46 @@ const PRISM_ID = "prism:RESTTEST";
 
 describe("Pause REST wiring — rigorous guards", () => {
   beforeEach(() => { resetFactory(); });
+
+  it("canonicalizes either supported recipient form before storing the intent and plan", async () => {
+    for (const [recipient, expected] of [
+      [{ recipientPrismId: " PRISM:Dest " }, "prism:dest"],
+      [{ recipientAddress: " 0XDeF " }, "0xdef"],
+    ] as const) {
+      const f = createTestFactory();
+      const intent = await f.pauseService.createIntent({
+        prismId: PRISM_ID,
+        purpose: "payment",
+        amount: "100",
+        asset: "0xdead",
+        ...recipient,
+        idempotencyKey: `idem-recipient-canonical-${expected}`,
+      });
+      const snapshot = (f.pauseService.getDomainStore() as InMemoryPauseStore).snapshot();
+      expect(snapshot.intents.find((record) => record.intentId === intent.intentId)?.requestedRecipient).toBe(expected);
+      expect(snapshot.plans.find((record) => record.intentId === intent.intentId)?.recipient).toBe(expected);
+    }
+  });
+
+  it("rejects mismatched recipient forms before any intent or plan is durably stored", async () => {
+    const f = createTestFactory();
+
+    await expect(
+      f.pauseService.createIntent({
+        prismId: PRISM_ID,
+        purpose: "payment",
+        amount: "100",
+        asset: "0xdead",
+        recipientPrismId: "prism:dest",
+        recipientAddress: "0xdef",
+        idempotencyKey: "idem-recipient-mismatch",
+      }),
+    ).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.INVALID_PLAN, detail: "recipient_mismatch" });
+
+    const snapshot = (f.pauseService.getDomainStore() as InMemoryPauseStore).snapshot();
+    expect(snapshot.intents).toHaveLength(0);
+    expect(snapshot.plans).toHaveLength(0);
+  });
 
   it("default REST adapter fails closed when release/approval authority is not configured", async () => {
     const f = createIsolatedFactory();
@@ -30,7 +71,7 @@ describe("Pause REST wiring — rigorous guards", () => {
     const blockedIntent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "unknown_asset", recipientAddress: "unknown_recipient", idempotencyKey: "idem-approval-authority-open" });
     const blockedPause = await f.pauseService.pauseIntent(blockedIntent.intentId);
     const escalated = await f.pauseService.verifyPause(blockedPause.pauseId);
-    await expect(f.pauseService.approvePause(escalated.pauseId, "claimed-controller")).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED });
+    await expect(f.pauseService.approvePause(escalated.pauseId, "claimed-controller")).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING });
     expect((await f.pauseService.getPause(escalated.pauseId))?.state).toBe("ESCALATED");
   });
 

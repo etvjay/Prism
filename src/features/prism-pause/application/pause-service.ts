@@ -18,6 +18,7 @@ import type { ExecutionPause } from "../domain/pause";
 import { evaluatePolicy } from "../domain/policy-engine";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
+import { assertRecipientMatches } from "../domain/recipient";
 import type { OperationStore, PersistedOperation } from "../../prism-operations/domain/operation-store";
 import type { PauseExecutionAdapter, SettlementChain } from "../ports/execution-adapter";
 import { resolveChainFromPlan } from "../ports/execution-adapter";
@@ -181,6 +182,7 @@ export class PauseService {
     // ensure intent exists
     const intent = await this.store.getIntent(plan.intentId);
     if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, plan.intentId);
+    assertRecipientMatches(intent.requestedRecipient, plan.recipient);
     if (intent.policyVersion !== plan.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, `intent policy ${intent.policyVersion} != plan ${plan.policyVersion}`);
     return this.store.putPlan(plan);
   }
