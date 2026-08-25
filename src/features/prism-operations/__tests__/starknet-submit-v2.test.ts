@@ -6,15 +6,60 @@ const ACCOUNT = "0x111";
 const REGISTRY = "0x67b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
 const EXECUTION_ACCOUNT = normalizeStarknetContractAddress("0xabc");
 
-function account(calls: Array<unknown[]>) {
+function account(calls: Array<unknown[]>, address = ACCOUNT) {
   return {
-    address: ACCOUNT,
+    address,
     execute: async (items: Array<{ calldata: unknown[] }>) => {
       calls.push(items[0].calldata);
       return { transaction_hash: "0x1" };
     },
   };
 }
+
+describe("StarknetSubmitAdapterV2 construction validation", () => {
+  it("rejects malformed, zero, and out-of-range injected account addresses before execute", () => {
+    const invalidAddresses = ["not-an-address", "0x0", `0x${(1n << 251n).toString(16)}`];
+    for (const address of invalidAddresses) {
+      let executeCalls = 0;
+      const injected = {
+        address,
+        execute: async () => {
+          executeCalls += 1;
+          return { transaction_hash: "0x1" };
+        },
+      };
+      expect(() => new StarknetSubmitAdapterV2({ account: injected, registryAddress: REGISTRY })).toThrow(/invalid_starknet_address|ERR-005/);
+      expect(executeCalls).toBe(0);
+    }
+  });
+
+  it("rejects account and registry equality after shared canonical normalization", () => {
+    expect(() => new StarknetSubmitAdapterV2({
+      account: account([], "0XABC"),
+      registryAddress: normalizeStarknetContractAddress("0xabc"),
+    })).toThrow(/account_registry_address_mismatch/);
+  });
+
+  it("canonicalizes valid account and registry addresses at the concrete boundary", async () => {
+    const calls: Array<{ contractAddress: string; calldata: unknown[] }> = [];
+    const injected = {
+      address: "0XABC",
+      execute: async (items: Array<{ contractAddress: string; calldata: unknown[] }>) => {
+        calls.push(items[0]);
+        return { transaction_hash: "0x1" };
+      },
+    };
+    const adapter = new StarknetSubmitAdapterV2({ account: injected, registryAddress: " 0XDEF " });
+    await adapter.submitCreateIdentity({ operationId: "op-v2-construction", controllerAddress: "0xabc" });
+    expect(calls[0]?.contractAddress).toBe(normalizeStarknetContractAddress("0xdef"));
+  });
+
+  it("rejects zero and out-of-range registry addresses at construction", () => {
+    for (const registryAddress of ["0x0", `0x${(1n << 251n).toString(16)}`]) {
+      expect(() => new StarknetSubmitAdapterV2({ account: account([]), registryAddress })).toThrow(/invalid_starknet_address|ERR-005/);
+    }
+  });
+});
 
 describe("StarknetSubmitAdapterV2", () => {
   it("uses exact low/high u256 bind calldata and normalizes tx hash", async () => {

@@ -7,7 +7,12 @@ import type { StarknetSubmitPort } from "../../../application/ports";
 import { prismIdToRegistryFelt } from "../../prism-identity/domain/felt-digest";
 import { toU256Calldata } from "../../prism-identity/domain/u256-digest";
 import type { StarknetAccountLike } from "./starknet-submit";
-import { isTerminalSubmitCode, StarknetSubmitError } from "./starknet-submit";
+import {
+  isTerminalSubmitCode,
+  StarknetSubmitConfigError,
+  StarknetSubmitError,
+  validateStarknetSubmitConfig,
+} from "./starknet-submit";
 import {
   normalizeStarknetContractAddress,
   sameStarknetContractAddress,
@@ -62,8 +67,29 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
 
   constructor(options: { account: StarknetAccountLike; registryAddress: string }) {
     if (!options.account || typeof options.account.execute !== "function") throw new Error("invariant_violation: V2 account required");
+    let validated: ReturnType<typeof validateStarknetSubmitConfig>;
+    try {
+      validated = validateStarknetSubmitConfig({
+        account: options.account,
+        registryAddress: options.registryAddress,
+        rpcUrl: undefined,
+      });
+    } catch (cause) {
+      // Preserve V2's established ERR-005 construction boundary while using
+      // the shared V1 validator for the actual address/range/equality checks.
+      if (cause instanceof StarknetSubmitConfigError) {
+        const addressReason = cause.message.match(/^invalid_starknet_address:(malformed|zero|out_of_range)$/)?.[1];
+        const message = addressReason === "malformed"
+          ? "malformed_address"
+          : addressReason
+            ? "address_out_of_range"
+            : cause.message;
+        throw new StarknetSubmitError("ERR-005", message, cause);
+      }
+      throw cause;
+    }
     this.account = options.account;
-    this.registryAddress = address(options.registryAddress, "registryAddress");
+    this.registryAddress = validated.registryAddress;
   }
 
   async submitCreateIdentity(input: { operationId: string; controllerAddress: string }): Promise<{ txHash: Hex }> {
