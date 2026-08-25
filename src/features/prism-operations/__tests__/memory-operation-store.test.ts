@@ -154,5 +154,21 @@ describe("InMemoryOperationStore reconciliation CAS", () => {
         submissionAttempted: false,
       }),
     ).rejects.toMatchObject({ detail: "submission_attempted_fence_cannot_clear" });
+
+    operation = await store.transition(operation.id, {
+      to: "failed_retryable",
+      now: NOW + 6,
+      expectedVersion: operation.version,
+      errorCode: "ERR-021",
+    });
+    for (const target of ["ready", "awaiting_authorization"] as const) {
+      await expect(
+        store.transition(operation.id, {
+          to: target,
+          now: NOW + 7,
+          expectedVersion: operation.version,
+        }),
+      ).rejects.toMatchObject({ detail: `submission_attempted_fence:failed_retryable->${target}` });
+    }
   });
 });

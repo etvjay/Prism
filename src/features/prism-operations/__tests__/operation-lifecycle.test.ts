@@ -3,6 +3,7 @@ import {
   createOperation,
   transition,
   canTransition,
+  canRetry,
   isTerminal,
   isRetryableFailure,
   isFailureBranch,
@@ -241,6 +242,30 @@ describe("failure branches — each explicitly reachable", () => {
     expect(isTerminal("failed_terminal" as OperationState)).toBe(true);
     expect(isRetryableFailure("failed_retryable" as OperationState)).toBe(true);
     expect(isRetryableFailure("failed_terminal" as OperationState)).toBe(false);
+  });
+
+  it("submissionAttempted is a hard fence against retryable rebroadcast states", () => {
+    let op = createOperation({ id: "op-fenced-retry", now: NOW });
+    op = transition(op, { to: "awaiting_authorization", now: NOW + 1, expectedVersion: op.version }).operation;
+    op = transition(op, {
+      to: "failed_retryable",
+      now: NOW + 2,
+      expectedVersion: op.version,
+      errorCode: "ERR-021",
+      submissionAttempted: true,
+    }).operation;
+
+    expect(op.submissionAttempted).toBe(true);
+    expect(canRetry(op)).toBe(false);
+    for (const target of ["ready", "awaiting_authorization"] as const) {
+      expect(() =>
+        transition(op, {
+          to: target,
+          now: NOW + 3,
+          expectedVersion: op.version,
+        }),
+      ).toThrow("submission_attempted_fence");
+    }
   });
 });
 

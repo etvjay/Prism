@@ -278,6 +278,118 @@ describe("PostgresOperationStore (unit/SQL contract)", () => {
     ).rejects.toMatchObject({ code: "ERR-023" });
   });
 
+  it("create rejects an operation-id collision even when the incoming fingerprint matches", async () => {
+    installFakePool();
+    const mod = await loadStoreModule();
+    const dup = Object.assign(new Error("duplicate id"), { code: "23505", constraint: "prism_operations_pkey" });
+    FakePool.queue.push({ error: dup });
+    FakePool.queue.push({
+      result: {
+        rowCount: 1,
+        rows: [
+          {
+            id: "op-001",
+            kind: "generic_chain_touching_action",
+            state: "created",
+            version: 0,
+            idempotency_key: "idem-ORIGINAL",
+            request_fingerprint: "fp-001",
+            tx_hash: null,
+            error_code: null,
+            error_detail: null,
+            attempts: 0,
+            correlation_id: null,
+            created_at: NOW,
+            updated_at: NOW,
+            authoritative_source: "backend_op_row",
+            reconciliation_watermark: null,
+            reconciliation_metadata: null,
+          },
+        ],
+      } as unknown as Partial<QueryResult>,
+    });
+    FakePool.queue.push({ result: { rowCount: 0, rows: [] } as unknown as Partial<QueryResult> });
+    const store = new mod.PostgresOperationStore({});
+
+    await expect(
+      store.create({ id: "op-001", idempotencyKey: "idem-DIFFERENT", requestFingerprint: "fp-001", now: NOW }),
+    ).rejects.toMatchObject({ code: "ERR-023", detail: "duplicate_operation_id" });
+  });
+
+  it("makes same-key idempotency explicit: same fingerprint returns the existing row even with a new operation id", async () => {
+    installFakePool();
+    const mod = await loadStoreModule();
+    const dup = Object.assign(new Error("duplicate key"), { code: "23505", constraint: "prism_operations_idempotency_key_key" });
+    FakePool.queue.push({ error: dup });
+    FakePool.queue.push({ result: { rowCount: 0, rows: [] } as unknown as Partial<QueryResult> });
+    FakePool.queue.push({
+      result: {
+        rowCount: 1,
+        rows: [
+          {
+            id: "op-EXISTING",
+            kind: "generic_chain_touching_action",
+            state: "created",
+            version: 0,
+            idempotency_key: "idem-SAME",
+            request_fingerprint: "fp-SAME",
+            tx_hash: null,
+            error_code: null,
+            error_detail: null,
+            attempts: 0,
+            correlation_id: null,
+            created_at: NOW,
+            updated_at: NOW,
+            authoritative_source: "backend_op_row",
+            reconciliation_watermark: null,
+            reconciliation_metadata: null,
+          },
+        ],
+      } as unknown as Partial<QueryResult>,
+    });
+    const store = new mod.PostgresOperationStore({});
+
+    const result = await store.create({ id: "op-NEW", idempotencyKey: "idem-SAME", requestFingerprint: "fp-SAME", now: NOW + 1 });
+    expect(result.id).toBe("op-EXISTING");
+  });
+
+  it("enforces the submissionAttempted retry fence before issuing a Postgres UPDATE", async () => {
+    const fake = installFakePool();
+    const mod = await loadStoreModule();
+    FakePool.queue.push({
+      result: {
+        rowCount: 1,
+        rows: [
+          {
+            id: "op-fenced",
+            kind: "generic_chain_touching_action",
+            state: "failed_retryable",
+            version: 4,
+            idempotency_key: "idem-fenced",
+            request_fingerprint: "fp-fenced",
+            tx_hash: null,
+            error_code: "ERR-021",
+            error_detail: "rpc_unavailable",
+            attempts: 1,
+            submission_attempted: true,
+            correlation_id: null,
+            created_at: NOW,
+            updated_at: NOW,
+            authoritative_source: "op_policy",
+            reconciliation_watermark: null,
+            reconciliation_metadata: null,
+          },
+        ],
+      } as unknown as Partial<QueryResult>,
+    });
+    const store = new mod.PostgresOperationStore({});
+
+    await expect(
+      store.transition("op-fenced", { to: "ready", now: NOW + 1, expectedVersion: 4 }),
+    ).rejects.toMatchObject({ code: "ERR-023", detail: "submission_attempted_fence:failed_retryable->ready" });
+    expect(fake.queries).toHaveLength(1);
+  });
+
   it("transition uses versioned CAS UPDATE with all canonical fields", async () => {
     const fake = installFakePool();
     const mod = await loadStoreModule();

@@ -134,9 +134,19 @@ export function decideReconciliationStep(
         return { nextState: "confirmed", reason: "execution_succeeded", authoritativeSource: AUTHORITATIVE_SOURCE.confirmed };
       }
     }
-    // If chain reports ACCEPTED_ON_L1 and execution SUCCEEDED, treat as confirmed.
+    // ACCEPTED_ON_L1 is a finalized observation, but the operation lifecycle
+    // still advances one legal hop per tick. Returning `confirmed` directly
+    // from submitted/processing would deadlock at the domain transition table
+    // (those states do not permit a skip); preserve the same stepwise path as
+    // ACCEPTED_ON_L2 while retaining the stronger finality fact.
     if (facts.chain.execution === "SUCCEEDED" && facts.chain.finality === "ACCEPTED_ON_L1") {
-      if (operation.state === "confirming" || operation.state === "processing" || operation.state === "submitted") {
+      if (operation.state === "submitted") {
+        return { nextState: "processing", reason: "accepted_on_l1_processing", authoritativeSource: AUTHORITATIVE_SOURCE.processing };
+      }
+      if (operation.state === "processing") {
+        return { nextState: "confirming", reason: "accepted_on_l1_confirming", authoritativeSource: AUTHORITATIVE_SOURCE.confirming };
+      }
+      if (operation.state === "confirming") {
         return { nextState: "confirmed", reason: "accepted_on_l1", authoritativeSource: AUTHORITATIVE_SOURCE.confirmed };
       }
     }

@@ -68,6 +68,12 @@ export const RETRYABLE_FAILURE_STATES: readonly OperationState[] = [
   "requires_attention",
 ] as const;
 
+/** States from which the application may invoke a fresh chain submission. */
+export const REBROADCAST_CAPABLE_STATES: readonly OperationState[] = [
+  "awaiting_authorization",
+  "ready",
+] as const;
+
 export const TERMINAL_FAILURE_STATES: readonly OperationState[] = [
   "failed_terminal",
   "expired",
@@ -307,6 +313,17 @@ export function transition(operation: Operation, input: TransitionInput): Transi
 
   if (operation.submissionAttempted && input.submissionAttempted === false) {
     throw new OperationError(OPERATION_ERROR_CODE.STALE_STATE_CONFLICT, "submission_attempted_fence_cannot_clear");
+  }
+
+  // A retryable failure is only safe to re-arm when no adapter invocation may
+  // have happened. This is a domain/store fence, not an application hint:
+  // every OperationStore delegates here, so no caller can bypass it by asking
+  // directly for a ready/authorization state.
+  if (operation.state === "failed_retryable" && operation.submissionAttempted && REBROADCAST_CAPABLE_STATES.includes(input.to)) {
+    throw new OperationError(
+      OPERATION_ERROR_CODE.STALE_STATE_CONFLICT,
+      `submission_attempted_fence:${operation.state}->${input.to}`,
+    );
   }
 
   // INV-SYS-005 guard: submitted/processing/confirming/confirmed may not

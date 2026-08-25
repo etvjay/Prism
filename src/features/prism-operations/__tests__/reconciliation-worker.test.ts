@@ -67,6 +67,30 @@ describe("ReconciliationWorker — startup recovery, retry/backoff, unknown/reve
     expect(after?.state).toBe("processing");
   });
 
+  it("steps a direct SUCCEEDED + ACCEPTED_ON_L1 observation through legal states", async () => {
+    const store = new InMemoryOperationStore();
+    await createSubmitted(store, "op-l1-finalized");
+    const worker = new ReconciliationWorker({
+      store,
+      ledger: {
+        async observeChain(txHash: Hex) {
+          return { txHash, finality: "ACCEPTED_ON_L1", execution: "SUCCEEDED", blockNumber: 100 };
+        },
+      },
+      indexer: indexerFake({ eventObserved: false }),
+      clock: clockFake(NOW + 20),
+    });
+
+    const processing = await worker.tickAllOnce(NOW + 20);
+    expect(processing.advanced).toBe(1);
+    expect((await store.getById("op-l1-finalized"))?.state).toBe("processing");
+
+    await worker.tickAllOnce(NOW + 21);
+    expect((await store.getById("op-l1-finalized"))?.state).toBe("confirming");
+    await worker.tickAllOnce(NOW + 22);
+    expect((await store.getById("op-l1-finalized"))?.state).toBe("confirmed");
+  });
+
   it("bounded retry/backoff: failed_retryable skipped within backoff window, retried after", async () => {
     const store = new InMemoryOperationStore();
     let op = await store.create({ id: "op-backoff", idempotencyKey: "idem-backoff", requestFingerprint: "fp-backoff", now: NOW });

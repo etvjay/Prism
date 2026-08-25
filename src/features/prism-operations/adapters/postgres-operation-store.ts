@@ -291,19 +291,31 @@ export class PostgresOperationStore implements OperationStore {
         );
         if (byKey.rowCount && byKey.rowCount > 0) existingByKey = rowToRecord(byKey.rows[0]);
       } catch {}
-      const existing = existingByKey ?? existingById;
-      if (existing) {
-        if (existing.requestFingerprint !== input.requestFingerprint) {
+      // Match the memory adapter's explicit precedence: an existing
+      // idempotency key defines the request identity, even when the caller
+      // generated a different operation id. If no key row exists, a primary
+      // operation-id collision is a distinct resource conflict and must not be
+      // mistaken for a benign retry.
+      if (existingByKey) {
+        if (existingByKey.requestFingerprint !== input.requestFingerprint) {
           throw new OperationError(
             OPERATION_ERROR_CODE.STALE_STATE_CONFLICT,
             `idempotency_key_conflict:key_${input.idempotencyKey}_fingerprint_mismatch`,
           );
         }
-        if (existing.id !== input.id) {
-          // Same key + same fingerprint but different id supplied — idempotent returns existing id's record.
-          // This is benign; do not throw.
+        return existingByKey;
+      }
+      if (existingById) {
+        if (existingById.idempotencyKey !== input.idempotencyKey) {
+          throw new OperationError(OPERATION_ERROR_CODE.STALE_STATE_CONFLICT, "duplicate_operation_id");
         }
-        return existing;
+        if (existingById.requestFingerprint !== input.requestFingerprint) {
+          throw new OperationError(
+            OPERATION_ERROR_CODE.STALE_STATE_CONFLICT,
+            `idempotency_key_conflict:key_${input.idempotencyKey}_fingerprint_mismatch`,
+          );
+        }
+        return existingById;
       }
       // If we cannot resolve the duplicate, surface as stale conflict with domain code.
       throw new OperationError(OPERATION_ERROR_CODE.STALE_STATE_CONFLICT, "duplicate_operation_id");
