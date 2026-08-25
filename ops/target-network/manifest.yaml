@@ -39,6 +39,10 @@ environments:
       expected_public_env_var: NEXT_PUBLIC_STARKNET_RPC_URL
       expected_network_env_var: NEXT_PUBLIC_STARKNET_NETWORK
       required_config_value: "SN_SEPOLIA"
+      registry_version: v2
+      registry_address: "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d"
+      registry_class_hash: "0x4349a331b4339c1f20ccdb745e2d60a194f8da64cb789bb70bf60463f42dd8d"
+      projection_start_block: 14015842
       # Venue chain for Base bindings issued from this environment.
       # This directly wires policy.defaultChainId (SD-008 / e8886af) as a mandatory
       # server-side config — no default-in-code is permitted beyond this proposal.

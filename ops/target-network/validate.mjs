@@ -3,7 +3,7 @@
 // - asserts manifest.yaml status is PROPOSED (correctly blocking before owner decision)
 // - asserts owner_decision UNDECIDED (no silent accept)
 // - asserts per-env network/chainId are as proposed
-// - asserts no hard-coded secret or deploy address is present
+// - asserts no hard-coded secret or non-public deploy address is present
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -74,9 +74,13 @@ if (hexKeyRe.test(raw) && !raw.includes("0x<") ) {
   if (matches && matches.some(m => !m.includes("<"))) {
     // Check if any match is not inside a comment about pool (canonical pool is allowed)
     const pool = "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a";
-    const nonPool = matches.filter(m => m.toLowerCase() !== pool.toLowerCase());
+    const publicV2Facts = [
+      "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d",
+      "0x4349a331b4339c1f20ccdb745e2d60a194f8da64cb789bb70bf60463f42dd8d",
+    ];
+    const nonPool = matches.filter(m => m.toLowerCase() !== pool.toLowerCase() && !publicV2Facts.includes(m.toLowerCase()));
     if (nonPool.length) { fail(`manifest must not contain hex secrets (found ${nonPool.slice(0,2).join(",")})`); ok = false; }
-    else pass("no non-pool hex secrets in manifest");
+    else pass("no non-public hex secrets in manifest");
   }
 } else {
   pass("no hex private key literal in manifest");

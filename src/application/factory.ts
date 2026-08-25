@@ -51,6 +51,25 @@ export type FactoryRuntimeMode = "test" | "development" | "production";
 /** Canonical Starknet projection scopes supported by the configured runtime. */
 export type StarknetNetwork = "SN_SEPOLIA" | "SN_MAIN";
 
+/** Public deployment facts for the sole canonical testnet Registry V2 scope. */
+export const CANONICAL_TESTNET_V2 = {
+  network: "SN_SEPOLIA",
+  registryVersion: "v2",
+  registryAddress: "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d",
+  classHash: "0x4349a331b4339c1f20ccdb745e2d60a194f8da64cb789bb70bf60463f42dd8d",
+  deploymentBlock: 14015842,
+} as const;
+
+export type StarknetProjectionConfig = {
+  network: StarknetNetwork;
+  registryAddress: string;
+  registryVersion: StarknetRegistryVersion;
+  classHash: string | null;
+  initialFromBlock: number;
+};
+
+type StarknetProjectionConfigEnv = Record<string, string | undefined>;
+
 function parseStarknetNetwork(raw: string | undefined, source: string): StarknetNetwork | null {
   const value = raw?.trim();
   if (!value) return null;
@@ -218,7 +237,7 @@ function assertPostgresUrlOrThrow(url: string | null): string | null {
 // Starknet env helpers re-exported for tests
 export { getStarknetRpcUrl, getStarknetRegistryAddress, isStarknetReadConfigured, isStarknetRpcUrlValid };
 
-function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string; network: StarknetNetwork } | null {
+function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string; network: StarknetNetwork; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
   const rpcUrl = getStarknetRpcUrl();
   const registryAddress = getStarknetRegistryAddress();
   if (rpcUrl === null && registryAddress === null) return null;
@@ -226,21 +245,86 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string; 
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_read_config_incomplete");
   }
   if (!isStarknetRpcUrlValid(rpcUrl)) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_rpc_url");
-  let normalizedRegistryAddress: string;
-  try {
-    normalizedRegistryAddress = normalizeStarknetContractAddress(registryAddress, "registryAddress");
-  } catch {
-    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_address");
-  }
-  return { rpcUrl, registryAddress: normalizedRegistryAddress, network: getStarknetNetwork() };
+  const projection = getStarknetProjectionConfig();
+  return {
+    rpcUrl,
+    registryAddress: projection.registryAddress,
+    network: projection.network,
+    registryVersion: projection.registryVersion,
+    initialFromBlock: projection.initialFromBlock,
+    classHash: projection.classHash,
+  };
 }
 
-function getStarknetRegistryVersion(): StarknetRegistryVersion {
-  const raw = process.env.STARKNET_REGISTRY_VERSION?.trim().toLowerCase();
-  if (!raw) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_registry_version_required");
-  const value = raw === "1" ? "v1" : raw === "2" ? "v2" : raw;
-  if (value !== "v1" && value !== "v2") throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_version");
-  return value;
+function normalizeStarknetRegistryVersion(raw: string | undefined): StarknetRegistryVersion {
+  const value = raw?.trim().toLowerCase();
+  if (!value) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_registry_version_required");
+  const normalized = value === "1" ? "v1" : value === "2" ? "v2" : value;
+  if (normalized !== "v1" && normalized !== "v2") throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_version");
+  return normalized;
+}
+
+function normalizedOptionalClassHash(raw: string | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  if (!/^0x[0-9a-fA-F]{1,64}$/.test(value)) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_class_hash");
+  }
+  return `0x${value.slice(2).toLowerCase().padStart(64, "0")}`;
+}
+
+function parseProjectionStartBlock(raw: string | undefined, registryVersion: StarknetRegistryVersion, network: StarknetNetwork): number {
+  const value = raw?.trim() || (registryVersion === "v2" && network === "SN_SEPOLIA" ? String(CANONICAL_TESTNET_V2.deploymentBlock) : "0");
+  const block = Number(value);
+  if (!Number.isSafeInteger(block) || block < 0) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_indexer_start_block");
+  }
+  if (registryVersion === "v2" && network === "SN_SEPOLIA" && block !== CANONICAL_TESTNET_V2.deploymentBlock) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_start_block_mismatch");
+  }
+  return block;
+}
+
+/**
+ * Resolve and validate the configured Starknet projection scope before any
+ * provider, checkpoint, or event decoder is constructed. Testnet V2 is pinned
+ * to the explicitly deployed address and block; V1 remains an independent
+ * explicitly scoped legacy ABI.
+ */
+export function getStarknetProjectionConfig(env: StarknetProjectionConfigEnv = process.env): StarknetProjectionConfig {
+  const network = getStarknetNetwork({
+    STARKNET_CHAIN_ID: env.STARKNET_CHAIN_ID,
+    NEXT_PUBLIC_STARKNET_NETWORK: env.NEXT_PUBLIC_STARKNET_NETWORK,
+  });
+  const rawAddress = (env.STARKNET_REGISTRY_ADDRESS ?? env.PRISM_REGISTRY_ADDRESS ?? "").trim();
+  const registryAddress = normalizeRegistryAddress(rawAddress, "starknet_registry_address_required", "invalid_starknet_registry_address");
+  const registryVersion = normalizeStarknetRegistryVersion(env.STARKNET_REGISTRY_VERSION);
+  const classHash = normalizedOptionalClassHash(env.STARKNET_REGISTRY_CLASS_HASH);
+
+  if (registryAddress === CANONICAL_TESTNET_V2.registryAddress && registryVersion !== "v2") {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_requires_v2_version");
+  }
+  if (registryVersion === "v2" && network !== CANONICAL_TESTNET_V2.network) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_network_mismatch");
+  }
+  if (registryVersion === "v2" && network === "SN_SEPOLIA" && registryAddress !== CANONICAL_TESTNET_V2.registryAddress) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_registry_address_mismatch");
+  }
+  if (registryVersion === "v2" && classHash !== null && classHash !== CANONICAL_TESTNET_V2.classHash) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "canonical_v2_class_hash_mismatch");
+  }
+
+  return {
+    network,
+    registryAddress,
+    registryVersion,
+    classHash,
+    initialFromBlock: parseProjectionStartBlock(env.PRISM_STARKNET_INDEXER_START_BLOCK, registryVersion, network),
+  };
+}
+
+function getStarknetRegistryVersion(env: StarknetProjectionConfigEnv = process.env): StarknetRegistryVersion {
+  return normalizeStarknetRegistryVersion(env.STARKNET_REGISTRY_VERSION);
 }
 
 function requireExplicitRegistryVersion(value: unknown): StarknetRegistryVersion {
@@ -301,13 +385,6 @@ function assertSubmitPortRegistryAddress(
   }
 }
 
-function getProjectionStartBlock(): number {
-  const raw = (process.env.PRISM_STARKNET_INDEXER_START_BLOCK ?? "0").trim();
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_indexer_start_block");
-  return value;
-}
-
 function getProjectionMaxPages(): number {
   const raw = (process.env.PRISM_STARKNET_INDEXER_MAX_PAGES ?? "1000").trim();
   const value = Number(raw);
@@ -319,7 +396,7 @@ function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["star
   return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
 }
 
-export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null {
+export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
   const cfg = assertStarknetEnvOrThrow();
   if (!cfg) return null;
   // Share one read-only provider across callContract and getEvents — no dead shim.
@@ -335,7 +412,7 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   }
   const reader = new StarknetRegistryReader({ rpcUrl: cfg.rpcUrl, registryAddress: cfg.registryAddress, reader: provider as unknown as import("./adapters/starknet-registry-reader").StarknetRegistryReaderRpc });
   const ledger = new StarknetLedgerStatusAdapter({ rpcUrl: cfg.rpcUrl, reader: provider as unknown as import("../features/prism-operations/adapters/starknet-ledger-status").StarknetRpcReader });
-  const registryVersion = getStarknetRegistryVersion();
+  const registryVersion = cfg.registryVersion;
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   if (overrides?.submitPort && overrides.submitPortRegistryVersion !== registryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_mismatch");
@@ -347,7 +424,17 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }
-  return { reader, ledger, indexer, provider, network: cfg.network };
+  return {
+    reader,
+    ledger,
+    indexer,
+    provider,
+    network: cfg.network,
+    registryAddress: cfg.registryAddress,
+    registryVersion: cfg.registryVersion,
+    initialFromBlock: cfg.initialFromBlock,
+    classHash: cfg.classHash,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +464,7 @@ function createMemoryFactory(
   const operationStore = new InMemoryOperationStore();
   const registry = new InMemoryRegistry();
   // Attempt Starknet read wiring — fail-closed on invalid env, else fallback to memory for dev/test
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null = null;
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null = null;
   let starknetError: Error | null = null;
   try {
     starknetPorts = createStarknetReadPorts(overrides);
@@ -390,7 +477,7 @@ function createMemoryFactory(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : getConfiguredRegistryVersion(overrides);
+  const registryVersion = starknetPorts ? starknetPorts.registryVersion : getConfiguredRegistryVersion(overrides);
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   // Submit port semantics are explicit: the default is a local-only double;
@@ -531,7 +618,7 @@ async function createPostgresFactory(
   }
 
   // Starknet read wiring — fail-closed on invalid config, otherwise real adapters sharing one provider
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null = null;
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null = null;
   let starknetError: Error | null = null;
   try {
     starknetPorts = createStarknetReadPorts(overrides);
@@ -548,15 +635,15 @@ async function createPostgresFactory(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : getConfiguredRegistryVersion(overrides);
+  const registryVersion = starknetPorts ? starknetPorts.registryVersion : getConfiguredRegistryVersion(overrides);
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({
-        registryAddress: getStarknetRegistryAddress()!,
+        registryAddress: starknetPorts.registryAddress,
         network: starknetPorts.network,
         registryVersion,
-        initialFromBlock: getProjectionStartBlock(),
+        initialFromBlock: starknetPorts.initialFromBlock,
         checkpointStore: projectionCheckpointStore,
         eventsStore: prismEventsStore,
         indexer: starknetPorts.indexer,

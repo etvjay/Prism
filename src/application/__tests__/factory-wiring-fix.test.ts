@@ -10,7 +10,7 @@ import { StarknetRegistryReader, StarknetRegistryReaderError } from "../adapters
 import { StarknetEventIndexerAdapter, PRISM_EVENT_SELECTORS } from "../../features/prism-operations/adapters/starknet-event-indexer";
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapters/starknet-submit-v2";
-import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory, assertChainTouchingConfiguredForFactory } from "../factory";
+import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory, assertChainTouchingConfiguredForFactory, CANONICAL_TESTNET_V2 } from "../factory";
 import { isConcreteStarknetSubmitAdapter } from "../ports";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
@@ -402,9 +402,9 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       async submitBind() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
       async submitRevoke() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: CANONICAL_TESTNET_V2.registryAddress, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
       expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v1" })).toThrow(/submit_port_registry_version_mismatch/);
-      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2", submitPortRegistryAddress: REGISTRY });
+      const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2", submitPortRegistryAddress: CANONICAL_TESTNET_V2.registryAddress });
       expect(factory.submitPort).toBe(submitPort);
       expect(factory.submitPortMode).toBe("TEST_DOUBLE_X2");
       expect(factory.isStarknetSubmitConfigured).toBe(false);
@@ -455,8 +455,8 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       async getBlockNumber() { return 100; },
     };
     const account = { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } };
-    const v2 = new StarknetSubmitAdapterV2({ account, registryAddress: REGISTRY });
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
+    const v2 = new StarknetSubmitAdapterV2({ account, registryAddress: CANONICAL_TESTNET_V2.registryAddress });
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: CANONICAL_TESTNET_V2.registryAddress, STARKNET_REGISTRY_VERSION: "v2" }, async () => {
       const factory = createIsolatedFactoryWithStarknet(1_789_000_000, {
         starknetReadProvider: fakeProvider as never,
         submitPort: v2,
@@ -464,7 +464,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       });
       expect(factory.submitPort).toBe(v2);
       expect(factory.submitPort.registryVersion).toBe("v2");
-      expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(normalizeStarknetContractAddress(REGISTRY));
+      expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(normalizeStarknetContractAddress(CANONICAL_TESTNET_V2.registryAddress));
       expect(isConcreteStarknetSubmitAdapter(v2)).toBe(true);
     });
   });
