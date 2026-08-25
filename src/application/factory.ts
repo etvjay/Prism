@@ -38,6 +38,7 @@ import { WatermarkedResolveService } from "../features/prism-operations/domain/r
 import { ReconciliationWorker } from "../features/prism-operations/domain/reconciliation-worker";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
+import type { VerificationSourceProvider } from "../features/prism-pause/domain/policy-engine";
 import type { LedgerStatusPort, EventIndexerPort } from "../features/prism-operations/domain/ports";
 import { RpcProvider } from "starknet";
 
@@ -99,6 +100,8 @@ export interface FactoryStarknetOverrides {
   submitPortRegistryAddress?: string;
   /** Explicit Pause authority policy; omitted keeps approve/release fail-closed while D-P0-002 is open. */
   pauseAuthorityResolver?: PauseAuthorityResolver;
+  /** Explicit isolated-test verification double; never accepted from REST/API input. */
+  verificationSourceProvider?: VerificationSourceProvider;
   submitPort?: StarknetSubmitPort;
 }
 
@@ -360,6 +363,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
     metrics: pauseMetrics,
     adapterRegistry: pauseAdapters,
     authorityResolver: overrides?.pauseAuthorityResolver,
+    verificationSourceProvider: overrides?.verificationSourceProvider,
   });
   const receiptService = new ReceiptService(operationStore);
   // Watermark K=5 stale refusal — wired to ledger confirmed block when configured, otherwise fixed fake for tests
@@ -516,6 +520,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     metrics: pauseMetrics,
     adapterRegistry: pauseAdapters,
     authorityResolver: overrides?.pauseAuthorityResolver,
+    verificationSourceProvider: overrides?.verificationSourceProvider,
   });
   const receiptService = new ReceiptService(operationStore);
   const resolveService = new WatermarkedResolveService(registryReadPort, {

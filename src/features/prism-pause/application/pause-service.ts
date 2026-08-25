@@ -15,7 +15,7 @@ import { createExecutionPlan, verifyPlanHash } from "../domain/execution-plan";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import { createPause, computeApprovalScopeHash, toVerifying, completeVerification, escalate as domainEscalate, approveEscalation, release as domainRelease, cancel as domainCancel, expire as domainExpire, reverify as domainReverify } from "../domain/pause";
 import type { ExecutionPause } from "../domain/pause";
-import { evaluatePolicy } from "../domain/policy-engine";
+import { evaluatePolicy, normalizeVerificationSources } from "../domain/policy-engine";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 import { assertRecipientMatches } from "../domain/recipient";
@@ -209,7 +209,7 @@ export class PauseService {
     return this.store.createPause({ intent, plan, pause });
   }
 
-  async verify(input: { pauseId: string; policy: Policy; sources: VerificationSources; now?: number }): Promise<ExecutionPause> {
+  async verify(input: { pauseId: string; policy: Policy; sources?: VerificationSources; now?: number }): Promise<ExecutionPause> {
     const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
@@ -217,6 +217,10 @@ export class PauseService {
     if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, pause.planHash);
     const intent = await this.store.getIntent(pause.intentId);
     if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
+    // Validate the injected boundary before changing PAUSED → VERIFYING. A
+    // malformed source is not an UNKNOWN observation and must not leave a
+    // partially-mutated verification behind.
+    const sources = normalizeVerificationSources(input.sources);
     if (now >= pause.expiresAt) {
       // auto-expire path
       const expired = domainExpire(pause, now, pause.version);
@@ -247,7 +251,7 @@ export class PauseService {
       await this.store.updatePause(verifying, pause.version);
     }
     const current = verifying !== pause ? verifying : pause;
-    const checks = evaluatePolicy({ intent, plan, pause: current, policy: input.policy, sources: input.sources, now });
+    const checks = evaluatePolicy({ intent, plan, pause: current, policy: input.policy, sources, now });
     const completed = completeVerification(current, { checks, now, expectedVersion: current.version });
     await this.store.putChecks(pause.pauseId, checks);
     const next = await this.store.updatePause(completed, current.version);

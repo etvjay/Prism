@@ -8,9 +8,10 @@ import { PAUSE_ERROR_CODE } from "../../features/prism-pause/domain/errors";
 import { InMemoryPauseStore } from "../../features/prism-pause/adapters/memory-pause-store";
 import { computeApprovalScopeHash } from "../../features/prism-pause/domain/pause";
 import { testPauseAuthorityResolver } from "../../features/prism-pause/__tests__/test-authority";
+import { testPauseVerificationSourceProvider } from "../../features/prism-pause/__tests__/test-verification-sources";
 
 function createTestFactory() {
-  return createIsolatedFactory(undefined, { pauseAuthorityResolver: testPauseAuthorityResolver });
+  return createIsolatedFactory(undefined, { pauseAuthorityResolver: testPauseAuthorityResolver, verificationSourceProvider: testPauseVerificationSourceProvider });
 }
 
 const PRISM_ID = "prism:RESTTEST";
@@ -59,7 +60,7 @@ describe("Pause REST wiring — rigorous guards", () => {
   });
 
   it("default REST adapter fails closed when release/approval authority is not configured", async () => {
-    const f = createIsolatedFactory();
+    const f = createIsolatedFactory(undefined, { verificationSourceProvider: testPauseVerificationSourceProvider });
     const intent = await f.pauseService.createIntent({ prismId: PRISM_ID, purpose: "payment", amount: "100", asset: "0xdead", recipientAddress: "0xabc", idempotencyKey: "idem-authority-open" });
     const pause = await f.pauseService.pauseIntent(intent.intentId);
     const verified = await f.pauseService.verifyPause(pause.pauseId);

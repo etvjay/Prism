@@ -61,7 +61,7 @@ export interface PauseService {
   getIntent(intentId: string): Promise<ExecutionIntent | null>;
   pauseIntent(intentId: string, opts?: { correlationId?: string | null; requestId?: string | null }): Promise<ExecutionPause>;
   getPause(pauseId: string): Promise<ExecutionPause | null>;
-  verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string; sources?: unknown }): Promise<ExecutionPause>;
+  verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string }): Promise<ExecutionPause>;
   releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause>;
   cancelPause(pauseId: string, expectedVersion?: number | null): Promise<ExecutionPause>;
   escalatePause(pauseId: string): Promise<ExecutionPause>;
@@ -84,7 +84,8 @@ import type { ExecutionPlan as DomainPlan } from "../features/prism-pause/domain
 import type { ExecutionPause as DomainPause } from "../features/prism-pause/domain/pause";
 import { computeApprovalScopeHash } from "../features/prism-pause/domain/pause";
 import { PauseError, PAUSE_ERROR_CODE } from "../features/prism-pause/domain/errors";
-import type { Policy, VerificationSources } from "../features/prism-pause/domain/policy-engine";
+import type { Policy, VerificationSources, VerificationSourceProvider } from "../features/prism-pause/domain/policy-engine";
+import { normalizeVerificationSources } from "../features/prism-pause/domain/policy-engine";
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 export type { PauseAuthorityAction, PauseAuthorityActor, PauseAuthorityDecision, PauseAuthorityRequest, PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 
@@ -141,30 +142,6 @@ function mapDomainPauseToRest(domainPause: DomainPause, correlationId: string | 
   };
 }
 
-function passingSources(observedRecipient = "0xabc"): VerificationSources {
-  return {
-    recipientBinding: { status: "BOUND", observedValue: observedRecipient },
-    firstUse: { isFirstUse: false },
-    agentAuthorized: { authorized: true },
-    routeAllowed: { chainAllowed: true, assetAllowed: true, contractAllowed: true, notRevoked: true },
-    intentPlanMatch: { matches: true },
-    simulation: { success: true, effectMatches: true, freshnessOk: true },
-    additionalApproval: { requiresApproval: false },
-  };
-}
-
-function unknownSources(): VerificationSources {
-  return {
-    recipientBinding: { status: "UNKNOWN", observedValue: null },
-    firstUse: { isFirstUse: null, unknown: true },
-    agentAuthorized: { authorized: null, unknown: true },
-    routeAllowed: { chainAllowed: null, assetAllowed: null, contractAllowed: null, notRevoked: null, unknown: true },
-    intentPlanMatch: { matches: null, unknown: true },
-    simulation: { success: null, effectMatches: null, freshnessOk: null, unknown: true },
-    additionalApproval: { requiresApproval: null, unknown: true },
-  };
-}
-
 export class InMemoryPauseService implements PauseService {
   private readonly domainStore: PauseStore;
   private readonly domainService: DomainPauseService;
@@ -175,6 +152,7 @@ export class InMemoryPauseService implements PauseService {
   private readonly injectedOperationStore?: import("../features/prism-operations/domain/operation-store").OperationStore;
   private readonly injectedMetrics?: import("../features/prism-pause/ports/metrics").PauseMetrics;
   private readonly injectedAdapters?: Map<import("../features/prism-pause/ports/execution-adapter").SettlementChain, import("../features/prism-pause/ports/execution-adapter").PauseExecutionAdapter>;
+  private readonly verificationSourceProvider?: VerificationSourceProvider;
 
   constructor(
     private readonly clock: { now(): number },
@@ -184,11 +162,14 @@ export class InMemoryPauseService implements PauseService {
       metrics?: import("../features/prism-pause/ports/metrics").PauseMetrics;
       adapterRegistry?: Map<import("../features/prism-pause/ports/execution-adapter").SettlementChain, import("../features/prism-pause/ports/execution-adapter").PauseExecutionAdapter>;
       authorityResolver?: PauseAuthorityResolver;
+      /** Explicitly injected by isolated tests; never populated from a request. */
+      verificationSourceProvider?: VerificationSourceProvider;
     },
   ) {
     this.injectedOperationStore = opts?.operationStore;
     this.injectedMetrics = opts?.metrics;
     this.injectedAdapters = opts?.adapterRegistry;
+    this.verificationSourceProvider = opts?.verificationSourceProvider;
     this.domainStore = opts?.store ?? new InMemoryPauseStore();
     const metricsForDomain = opts?.metrics;
     this.domainService = new DomainPauseService(this.domainStore, {
@@ -319,16 +300,22 @@ export class InMemoryPauseService implements PauseService {
     return mapDomainPauseToRest(domainPause, corr);
   }
 
-  async verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string; sources?: unknown }): Promise<ExecutionPause> {
+  async verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string }): Promise<ExecutionPause> {
     const domainPause = await this.domainStore.getPause(pauseId);
     if (!domainPause) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `pause_not_found:${pauseId}`);
 
     // If caller supplies planHash and mismatches stored, fail closed
-    if (opts?.planHash && opts.planHash !== domainPause.planHash) {
+    if (opts?.planHash !== undefined && typeof opts.planHash !== "string") {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "plan_hash_invalid");
+    }
+    if (opts?.planHash !== undefined && opts.planHash !== domainPause.planHash) {
       throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, `plan_hash_mismatch:expected_${domainPause.planHash}_got_${opts.planHash}`);
     }
 
     const policyVersion = opts?.policyVersion ?? domainPause.policyVersion;
+    if (typeof policyVersion !== "string" || policyVersion.trim().length === 0) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "policy_version_invalid");
+    }
     if (policyVersion !== domainPause.policyVersion) {
       throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, `policy_version_mismatch: expected ${domainPause.policyVersion} got ${policyVersion}`);
     }
@@ -336,15 +323,6 @@ export class InMemoryPauseService implements PauseService {
     const plan = await this.domainStore.getPlan(domainPause.planHash);
     const intent = await this.domainStore.getIntent(domainPause.intentId);
     if (!plan || !intent) throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "plan_or_intent_missing");
-
-    // Determine sources: if opts.sources supplied use it, else detect unknown trigger
-    let sources: VerificationSources;
-    if (opts?.sources && typeof opts.sources === "object") {
-      sources = opts.sources as VerificationSources;
-    } else {
-      const triggerUnknown = intent.requestedRecipient.toLowerCase().includes("unknown") || intent.requestedAsset.toLowerCase().includes("unknown") || plan.asset.toLowerCase().includes("unknown");
-      sources = triggerUnknown ? unknownSources() : passingSources(intent.requestedRecipient);
-    }
 
     const policy: Policy = {
       policyVersion,
@@ -354,8 +332,27 @@ export class InMemoryPauseService implements PauseService {
       amountCeiling: null,
       requireFirstUseEscalation: false,
     };
-
     const nowMs = toMs(this.clock.now());
+
+    // Verification facts are resolved by a server-side port. The default is
+    // deliberately empty: evaluatePolicy turns each omitted fact into a
+    // blocking UNKNOWN. A request body can never provide this object.
+    let sources: VerificationSources = {};
+    if (this.verificationSourceProvider) {
+      try {
+        sources = normalizeVerificationSources(await this.verificationSourceProvider({
+          intent,
+          plan,
+          pause: domainPause,
+          policy,
+          now: nowMs,
+        }));
+      } catch (e) {
+        if (e instanceof PauseError) throw e;
+        // A failed authoritative read is an omission, not permission to pass.
+        sources = {};
+      }
+    }
 
     try {
       const result = await this.domainService.verify({ pauseId, policy, sources, now: nowMs });

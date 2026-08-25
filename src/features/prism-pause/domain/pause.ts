@@ -11,7 +11,7 @@
 import { PauseError, PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "./errors";
 import type { Hex } from "./execution-plan";
 import type { CheckResult, RiskLevel } from "./checks";
-import { hasBlockingFailure, deriveRiskLevel } from "./checks";
+import { assertTypedResults, hasBlockingFailure, deriveRiskLevel } from "./checks";
 import { createHash } from "node:crypto";
 
 export const PAUSE_STATE = {
@@ -27,6 +27,14 @@ export const PAUSE_STATE = {
 export type PauseState = (typeof PAUSE_STATE)[keyof typeof PAUSE_STATE];
 
 export const ALL_PAUSE_STATES: readonly PauseState[] = Object.values(PAUSE_STATE);
+
+export function isPauseState(value: unknown): value is PauseState {
+  return typeof value === "string" && (ALL_PAUSE_STATES as readonly string[]).includes(value);
+}
+
+export function assertPauseState(value: unknown, field = "state"): asserts value is PauseState {
+  if (!isPauseState(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_pause_state:${field}`);
+}
 
 export const TERMINAL_PAUSE_STATES: readonly PauseState[] = ["CANCELLED", "EXPIRED", "RELEASED"] as const;
 
@@ -111,6 +119,7 @@ const ALLOWED: Record<PauseState, TransitionSet> = {
 };
 
 export function canTransition(from: PauseState, to: PauseState): boolean {
+  if (!isPauseState(from) || !isPauseState(to)) return false;
   if (from === to) return false; // same-state not idempotent for pause
   const allowed = ALLOWED[from];
   return allowed ? allowed.has(to) : false;
@@ -162,6 +171,7 @@ function assertNotExpired(pause: ExecutionPause, now: number): void {
 
 // VERIFYING entry — must be PAUSED or reverify path
 export function toVerifying(pause: ExecutionPause, now: number, expectedVersion: number): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, expectedVersion);
   if (!canTransition(pause.state, PAUSE_STATE.VERIFYING)) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, `illegal_transition:${pause.state}->VERIFYING`);
   if (now >= pause.expiresAt) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_EXPIRED, "pause_expired_cannot_verify");
@@ -173,6 +183,9 @@ export function toVerifying(pause: ExecutionPause, now: number, expectedVersion:
 // - if blocking failure/unknown -> ESCALATED (if policy requires escalation) otherwise remains VERIFYING
 // This pure function computes RELEASE_READY vs ESCALATED via hasBlockingFailure and requiredApprovalCount hint
 export function completeVerification(pause: ExecutionPause, input: VerifyInput): ExecutionPause {
+  assertPauseState(pause.state);
+  if (!Array.isArray(input.checks) || input.checks.length === 0) throw new PauseError(PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING, "verification_checks_missing");
+  assertTypedResults(input.checks);
   assertVersion(pause, input.expectedVersion);
   if (pause.state !== PAUSE_STATE.VERIFYING) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, `completeVerification requires VERIFYING, got ${pause.state}`);
   if (input.now >= pause.expiresAt) {
@@ -212,6 +225,7 @@ export function completeVerification(pause: ExecutionPause, input: VerifyInput):
 }
 
 export function escalate(pause: ExecutionPause, input: EscalateInput): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, input.expectedVersion);
   if (!canTransition(pause.state, PAUSE_STATE.ESCALATED)) throw new PauseError(PAUSE_ERROR_CODE.ESCALATE_NOT_ALLOWED, `cannot_escalate_from_${pause.state}`);
   if (input.now >= pause.expiresAt) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_EXPIRED, "pause_expired_cannot_escalate");
@@ -228,8 +242,11 @@ export function escalate(pause: ExecutionPause, input: EscalateInput): Execution
 }
 
 export function approveEscalation(pause: ExecutionPause, input: ApproveInput): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, input.expectedVersion);
   if (pause.state !== PAUSE_STATE.ESCALATED) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, `approve requires ESCALATED, got ${pause.state}`);
+  if (!Array.isArray(pause.checks) || pause.checks.length === 0) throw new PauseError(PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING, "verification_checks_missing");
+  assertTypedResults(pause.checks);
   if (input.now >= pause.expiresAt) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_EXPIRED, "pause_expired_cannot_approve");
   if (input.planHash !== pause.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, `plan_hash_mismatch:expected_${pause.planHash}_got_${input.planHash}`);
   const expectedScope = computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion);
@@ -253,8 +270,11 @@ export function approveEscalation(pause: ExecutionPause, input: ApproveInput): E
 }
 
 export function release(pause: ExecutionPause, input: ReleaseInput): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, input.expectedVersion);
   if (pause.state !== PAUSE_STATE.RELEASE_READY) throw new PauseError(PAUSE_ERROR_CODE.RELEASE_NOT_READY, `release requires RELEASE_READY, got ${pause.state}`);
+  if (!Array.isArray(pause.checks) || pause.checks.length === 0) throw new PauseError(PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING, "verification_checks_missing");
+  assertTypedResults(pause.checks);
   if (input.now >= pause.expiresAt) throw new PauseError(PAUSE_ERROR_CODE.EXPIRED_PAUSE_CANNOT_RELEASE, "pause_expired");
   if (input.planHash !== pause.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, `plan_hash_mismatch:expected_${pause.planHash}_got_${input.planHash}`);
   const expectedScope = computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion);
@@ -275,6 +295,7 @@ export function release(pause: ExecutionPause, input: ReleaseInput): ExecutionPa
 }
 
 export function cancel(pause: ExecutionPause, input: CancelInput): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, input.expectedVersion);
   if (pause.state === PAUSE_STATE.RELEASED) throw new PauseError(PAUSE_ERROR_CODE.CANCEL_NOT_ALLOWED, "released_cannot_cancel");
   if (pause.state === PAUSE_STATE.EXPIRED) throw new PauseError(PAUSE_ERROR_CODE.CANCEL_NOT_ALLOWED, "expired_cannot_cancel");
@@ -285,6 +306,7 @@ export function cancel(pause: ExecutionPause, input: CancelInput): ExecutionPaus
 }
 
 export function expire(pause: ExecutionPause, now: number, expectedVersion?: number): ExecutionPause {
+  assertPauseState(pause.state);
   if (expectedVersion !== undefined && pause.version !== expectedVersion) throw new PauseError(PAUSE_ERROR_CODE.STALE_VERSION, `stale_version:expected_${expectedVersion}_got_${pause.version}`);
   if (pause.state === PAUSE_STATE.RELEASED || pause.state === PAUSE_STATE.CANCELLED || pause.state === PAUSE_STATE.EXPIRED) {
     throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION, `cannot_expire_from_${pause.state}`);
@@ -294,6 +316,7 @@ export function expire(pause: ExecutionPause, now: number, expectedVersion?: num
 }
 
 export function reverify(pause: ExecutionPause, input: ReverifyInput): ExecutionPause {
+  assertPauseState(pause.state);
   assertVersion(pause, input.expectedVersion);
   if (!([PAUSE_STATE.RELEASE_READY, PAUSE_STATE.ESCALATED, PAUSE_STATE.VERIFYING] as readonly string[]).includes(pause.state)) {
     throw new PauseError(PAUSE_ERROR_CODE.REVERIFY_NOT_ALLOWED, `reverify not allowed from ${pause.state}`);

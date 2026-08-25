@@ -17,7 +17,9 @@ import type { ExecutionIntent } from "../domain/intent";
 import { sameIntentFingerprint } from "../domain/intent";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import type { ExecutionPause, PauseState } from "../domain/pause";
+import { assertPauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
+import { assertRiskLevel, assertTypedResults } from "../domain/checks";
 import type { PauseDecision, PauseStore, CreatePauseRecordInput } from "../ports/pause-store";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 
@@ -186,15 +188,19 @@ function rowToPlan(row: Record<string, unknown>): ExecutionPlan {
 }
 
 function rowToPause(row: Record<string, unknown>): ExecutionPause {
+  const state = row.state;
+  assertPauseState(state, "row.state");
+  const riskLevel = row.risk_level;
+  assertRiskLevel(riskLevel, "row.risk_level");
   return {
     pauseId: row.pause_id as string,
     intentId: row.intent_id as string,
     planHash: row.plan_hash as Hex,
     policyVersion: row.policy_version as string,
-    state: row.state as PauseState,
+    state,
     version: Number(row.version),
     reasonCodes: JSON.parse((row.reason_codes_json as string) ?? "[]") as string[],
-    riskLevel: row.risk_level as ExecutionPause["riskLevel"],
+    riskLevel,
     createdAt: Number(row.created_at),
     expiresAt: Number(row.expires_at),
     lastVerifiedAt: row.last_verified_at === null || row.last_verified_at === undefined ? null : Number(row.last_verified_at),
@@ -316,6 +322,9 @@ export class PostgresPauseStore implements PauseStore {
 
   async createPause(input: CreatePauseRecordInput): Promise<ExecutionPause> {
     this.assertOpen();
+    assertPauseState(input.pause.state);
+    assertRiskLevel(input.pause.riskLevel);
+    assertTypedResults(input.pause.checks);
     if (!VALID_PAUSE_STATES.has(input.pause.state)) throw new PostgresPauseStoreError("invalid_record",`invalid state ${input.pause.state}`);
     try {
       await this.pool.query(
@@ -344,6 +353,7 @@ export class PostgresPauseStore implements PauseStore {
       // hydrate checks
       const c = await this.pool.query(`SELECT checks_json FROM pause_checks WHERE pause_id=$1`,[pauseId]);
       const checks: CheckResult[] = c.rowCount && c.rowCount>0 ? JSON.parse((c.rows[0] as Record<string, unknown>).checks_json as string) : [];
+      assertTypedResults(checks);
       return { ...pause, checks };
     } catch (cause) {
       if (cause instanceof PauseError) throw cause;
@@ -362,6 +372,9 @@ export class PostgresPauseStore implements PauseStore {
 
   async updatePause(pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause> {
     this.assertOpen();
+    assertPauseState(pause.state);
+    assertRiskLevel(pause.riskLevel);
+    assertTypedResults(pause.checks);
     if (!Number.isInteger(expectedVersion) || expectedVersion<0) throw new PostgresPauseStoreError("invalid_record","expectedVersion invalid");
     if (pause.version !== expectedVersion+1) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION,"version_must_increment_by_1");
     try {
@@ -385,9 +398,13 @@ export class PostgresPauseStore implements PauseStore {
 
   async listPausesByState(state: PauseState, limit=100): Promise<readonly ExecutionPause[]> {
     this.assertOpen();
+    assertPauseState(state);
     const bounded = Math.max(1, Math.min(1000, Math.floor(limit)));
     try { const r = await this.pool.query(`SELECT * FROM execution_pauses WHERE state=$1 ORDER BY created_at ASC LIMIT $2`,[state,bounded]); return r.rows.map((row)=>rowToPause(row as Record<string, unknown>)); }
-    catch (cause) { throw new PostgresPauseStoreError("store_read_failed","listPausesByState failed",cause); }
+    catch (cause) {
+      if (cause instanceof PauseError) throw cause;
+      throw new PostgresPauseStoreError("store_read_failed","listPausesByState failed",cause);
+    }
   }
 
   async listExpired(now: number, limit=100): Promise<readonly ExecutionPause[]> {
@@ -400,14 +417,23 @@ export class PostgresPauseStore implements PauseStore {
 
   async putChecks(pauseId: string, checks: readonly CheckResult[]): Promise<void> {
     this.assertOpen();
+    assertTypedResults(checks);
     try { await this.pool.query(`INSERT INTO pause_checks (pause_id, checks_json, updated_at) VALUES ($1,$2,$3) ON CONFLICT (pause_id) DO UPDATE SET checks_json=$2, updated_at=$3`,[pauseId, JSON.stringify(checks), Date.now()]); }
     catch (cause) { throw new PostgresPauseStoreError("store_write_failed","putChecks failed",cause); }
   }
 
   async getChecks(pauseId: string): Promise<readonly CheckResult[]> {
     this.assertOpen();
-    try { const r = await this.pool.query(`SELECT checks_json FROM pause_checks WHERE pause_id=$1`,[pauseId]); return r.rowCount&&r.rowCount>0 ? JSON.parse((r.rows[0] as Record<string, unknown>).checks_json as string) as CheckResult[] : []; }
-    catch (cause) { throw new PostgresPauseStoreError("store_read_failed","getChecks failed",cause); }
+    try {
+      const r = await this.pool.query(`SELECT checks_json FROM pause_checks WHERE pause_id=$1`,[pauseId]);
+      const checks = r.rowCount&&r.rowCount>0 ? JSON.parse((r.rows[0] as Record<string, unknown>).checks_json as string) as CheckResult[] : [];
+      assertTypedResults(checks);
+      return checks;
+    }
+    catch (cause) {
+      if (cause instanceof PauseError) throw cause;
+      throw new PostgresPauseStoreError("store_read_failed","getChecks failed",cause);
+    }
   }
 
   async appendDecision(decision: PauseDecision): Promise<PauseDecision> {

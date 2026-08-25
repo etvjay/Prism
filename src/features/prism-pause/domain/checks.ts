@@ -2,10 +2,29 @@
 // No boolean-only scores. Every check returns typed result per plan §5.
 // UNKNOWN is FAIL-CLOSED (blocking) — auto-release forbidden when blocking UNKNOWN.
 
-import { PAUSE_REASON_CODE } from "./errors";
+import { PauseError, PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "./errors";
 
 export type CheckStatus = "PASS" | "FAIL" | "UNKNOWN" | "NOT_APPLICABLE";
 export type CheckSeverity = "INFO" | "WARNING" | "BLOCKING";
+
+export const CHECK_STATUSES = ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"] as const satisfies readonly CheckStatus[];
+export const CHECK_SEVERITIES = ["INFO", "WARNING", "BLOCKING"] as const satisfies readonly CheckSeverity[];
+
+export function isCheckStatus(value: unknown): value is CheckStatus {
+  return typeof value === "string" && (CHECK_STATUSES as readonly string[]).includes(value);
+}
+
+export function isCheckSeverity(value: unknown): value is CheckSeverity {
+  return typeof value === "string" && (CHECK_SEVERITIES as readonly string[]).includes(value);
+}
+
+export function assertCheckStatus(value: unknown, field = "status"): asserts value is CheckStatus {
+  if (!isCheckStatus(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_check_status:${field}`);
+}
+
+export function assertCheckSeverity(value: unknown, field = "severity"): asserts value is CheckSeverity {
+  if (!isCheckSeverity(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_check_severity:${field}`);
+}
 
 export interface CheckResult {
   readonly checkId: string; // e.g. PAUSE-RECIPIENT-002
@@ -20,6 +39,16 @@ export interface CheckResult {
 }
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
+
+export const RISK_LEVELS = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"] as const satisfies readonly RiskLevel[];
+
+export function isRiskLevel(value: unknown): value is RiskLevel {
+  return typeof value === "string" && (RISK_LEVELS as readonly string[]).includes(value);
+}
+
+export function assertRiskLevel(value: unknown, field = "riskLevel"): asserts value is RiskLevel {
+  if (!isRiskLevel(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_risk_level:${field}`);
+}
 
 // stable check IDs
 export const CHECK_ID = {
@@ -58,6 +87,25 @@ export function makeCheck(
   expectedValue?: string | null,
   detail?: string | null,
 ): CheckResult {
+  assertCheckStatus(status);
+  assertCheckSeverity(severity);
+  if (typeof checkId !== "string" || checkId.trim().length === 0) {
+    throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_id_required");
+  }
+  if (typeof reasonCode !== "string" || reasonCode.trim().length === 0) {
+    throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_reason_code_required");
+  }
+  if (typeof source !== "string" || source.trim().length === 0) {
+    throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_source_required");
+  }
+  if (!Number.isFinite(checkedAt)) {
+    throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_timestamp_invalid");
+  }
+  for (const [field, value] of [["observedValue", observedValue], ["expectedValue", expectedValue], ["detail", detail]] as const) {
+    if (value !== undefined && value !== null && typeof value !== "string") {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_${field}_invalid`);
+    }
+  }
   return {
     checkId,
     status,
@@ -74,6 +122,8 @@ export function makeCheck(
 // Whether a set of checks permits auto-release.
 // Blocking FAIL or blocking UNKNOWN prevents release.
 export function canAutoRelease(checks: readonly CheckResult[]): boolean {
+  if (!Array.isArray(checks) || checks.length === 0) return false;
+  assertTypedResults(checks);
   for (const c of checks) {
     if (c.severity === "BLOCKING" && (c.status === "FAIL" || c.status === "UNKNOWN")) return false;
   }
@@ -82,12 +132,15 @@ export function canAutoRelease(checks: readonly CheckResult[]): boolean {
 
 // Whether any blocking failure exists
 export function hasBlockingFailure(checks: readonly CheckResult[]): boolean {
+  if (!Array.isArray(checks)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "checks_must_be_array");
+  assertTypedResults(checks);
   return checks.some((c) => c.severity === "BLOCKING" && (c.status === "FAIL" || c.status === "UNKNOWN"));
 }
 
 // Compute risk level from check severities/statuses
 export function deriveRiskLevel(checks: readonly CheckResult[]): RiskLevel {
   if (checks.length === 0) return "UNKNOWN";
+  assertTypedResults(checks);
   if (checks.some((c) => c.status === "UNKNOWN")) return "UNKNOWN";
   if (checks.some((c) => c.severity === "BLOCKING" && c.status === "FAIL")) return "HIGH";
   if (checks.some((c) => c.severity === "WARNING" && c.status === "FAIL")) return "MEDIUM";
@@ -96,9 +149,30 @@ export function deriveRiskLevel(checks: readonly CheckResult[]): RiskLevel {
 
 // Require explicit typed results — helpers to validate no opaque score used.
 export function assertTypedResults(checks: readonly CheckResult[]): void {
-  for (const c of checks) {
-    if (!c.checkId || !c.status || !c.severity || !c.reasonCode || !c.source) {
-      throw new Error(`check missing typed field: ${JSON.stringify(c)}`);
+  if (!Array.isArray(checks)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "checks_must_be_array");
+  checks.forEach((c, index) => {
+    if (!c || typeof c !== "object") {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_invalid:${index}`);
     }
-  }
+    const candidate = c as CheckResult;
+    if (typeof candidate.checkId !== "string" || candidate.checkId.trim().length === 0) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_id_required:${index}`);
+    }
+    assertCheckStatus(candidate.status, `checks[${index}].status`);
+    assertCheckSeverity(candidate.severity, `checks[${index}].severity`);
+    if (typeof candidate.reasonCode !== "string" || candidate.reasonCode.trim().length === 0) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_reason_code_required:${index}`);
+    }
+    if (typeof candidate.source !== "string" || candidate.source.trim().length === 0) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_source_required:${index}`);
+    }
+    if (!Number.isFinite(candidate.checkedAt)) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_timestamp_invalid:${index}`);
+    }
+    for (const [field, value] of [["observedValue", candidate.observedValue], ["expectedValue", candidate.expectedValue], ["detail", candidate.detail]] as const) {
+      if (value !== undefined && value !== null && typeof value !== "string") {
+        throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_${field}_invalid:${index}`);
+      }
+    }
+  });
 }

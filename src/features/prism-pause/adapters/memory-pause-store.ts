@@ -7,7 +7,9 @@ import type { ExecutionIntent } from "../domain/intent";
 import { sameIntentFingerprint } from "../domain/intent";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import type { ExecutionPause, PauseState } from "../domain/pause";
+import { assertPauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
+import { assertRiskLevel, assertTypedResults } from "../domain/checks";
 import type { PauseDecision, PauseStore, CreatePauseRecordInput } from "../ports/pause-store";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 
@@ -140,6 +142,9 @@ export class InMemoryPauseStore implements PauseStore {
 
   async createPause(input: CreatePauseRecordInput): Promise<ExecutionPause> {
     this.assertOpen();
+    assertPauseState(input.pause.state);
+    assertRiskLevel(input.pause.riskLevel);
+    assertTypedResults(input.pause.checks);
     if (!this.intents.has(input.intent.intentId)) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, input.intent.intentId);
     if (!this.plans.has(input.plan.planHash)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, "plan_not_persisted");
     if (input.pause.planHash !== input.plan.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, "pause.planHash != plan.planHash");
@@ -168,7 +173,11 @@ export class InMemoryPauseStore implements PauseStore {
     this.assertOpen();
     await yieldToEventLoop();
     const rec = this.pauses.get(pauseId);
-    return rec ? clone(rec) : undefined;
+    if (!rec) return undefined;
+    assertPauseState(rec.state);
+    assertRiskLevel(rec.riskLevel);
+    assertTypedResults(rec.checks);
+    return clone(rec);
   }
 
   async getPauseByIntent(intentId: string): Promise<ExecutionPause | undefined> {
@@ -180,6 +189,9 @@ export class InMemoryPauseStore implements PauseStore {
 
   async updatePause(pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause> {
     this.assertOpen();
+    assertPauseState(pause.state);
+    assertRiskLevel(pause.riskLevel);
+    assertTypedResults(pause.checks);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 0) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "expectedVersion_invalid");
     const current = this.pauses.get(pause.pauseId);
     if (!current) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, pause.pauseId);
@@ -196,6 +208,7 @@ export class InMemoryPauseStore implements PauseStore {
 
   async listPausesByState(state: PauseState, limit = 100): Promise<readonly ExecutionPause[]> {
     this.assertOpen();
+    assertPauseState(state);
     const bounded = Math.max(1, Math.min(1000, Math.floor(limit)));
     const result: ExecutionPause[] = [];
     for (const p of this.pauses.values()) if (p.state === state) result.push(clone(p));
@@ -219,6 +232,7 @@ export class InMemoryPauseStore implements PauseStore {
 
   async putChecks(pauseId: string, checks: readonly CheckResult[]): Promise<void> {
     this.assertOpen();
+    assertTypedResults(checks);
     if (!this.pauses.has(pauseId)) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, pauseId);
     await yieldToEventLoop();
     if (!this.pauses.has(pauseId)) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, pauseId);
@@ -229,7 +243,9 @@ export class InMemoryPauseStore implements PauseStore {
     this.assertOpen();
     await yieldToEventLoop();
     const rec = this.checks.get(pauseId);
-    return rec ? rec.map(clone) : [];
+    const checks = rec ? rec.map(clone) : [];
+    assertTypedResults(checks);
+    return checks;
   }
 
   // --- Decisions ---

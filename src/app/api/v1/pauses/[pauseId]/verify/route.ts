@@ -1,7 +1,7 @@
 import { getAppFactory } from "@/application/factory";
 import { parseHeaders, readJson, requireSession, jsonError } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
-import { PauseError } from "@/features/prism-pause/domain/errors";
+import { PauseError, PAUSE_ERROR_CODE } from "@/features/prism-pause/domain/errors";
 
 export async function POST(req: Request, ctx: { params: Promise<{ pauseId: string }> }): Promise<Response> {
   const parsed = parseHeaders(req);
@@ -11,6 +11,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   if (body === null) return jsonError(parsed.requestId, "ERR-023", 400, "malformed_json");
   const sessionOrErr = requireSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
+  if (Object.prototype.hasOwnProperty.call(body, "sources")) {
+    const error = new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "verification_sources_not_client_writable");
+    return new Response(JSON.stringify({ ok: false, error: error.toExternalShape(), requestId: parsed.requestId ?? null }), {
+      status: error.httpStatusHint,
+      headers: {
+        "content-type": "application/json",
+        ...(parsed.requestId ? { "x-request-id": parsed.requestId } : {}),
+        ...(parsed.correlationId ? { "x-correlation-id": parsed.correlationId } : {}),
+      },
+    });
+  }
   let factory;
   try {
     factory = await getAppFactory();
@@ -23,8 +34,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   try {
     const planHash = body.planHash as string | undefined;
     const policyVersion = body.policyVersion as string | undefined;
-    const sources = body.sources as unknown | undefined;
-    const pause = await factory.pauseService.verifyPause(decoded, { planHash, policyVersion, sources });
+    const pause = await factory.pauseService.verifyPause(decoded, { planHash, policyVersion });
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
     if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
     if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);

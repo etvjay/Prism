@@ -124,6 +124,27 @@ describe("M7 Pause REST boundary regressions", () => {
     expect(response.headers.get("x-correlation-id")).toBe("corr-verify");
   });
 
+  it("rejects client-supplied verification sources instead of treating them as authoritative", async () => {
+    const response = await verifyPausePost(
+      request({
+        sources: {
+          recipientBinding: { status: "BOUND", observedValue: "0xabc" },
+          routeAllowed: { chainAllowed: true, assetAllowed: true, contractAllowed: true, notRevoked: true },
+          simulation: { success: true, effectMatches: true, freshnessOk: true },
+          agentAuthorized: { authorized: true },
+        },
+      }, { "x-request-id": "req-untrusted-sources", "x-correlation-id": "corr-untrusted-sources" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string; detail?: string } };
+
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.INVALID_STATE);
+    expect(body.error.detail).toBe("verification_sources_not_client_writable");
+    expect(response.headers.get("x-correlation-id")).toBe("corr-untrusted-sources");
+    expect(pauseService.verifyPause).not.toHaveBeenCalled();
+  });
+
   it("maps pause-store read failures to a stable dependency error", async () => {
     pauseService.getPause.mockRejectedValue(new Error("store_connection_failed"));
 
