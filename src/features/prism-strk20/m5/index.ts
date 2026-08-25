@@ -3,3 +3,7 @@ export * from "./ports";
 export * from "./runner";
 export * from "./rpc";
 export * from "./validator";
+export * from "./errors";
+export * from "./validation";
+export * from "./operation";
+export * from "./maturity";

@@ -13,7 +13,7 @@ import {
   VTOKEN_STRK_SEPOLIA,
   HELPER_ADDRESS_SEPOLIA,
   PRIVACY_POOL_SEPOLIA,
-  normalizeHex,
+  OPEN_NOTE_ZERO_PLACEHOLDER,
   addressesEqual,
   isValidStarknetAddress,
 } from "./constants";
@@ -26,68 +26,37 @@ import type {
   ValidatorPort,
 } from "./ports";
 import type { Hex } from "../domain/receipt";
+import {
+  M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
+  M5_ERROR_CODE,
+  M5Error,
+  type M5Blocked,
+  type M5BlockedReason,
+  type M5ErrorCode,
+} from "./errors";
 
-// ---------------------------------------------------------------------------
-// Error taxonomy — models every failure state listed in scope
-// ---------------------------------------------------------------------------
+// Keep the historical runner exports stable for existing consumers.
+export {
+  M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
+  M5_ERROR_CODE,
+  M5Error,
+  type M5Blocked,
+  type M5BlockedReason,
+  type M5ErrorCode,
+} from "./errors";
 
-export const M5_ERROR_CODE = {
-  CAPABILITY_UNKNOWN: "M5-001",
-  NETWORK_MISMATCH: "M5-002",
-  NOT_REGISTERED: "M5-003",
-  SCREENING_REJECTED: "M5-004",
-  SCREENING_UNAVAILABLE: "M5-005",
-  MATURITY_PENDING: "M5-006",
-  ZERO_OUTPUT: "M5-007",
-  HELPER_REVERT: "M5-008",
-  POOL_ROLLBACK: "M5-009",
-  VALIDATOR_MINE_FALSE: "M5-010",
-  UNKNOWN_RECEIPT: "M5-011",
-  FEE_UNAVAILABLE: "M5-012",
-  FEE_CHANGED: "M5-013",
-  INVALID_AMOUNT: "M5-014",
-  VIEWING_KEY_FORBIDDEN: "M5-015",
-  WALLET_UNAVAILABLE: "M5-016",
-  AMOUNT_OVERFLOW: "M5-017",
-  CALLDATA_MISMATCH: "M5-018",
-  CONSERVATION_FAILED: "M5-019",
-  STRANDED_BALANCE: "M5-020",
-  NOTE_DENOMINATION_WRONG: "M5-021",
-  SIMULATION_PROOF_INVALID: "M5-022",
-  CONFIG_INVALID: "M5-023",
-} as const;
-
-export type M5ErrorCode = (typeof M5_ERROR_CODE)[keyof typeof M5_ERROR_CODE];
-
-export class M5Error extends Error {
-  readonly code: M5ErrorCode;
-  readonly detail?: string;
-  constructor(code: M5ErrorCode, detail?: string) {
-    super(`[${code}] ${detail ?? code}`);
-    this.code = code;
-    this.detail = detail;
-    this.name = code;
-  }
-}
-
-// Blocked-by-environment sentinel — no fabricated hash
-export const M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE = "M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE" as const;
-export type M5BlockedReason =
-  | "NO_WALLET"
-  | "NO_PROVER"
-  | "CAPABILITY_UNAVAILABLE"
-  | "RPC_UNAVAILABLE"
-  | "ENV_MISSING";
-
-export interface M5Blocked {
-  verdict: typeof M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE;
-  reason: M5BlockedReason;
-  detail: string;
-  commit?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Runner config
+import {
+  attributePoolEvent,
+  containsAddressInCalldata,
+  validateHelperCalldata,
+  validateM5Actions,
+  validateM5Receipt,
+  validateM5TransactionObservation,
+  validateVesuDepositObservation,
+  type M5ReceiptObservation,
+} from "./validation";
+import { createM5Operation, markM5SubmissionStarted, markM5Submitted, recoverM5Operation, type M5Operation } from "./operation";
+import { evaluateM5Maturity } from "./maturity";
 // ---------------------------------------------------------------------------
 
 export interface M5RunnerConfig {
@@ -102,8 +71,13 @@ export interface M5RunnerConfig {
   // Polling
   receiptTimeoutMs?: number;
   receiptIntervalMs?: number;
-  // Independent RPC
+  // Independent RPC identity is caller-supplied; the runner never calls two
+  // endpoints "independent" merely because they returned the same bytes.
   independentRpc?: IndependentRpcReader | null;
+  independentSourceId?: string | null;
+  primarySourceId?: string | null;
+  // Optional local operation identifier for the no-rebroadcast recovery fence.
+  operationId?: string;
   // Upstream validator
   validator?: ValidatorPort | null;
   // Commit for evidence envelope
@@ -123,8 +97,11 @@ export interface M5LivePredicates {
   receiptObserved: boolean;
   executionSucceeded: boolean;
   poolEventObserved: boolean;
+  poolEventAttributed: boolean;
   helperCalldataInReceipt: boolean;
   vesuDepositObserved: boolean;
+  operationRecovered: boolean;
+  maturityState: "unobserved" | "maturing" | "privately_available";
   // The current WalletAccountV6/M5 receipt ports do not expose private-note
   // readback or a maturity oracle. These remain false until an external,
   // consented wallet/session adapter supplies them explicitly.
@@ -151,6 +128,11 @@ export interface M5Success {
     actions: Strk20Action[];
     receipt: unknown;
     independentReadback: unknown;
+    operation?: M5Operation;
+    poolEvent?: unknown;
+    helperCalldata?: string[] | null;
+    vesuDeposit?: unknown;
+    maturity?: unknown;
     conservation: { inAmount: string; vTokenDeltaShares?: string; helperStrkBalance: string; helperVTokenBalance: string };
     note?: { noteId: string; token: string; amount: string };
     validator?: unknown;
@@ -197,10 +179,6 @@ function isExpectedSepoliaChainId(chainId: string): boolean {
   return normalized === "SN_SEPOLIA" || normalized === "0X534E5F5345504F4C4941";
 }
 
-function isTerminalReceiptStatus(status: string): boolean {
-  return status === "SUCCEEDED" || status === "REVERTED";
-}
-
 // Exact helper calldata: [STRK, VTOKEN, amount, "${openNoteIds[0]}"]
 export function buildHelperCalldata(inAmount: bigint, opts?: { strk?: string; vToken?: string }): string[] {
   const strk = opts?.strk ?? STRK_SEPOLIA;
@@ -211,20 +189,40 @@ export function buildHelperCalldata(inAmount: bigint, opts?: { strk?: string; vT
   if (inAmount < 0n) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "NEGATIVE_IN_AMOUNT");
   if (!isU128(inAmount)) throw new M5Error(M5_ERROR_CODE.AMOUNT_OVERFLOW, `in_amount ${inAmount} exceeds u128`);
   if (inAmount < MIN_AMOUNT) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "ZERO_IN_AMOUNT");
-  return [strk, vt, toFeltDecimal(inAmount), "${openNoteIds[0]}"];
+  const calldata = [strk, vt, toFeltDecimal(inAmount), OPEN_NOTE_ZERO_PLACEHOLDER];
+  validateHelperCalldata(calldata, {
+    strkToken: strk,
+    vToken: vt,
+    helperAddress: HELPER_ADDRESS_SEPOLIA,
+    privacyPool: PRIVACY_POOL_SEPOLIA,
+    inAmount,
+  });
+  return calldata;
 }
 
 export function buildActions(inAmount: bigint, selfAddress: string, cfg: M5RunnerConfig): Strk20Action[] {
   const strk = cfg.strkToken ?? STRK_SEPOLIA;
+  const vToken = cfg.vToken ?? VTOKEN_STRK_SEPOLIA;
   const helper = cfg.helperAddress ?? HELPER_ADDRESS_SEPOLIA;
+  assertConfiguredAddress(strk, "strk_token");
+  assertConfiguredAddress(vToken, "v_token");
   assertConfiguredAddress(helper, "helper_address");
-  const calldata = buildHelperCalldata(inAmount, { strk, vToken: cfg.vToken ?? VTOKEN_STRK_SEPOLIA });
-  // 1. Transfer OPEN to self (creates open note)
-  // 2. Invoke helper with placeholder
-  return [
+  assertConfiguredAddress(selfAddress, "wallet_address");
+  const calldata = buildHelperCalldata(inAmount, { strk, vToken });
+  // The pinned first-party Wallet API accepts exactly these two atomic actions:
+  // OPEN transfer creates the note consumed by the helper invoke placeholder.
+  const actions: Strk20Action[] = [
     { type: "transfer", token: strk, amount: "OPEN", recipient: selfAddress },
     { type: "invoke", contract: helper, calldata },
   ];
+  validateM5Actions(actions, {
+    strkToken: strk,
+    vToken,
+    helperAddress: helper,
+    privacyPool: cfg.privacyPool ?? PRIVACY_POOL_SEPOLIA,
+    inAmount,
+  }, selfAddress);
+  return actions;
 }
 
 function isNotRegisteredError(e: unknown): boolean {
@@ -246,6 +244,7 @@ function isPrivacyLeakError(e: unknown): boolean {
 
 export class M5VesuRunner {
   private cfg: Required<M5RunnerConfig>;
+  private operation: M5Operation | null = null;
 
   constructor(cfg: M5RunnerConfig) {
     this.cfg = {
@@ -258,6 +257,9 @@ export class M5VesuRunner {
       receiptTimeoutMs: cfg.receiptTimeoutMs ?? 60_000,
       receiptIntervalMs: cfg.receiptIntervalMs ?? 2_000,
       independentRpc: (cfg.independentRpc ?? null) as IndependentRpcReader | null,
+      independentSourceId: cfg.independentSourceId ?? cfg.independentRpc?.sourceId ?? null,
+      primarySourceId: cfg.primarySourceId ?? null,
+      operationId: cfg.operationId ?? "m5-vesu-local",
       validator: (cfg.validator ?? null) as ValidatorPort | null,
       commit: cfg.commit ?? "",
     };
@@ -269,9 +271,19 @@ export class M5VesuRunner {
     if (addressesEqual(this.cfg.strkToken!, this.cfg.vToken!)) {
       throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "strk_token_and_v_token_must_differ");
     }
+    if (this.cfg.independentRpc && this.cfg.primarySourceId && this.cfg.independentSourceId && this.cfg.primarySourceId === this.cfg.independentSourceId) {
+      throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "independent_rpc_source_must_differ");
+    }
+    if (!Number.isSafeInteger(this.cfg.receiptTimeoutMs!) || this.cfg.receiptTimeoutMs! < 0) {
+      throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "receipt_timeout_invalid");
+    }
+    if (!Number.isSafeInteger(this.cfg.receiptIntervalMs!) || this.cfg.receiptIntervalMs! < 0) {
+      throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "receipt_interval_invalid");
+    }
     if (this.cfg.chainIdExpected!.trim().toUpperCase() !== "SN_SEPOLIA") {
       throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "M5_route_is_SN_SEPOLIA_only");
     }
+    if (typeof cfg.inAmount !== "bigint") throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount_must_be_bigint");
     if (cfg.inAmount < 0n) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount negative");
     if (!isU128(cfg.inAmount)) throw new M5Error(M5_ERROR_CODE.AMOUNT_OVERFLOW, `in_amount ${cfg.inAmount} exceeds u128 max`);
     if (cfg.inAmount < MIN_AMOUNT) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount zero");
@@ -303,8 +315,11 @@ export class M5VesuRunner {
       receiptObserved: false,
       executionSucceeded: false,
       poolEventObserved: false,
+      poolEventAttributed: false,
       helperCalldataInReceipt: false,
       vesuDepositObserved: false,
+      operationRecovered: false,
+      maturityState: "unobserved",
       noteReadbackObserved: false,
       maturityObserved: false,
       conservationOk: false,
@@ -397,16 +412,23 @@ export class M5VesuRunner {
       vToken: this.cfg.vToken,
     });
     const invoke = actions[1] as Strk20InvokeAction;
-    const calldataExact =
-      invoke.calldata.length === 4 &&
-      addressesEqual(invoke.calldata[0], expectedCalldata[0]) &&
-      addressesEqual(invoke.calldata[1], expectedCalldata[1]) &&
-      invoke.calldata[2].toLowerCase() === expectedCalldata[2].toLowerCase() &&
-      invoke.calldata[3] === "${openNoteIds[0]}";
-    if (!calldataExact) throw new M5Error(M5_ERROR_CODE.CALLDATA_MISMATCH, `helper calldata mismatch: ${JSON.stringify(invoke.calldata)}`);
+    validateM5Actions(actions, {
+      strkToken: this.cfg.strkToken,
+      vToken: this.cfg.vToken,
+      helperAddress: this.cfg.helperAddress,
+      privacyPool: this.cfg.privacyPool,
+      inAmount: this.cfg.inAmount,
+    }, selfAddress);
+    validateHelperCalldata(invoke.calldata, {
+      strkToken: this.cfg.strkToken,
+      vToken: this.cfg.vToken,
+      helperAddress: this.cfg.helperAddress,
+      privacyPool: this.cfg.privacyPool,
+      inAmount: this.cfg.inAmount,
+    });
     predicates.calldataExact = true;
 
-    // Verify note denomination is vToken shares (out_token == vToken)
+    // The helper's OpenNoteDeposit is explicitly denominated in vToken shares.
     if (!addressesEqual(invoke.calldata[1], this.cfg.vToken!)) {
       throw new M5Error(M5_ERROR_CODE.NOTE_DENOMINATION_WRONG, `note denomination: out_token ${invoke.calldata[1]} != vToken ${this.cfg.vToken}`);
     }
@@ -430,7 +452,10 @@ export class M5VesuRunner {
       if (simResult.proof.data !== "" || simResult.proof.output.length !== 0 || simResult.proof.proof_facts.length !== 0) {
         throw new M5Error(M5_ERROR_CODE.SIMULATION_PROOF_INVALID, "simulate_returned_non_empty_proof");
       }
-      if (!simResult.call?.contract_address || !addressesEqual(simResult.call.contract_address, this.cfg.privacyPool!)) {
+      if (!simResult.call || typeof simResult.call !== "object" || typeof simResult.call.contract_address !== "string" || typeof simResult.call.entry_point !== "string" || simResult.call.entry_point.trim().length === 0 || !Array.isArray(simResult.call.calldata)) {
+        throw new M5Error(M5_ERROR_CODE.SIMULATION_PROOF_INVALID, "simulate_call_shape_invalid");
+      }
+      if (!addressesEqual(simResult.call.contract_address, this.cfg.privacyPool!)) {
         throw new M5Error(M5_ERROR_CODE.CALLDATA_MISMATCH, "simulate_outer_call_not_pinned_privacy_pool");
       }
       predicates.simulateObserved = true;
@@ -449,135 +474,222 @@ export class M5VesuRunner {
     // If simulate observed zero output (helper would have reverted for dust) — model failure
     // We check via simulate result? On zero output helper reverts; simulate would have thrown
 
-    // 5. Wallet-side proof submission boundary — real invoke, wallet generates proof
-    // If provider is mock and cannot produce real proof, we must return BLOCKED not fake hash
+    // 5. Wallet-side proof submission boundary — real invoke, wallet generates proof.
+    // The operation is fenced before this call. A second run on the same runner
+    // resumes receipt polling for the existing hash and never invokes again.
+    let operation = this.operation;
     let txHash: Hex;
-    try {
-      const res = await provider.strk20InvokeTransaction(actions);
-      if (!res.transaction_hash || !/^0x[0-9a-fA-F]+$/.test(res.transaction_hash)) {
-        throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `invalid tx hash from wallet: ${res.transaction_hash}`);
+    if (operation?.submissionAttempted) {
+      if (!operation.txHash) {
+        throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, "submission_attempted_without_transaction_hash");
       }
-      txHash = res.transaction_hash as Hex;
+      txHash = operation.txHash;
       predicates.submissionObserved = true;
-    } catch (e) {
-      if (e instanceof M5Error) throw e;
-      const msg = String((e as Error).message ?? "");
-      if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, safeErrorMessage(e));
-      if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("reject"))
-        throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, safeErrorMessage(e));
-      if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("unavailable"))
-        throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, safeErrorMessage(e));
-      if (msg.toLowerCase().includes("user_refused") || msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("denied")) {
-        throw new M5Error(M5_ERROR_CODE.WALLET_UNAVAILABLE, `user refused: ${safeErrorMessage(e)}`);
+    } else {
+      operation = createM5Operation(this.cfg.operationId!, Date.now());
+      operation = markM5SubmissionStarted(operation, Date.now());
+      this.operation = operation;
+      try {
+        const res = await provider.strk20InvokeTransaction(actions);
+        if (!res.transaction_hash || !/^0x[0-9a-fA-F]+$/.test(res.transaction_hash)) {
+          throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `invalid tx hash from wallet: ${res.transaction_hash}`);
+        }
+        operation = markM5Submitted(operation, res.transaction_hash, Date.now());
+        this.operation = operation;
+        txHash = operation.txHash as Hex;
+        predicates.submissionObserved = true;
+      } catch (e) {
+        if (e instanceof M5Error) throw e;
+        const msg = String((e as Error).message ?? "");
+        if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, safeErrorMessage(e));
+        if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("reject"))
+          throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, safeErrorMessage(e));
+        if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("unavailable"))
+          throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, safeErrorMessage(e));
+        if (msg.toLowerCase().includes("user_refused") || msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("denied")) {
+          throw new M5Error(M5_ERROR_CODE.WALLET_UNAVAILABLE, `user refused: ${safeErrorMessage(e)}`);
+        }
+        // If provider is mock with no real prover, remain explicitly blocked;
+        // the pre-submission fence is retained and no fabricated hash is used.
+        if ((provider as unknown as { _isMock?: boolean })._isMock) {
+          return {
+            verdict: M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
+            reason: "NO_PROVER",
+            detail: `Mock provider cannot generate SNIP-36 proof: ${safeErrorMessage(e)}; no fabricated hash emitted.`,
+            commit: this.cfg.commit,
+          };
+        }
+        throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `invoke failed: ${safeErrorMessage(e)}`);
       }
-      // If provider is mock with _isMock and no real prover, treat as blocked
-      if ((provider as unknown as { _isMock?: boolean })._isMock) {
-        return {
-          verdict: M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
-          reason: "NO_PROVER",
-          detail: `Mock provider cannot generate SNIP-36 proof: ${safeErrorMessage(e)}; no fabricated hash emitted.`,
-          commit: this.cfg.commit,
-        };
-      }
-      throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `invoke failed: ${safeErrorMessage(e)}`);
     }
 
-    // 6. Receipt polling — via provider or independent RPC
-    let receipt: Awaited<ReturnType<M5Provider["getReceipt"]>> | null = null;
+    // 6. Receipt polling/recovery. UNKNOWN, RECEIVED and PENDING are not
+    // terminal; a timeout becomes requires_attention without inventing a hash.
+    let receipt: M5ReceiptObservation | null = null;
     const start = Date.now();
     const timeout = this.cfg.receiptTimeoutMs!;
     const interval = this.cfg.receiptIntervalMs!;
-    while (Date.now() - start < timeout) {
+    const timeoutAt = start + timeout;
+
+    const readPrimaryReceipt = async (): Promise<M5ReceiptObservation | null> => {
+      const raw = await provider.getReceipt(txHash);
+      if (!raw) return null;
+      const normalized = validateM5Receipt({
+        transactionHash: raw.transactionHash ?? txHash,
+        executionStatus: raw.executionStatus,
+        finalityStatus: raw.finalityStatus,
+        blockNumber: raw.blockNumber,
+        senderAddress: raw.senderAddress,
+        events: raw.events,
+      }, txHash);
+      const attribution = attributePoolEvent(normalized, this.cfg.privacyPool!);
+      return { ...normalized, poolEventFound: attribution !== null };
+    };
+
+    const readIndependentReceipt = async (): Promise<M5ReceiptObservation | null> => {
+      if (!this.cfg.independentRpc) return null;
+      const raw = await this.cfg.independentRpc.getTransactionReceipt(txHash);
+      if (!raw) return null;
+      const normalized = validateM5Receipt({
+        transactionHash: raw.transactionHash ?? txHash,
+        executionStatus: raw.executionStatus,
+        finalityStatus: raw.finalityStatus,
+        blockNumber: raw.blockNumber,
+        senderAddress: raw.senderAddress,
+        events: raw.events,
+      }, txHash);
+      const attribution = attributePoolEvent(normalized, this.cfg.privacyPool!);
+      return { ...normalized, poolEventFound: attribution !== null };
+    };
+
+    while (Date.now() < timeoutAt) {
+      let candidate: M5ReceiptObservation | null = null;
       try {
-        const observed = await provider.getReceipt(txHash);
-        if (observed && (isTerminalReceiptStatus(observed.executionStatus) || observed.executionStatus === "UNKNOWN")) {
-          receipt = observed;
-        }
+        candidate = await readPrimaryReceipt();
       } catch (e) {
-        throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt read failed: ${safeErrorMessage(e)}`);
+        throw e instanceof M5Error
+          ? e
+          : new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt read failed: ${safeErrorMessage(e)}`);
       }
-      // Also try independent RPC if available, but do not treat RECEIVED or
-      // PENDING as a terminal receipt.
-      if (!receipt && this.cfg.independentRpc) {
+      if (!candidate && this.cfg.independentRpc) {
         try {
-          const r = await this.cfg.independentRpc.getTransactionReceipt(txHash);
-          if (r && (isTerminalReceiptStatus(r.executionStatus) || r.executionStatus === "UNKNOWN")) {
-            receipt = {
-              executionStatus: r.executionStatus as "SUCCEEDED" | "REVERTED" | "RECEIVED",
-              blockNumber: r.blockNumber,
-              events: r.events.map((e) => ({ address: e.address, keys: e.keys })),
-            };
-          }
+          candidate = await readIndependentReceipt();
         } catch {
-          // An independent read is supplementary; keep polling the wallet path.
+          // A supplementary independent path may be unavailable while the
+          // wallet provider continues polling. It cannot create evidence.
         }
       }
-      if (receipt) break;
-      await new Promise((res) => setTimeout(res, interval));
+      if (candidate) {
+        const recovered = recoverM5Operation(operation, candidate, {
+          now: Date.now(),
+          timeoutAt,
+          requiredPoolAddress: this.cfg.privacyPool,
+        });
+        operation = recovered.operation;
+        this.operation = operation;
+        if (candidate.executionStatus === "REVERTED" || candidate.executionStatus === "SUCCEEDED") {
+          receipt = candidate;
+          break;
+        }
+      }
+      if (Date.now() >= timeoutAt) break;
+      await new Promise((resolve) => setTimeout(resolve, interval));
     }
 
     if (!receipt) {
+      const timedOut = recoverM5Operation(operation, null, {
+        now: Date.now(),
+        timeoutAt,
+        requiredPoolAddress: this.cfg.privacyPool,
+      });
+      operation = timedOut.operation;
+      this.operation = operation;
       throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt not found for ${txHash} after ${timeout}ms`);
     }
     predicates.receiptObserved = true;
+    predicates.operationRecovered = operation.state === "succeeded" || operation.state === "reverted";
 
-    // Check execution status
     if (receipt.executionStatus === "REVERTED") {
-      // Distinguish pool rollback vs helper revert — both are REVERTED, but pool rollback is atomic
-      // We treat REVERTED as helper revert which implies pool rollback atomicity
-      throw new M5Error(M5_ERROR_CODE.POOL_ROLLBACK, `transaction reverted: helper revert rolled back pool op atomically`);
+      throw new M5Error(M5_ERROR_CODE.POOL_ROLLBACK, "transaction reverted: helper/pool operation rolled back atomically");
     }
     if (receipt.executionStatus !== "SUCCEEDED") {
       throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `unexpected executionStatus ${receipt.executionStatus}`);
     }
+    if ((receipt.finalityStatus !== "ACCEPTED_ON_L2" && receipt.finalityStatus !== "ACCEPTED_ON_L1") || receipt.blockNumber === null) {
+      throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, "successful_receipt_missing_finality_or_block");
+    }
     predicates.executionSucceeded = true;
 
-    // 7. Independent RPC readback — second path, public/read-only
-    let independent: Awaited<ReturnType<IndependentRpcReader["getTransactionReceipt"]>> | null = null;
+    // 8. Independent public readback. A source label is required before the
+    // result can satisfy the X3 independent-read predicate; an injected test
+    // double still remains useful for X2 shape tests.
+    let independent: M5ReceiptObservation | null = null;
     if (this.cfg.independentRpc) {
       try {
-        independent = await this.cfg.independentRpc.getTransactionReceipt(txHash);
+        independent = await readIndependentReceipt();
         if (independent) {
-          // Cross-validate
-          if (independent.executionStatus !== receipt.executionStatus) {
-            throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `independent read executionStatus mismatch: ${independent.executionStatus} vs ${receipt.executionStatus}`);
+          if (independent.executionStatus !== receipt.executionStatus ||
+              (independent.finalityStatus !== "UNKNOWN" && independent.finalityStatus !== receipt.finalityStatus) ||
+              (independent.blockNumber !== null && receipt.blockNumber !== null && independent.blockNumber !== receipt.blockNumber)) {
+            throw new M5Error(M5_ERROR_CODE.INDEPENDENT_READ_MISMATCH, "independent_receipt_facts_mismatch");
           }
-          predicates.independentReadbackOk = true;
+          predicates.independentReadbackOk = Boolean(
+            this.cfg.independentSourceId &&
+            (!this.cfg.primarySourceId || this.cfg.independentSourceId !== this.cfg.primarySourceId),
+          );
         }
       } catch (e) {
         if (e instanceof M5Error) throw e;
-        // Independent read failure downgrades to X2, not fatal
         predicates.independentReadbackOk = false;
       }
-    } else {
-      // No independent reader configured — remain X2, not X3
-      predicates.independentReadbackOk = false;
     }
 
-    // 8. Verify pool event, helper calldata, Vesu deposit
-    const poolAddrNorm = normalizeHex(this.cfg.privacyPool!);
-
-    // Use independent if available, else provider receipt
-    const eventsToCheck = independent?.events ?? receipt.events;
-
-    const poolEvents = eventsToCheck.filter((e) => normalizeHex(e.address) === poolAddrNorm);
-    predicates.poolEventObserved = poolEvents.length > 0;
+    // 9. Pool attribution is by event origin, never transaction sender. The
+    // route-specific event layout is intentionally not guessed; a depositor
+    // identity remains null unless a proven decoder is supplied externally.
+    const receiptForAttribution = independent ?? receipt;
+    const poolAttribution = attributePoolEvent(receiptForAttribution, this.cfg.privacyPool!);
+    predicates.poolEventObserved = poolAttribution !== null;
+    predicates.poolEventAttributed = poolAttribution !== null;
     if (!predicates.poolEventObserved) {
-      throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, "no STRK20 pool event in receipt");
+      throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, "no pinned STRK20 pool event in receipt");
     }
 
-    // Helper calldata involvement — check if helper appears in any event contract or keys?
-    // The pool's calldata contains helper address; we cannot see calldata in receipt events directly,
-    // but we can check that receipt events include either helper or vToken, and that pool event's keys include something
-    // For stronger check, we look for helper address in any event's address or keys
-    // ReceiptPort exposes events only; it does not expose raw transaction
-    // calldata or a typed Vesu Deposit event. Never infer either predicate
-    // from a vToken address alone.
-    predicates.vesuDepositObserved = false;
-    predicates.helperCalldataInReceipt = false;
+    // 10. Raw transaction calldata is a separate Starknet JSON-RPC read. Only
+    // an explicit transaction reader may establish helper involvement; receipt
+    // events or vToken addresses cannot stand in for calldata.
+    let rawCalldata: string[] | null = null;
+    const transactionReader = this.cfg.independentRpc?.getTransaction ?? provider.getTransaction;
+    if (transactionReader) {
+      try {
+        const transaction = await transactionReader(txHash);
+        if (transaction) {
+          const validatedTransaction = validateM5TransactionObservation(transaction, txHash);
+          rawCalldata = validatedTransaction.calldata;
+          predicates.helperCalldataInReceipt = containsAddressInCalldata(rawCalldata, this.cfg.helperAddress!);
+        }
+      } catch (e) {
+        if (e instanceof M5Error) throw e;
+        predicates.helperCalldataInReceipt = false;
+      }
+    }
 
-    // 9. Conservation / no stranded balance
-    // Query helper balances via independent RPC or provider callBalance
+    // A typed Vesu observation is optional because the pinned first-party
+    // interfaces do not expose a stable event decoder through WalletAccountV6.
+    let vesuDeposit: unknown = null;
+    if (provider.observeVesuDeposit) {
+      const observed = await provider.observeVesuDeposit(txHash);
+      assertViewingKeyFree(observed, "vesu_deposit_observation");
+      vesuDeposit = observed;
+      predicates.vesuDepositObserved = observed !== null && validateVesuDepositObservation(observed, {
+        helperAddress: this.cfg.helperAddress!,
+        vToken: this.cfg.vToken!,
+        inAmount: this.cfg.inAmount,
+      });
+    }
+
+    // 11. Public no-strand read. This is not full conservation: the private
+    // open-note amount is wallet-owned and remains a separate proof.
     let helperStrkBalance: bigint | null = null;
     let helperVTokenBalance: bigint | null = null;
     const balanceReader = this.cfg.independentRpc?.getBalance ?? provider.callBalance?.bind(provider);
@@ -585,51 +697,99 @@ export class M5VesuRunner {
       try {
         helperStrkBalance = await balanceReader(this.cfg.strkToken!, this.cfg.helperAddress!);
         helperVTokenBalance = await balanceReader(this.cfg.vToken!, this.cfg.helperAddress!);
-        predicates.noStrandedBalance = helperStrkBalance === 0n && helperVTokenBalance === 0n;
-        // No-strand is a public balance observation. Full conservation also
-        // requires the wallet-owned open-note amount, which this port cannot
-        // read without an external consented wallet/session.
-        if (!predicates.noStrandedBalance) {
-          throw new M5Error(
-            M5_ERROR_CODE.STRANDED_BALANCE,
-            `helper stranded: STRK=${helperStrkBalance} vToken=${helperVTokenBalance}`,
-          );
+        if (typeof helperStrkBalance !== "bigint" || typeof helperVTokenBalance !== "bigint" || helperStrkBalance < 0n || helperVTokenBalance < 0n) {
+          throw new M5Error(M5_ERROR_CODE.RECEIPT_INVALID, "helper_balance_observation_malformed");
         }
-        predicates.conservationOk = false;
+        predicates.noStrandedBalance = helperStrkBalance === 0n && helperVTokenBalance === 0n;
+        if (!predicates.noStrandedBalance) {
+          throw new M5Error(M5_ERROR_CODE.STRANDED_BALANCE, `helper stranded: STRK=${helperStrkBalance} vToken=${helperVTokenBalance}`);
+        }
       } catch (e) {
         if (e instanceof M5Error && e.code === M5_ERROR_CODE.STRANDED_BALANCE) throw e;
-        // Balance read failure — not fatal for X2, but conservation not proven
-        predicates.conservationOk = false;
+        if (e instanceof M5Error && e.code === M5_ERROR_CODE.RECEIPT_INVALID) throw e;
         helperStrkBalance = null;
         helperVTokenBalance = null;
+        predicates.noStrandedBalance = false;
       }
-    } else {
-      predicates.conservationOk = false;
-      predicates.noStrandedBalance = false;
     }
 
-    // 10. Note readback/maturity are deliberately not inferred from the
-    // public receipt block. A fresh open note needs wallet-owned readback and
-    // the protocol's maturity observation; neither is present on M5Provider.
-    predicates.noteReadbackObserved = false;
-    predicates.maturityObserved = false;
+    // 12. Explicit wallet/session facts may close the remaining local
+    // contracts, but the default WalletAccountV6 adapter intentionally does
+    // not claim to expose them.
+    let note: { noteId: string; token: string; amount: string } | undefined;
+    let maturity: unknown = null;
+    let conservation: unknown = null;
+    if (provider.observeOpenNote) {
+      const observed = await provider.observeOpenNote(txHash);
+      assertViewingKeyFree(observed, "open_note_observation");
+      if (observed && (typeof observed.noteId !== "string" || typeof observed.amount !== "bigint" || observed.amount < 0n)) {
+        throw new M5Error(M5_ERROR_CODE.RECEIPT_INVALID, "open_note_observation_malformed");
+      }
+      if (observed && addressesEqual(observed.token, this.cfg.vToken!) && observed.amount > 0n) {
+        note = { noteId: observed.noteId, token: observed.token, amount: observed.amount.toString() };
+        predicates.noteReadbackObserved = true;
+      }
+    }
+    if (provider.observeMaturity) {
+      const observed = await provider.observeMaturity(txHash);
+      assertViewingKeyFree(observed, "maturity_observation");
+      if (observed) {
+        maturity = observed;
+        try {
+          if (observed.confirmedBlock !== receipt.blockNumber) {
+            throw new M5Error(M5_ERROR_CODE.MATURITY_PENDING, "maturity_confirmation_block_mismatch");
+          }
+          const state = evaluateM5Maturity(observed);
+          predicates.maturityState = state.state;
+          predicates.maturityObserved = state.ready;
+        } catch {
+          predicates.maturityState = "maturing";
+          predicates.maturityObserved = false;
+        }
+      }
+    }
+    if (provider.observeConservation) {
+      const observed = await provider.observeConservation(txHash);
+      assertViewingKeyFree(observed, "conservation_observation");
+      if (observed && [observed.inputDelivered, observed.vTokenShares, observed.noteAmount, observed.helperStrkBalance, observed.helperVTokenBalance].some((value) => typeof value !== "bigint" || value < 0n)) {
+        throw new M5Error(M5_ERROR_CODE.RECEIPT_INVALID, "conservation_observation_malformed");
+      }
+      if (observed) {
+        conservation = observed;
+        const observedVesuShares = vesuDeposit
+          && typeof vesuDeposit === "object"
+          && "shares" in vesuDeposit
+          && typeof (vesuDeposit as { shares?: unknown }).shares === "bigint"
+          ? (vesuDeposit as { shares: bigint }).shares
+          : null;
+        const observedNoteAmount = note ? BigInt(note.amount) : null;
+        predicates.conservationOk =
+          predicates.vesuDepositObserved &&
+          predicates.noteReadbackObserved &&
+          observed.inputDelivered === this.cfg.inAmount &&
+          observed.vTokenShares > 0n &&
+          observed.noteAmount > 0n &&
+          observedNoteAmount !== null &&
+          observed.vTokenShares === observed.noteAmount &&
+          observedNoteAmount === observed.noteAmount &&
+          (observedVesuShares === null || observedVesuShares === observed.vTokenShares) &&
+          observed.helperStrkBalance === 0n &&
+          observed.helperVTokenBalance === 0n;
+      }
+    }
 
-    // 11. Upstream validator invocation when configured
+    // 13. Actual upstream validator only; a local fixture cannot promote X3.
     let validatorRes: { ok: boolean; pool: boolean; mine: boolean; reason?: string } | null = null;
     if (this.cfg.validator) {
       try {
         validatorRes = await this.cfg.validator.validate(txHash);
         if (!validatorRes.ok || !validatorRes.pool || !validatorRes.mine) {
-          throw new M5Error(
-            M5_ERROR_CODE.VALIDATOR_MINE_FALSE,
-            `validator failed ok=${validatorRes.ok} pool=${validatorRes.pool} mine=${validatorRes.mine}: ${validatorRes.reason ?? ""}`,
-          );
+          throw new M5Error(M5_ERROR_CODE.VALIDATOR_MINE_FALSE, `validator failed ok=${validatorRes.ok} pool=${validatorRes.pool} mine=${validatorRes.mine}: ${validatorRes.reason ?? ""}`);
         }
         predicates.validatorMineOk = true;
       } catch (e) {
         if (e instanceof M5Error && e.code === M5_ERROR_CODE.VALIDATOR_MINE_FALSE) throw e;
         predicates.validatorMineOk = false;
-        // Validator failure is distinct from not configured — we propagate mine=false, but other errors downgrade
       }
     } else {
       predicates.validatorMineOk = null;
@@ -642,7 +802,9 @@ export class M5VesuRunner {
       predicates.submissionObserved &&
       predicates.receiptObserved &&
       predicates.executionSucceeded &&
+      predicates.operationRecovered &&
       predicates.poolEventObserved &&
+      predicates.poolEventAttributed &&
       predicates.helperCalldataInReceipt &&
       predicates.vesuDepositObserved &&
       predicates.noteReadbackObserved &&
@@ -668,8 +830,17 @@ export class M5VesuRunner {
         actions,
         receipt,
         independentReadback: independent,
+        operation,
+        poolEvent: poolAttribution,
+        helperCalldata: rawCalldata,
+        vesuDeposit,
+        maturity,
+        note,
         conservation: {
           inAmount: this.cfg.inAmount.toString(),
+          ...(conservation && typeof conservation === "object" && "vTokenShares" in conservation
+            ? { vTokenDeltaShares: String((conservation as { vTokenShares: bigint }).vTokenShares) }
+            : {}),
           helperStrkBalance: helperStrkBalance?.toString() ?? "unknown",
           helperVTokenBalance: helperVTokenBalance?.toString() ?? "unknown",
         },

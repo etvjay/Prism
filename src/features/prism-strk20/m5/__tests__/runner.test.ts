@@ -43,7 +43,7 @@ function makeMockProvider(overrides: Partial<M5Provider> = {}): M5Provider {
 function makeSuccessProvider(overrides: Partial<M5Provider> = {}): M5Provider {
   return makeMockProvider({
     _isMock: false,
-    strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
+    strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" }),
     getReceipt: async () => ({
       executionStatus: "SUCCEEDED",
       finalityStatus: "ACCEPTED_ON_L2",
@@ -122,7 +122,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
       }),
       strk20InvokeTransaction: async () => {
         submissions += 1;
-        return { transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" };
+        return { transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" };
       },
     } as unknown as Partial<M5Provider>);
 
@@ -177,9 +177,21 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     expect(() => buildHelperCalldata(-1n)).toThrow(M5_ERROR_CODE.INVALID_AMOUNT);
   });
 
-  it("pool/token/vToken configuration rejects malformed addresses", () => {
+  it("pool/token/vToken configuration rejects malformed and out-of-range addresses", () => {
     expect(() => buildHelperCalldata(1n, { strk: "not-an-address", vToken: VTOKEN_STRK_SEPOLIA })).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
     expect(() => new M5VesuRunner({ inAmount: 1n, privacyPool: "0x0" })).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
+    // Starknet contract addresses are field elements below 2^251, not any
+    // syntactically valid 64-hex value.
+    expect(() => new M5VesuRunner({ inAmount: 1n, privacyPool: `0x${"f".repeat(64)}` })).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
+  });
+
+  it("exact actions reject a malformed wallet recipient before provider submission", () => {
+    expect(() => buildActions(1n, "0x0", {
+      inAmount: 1n,
+      helperAddress: HELPER_ADDRESS_SEPOLIA,
+      strkToken: STRK_SEPOLIA,
+      vToken: VTOKEN_STRK_SEPOLIA,
+    } as never)).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
   });
 
   it("u256/u128: note denomination is vToken shares", async () => {
@@ -221,7 +233,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const provider = makeMockProvider({
       _isMock: false,
       strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
-      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
+      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" }),
       getReceipt: async () => ({
         executionStatus: "REVERTED",
         blockNumber: 100,
@@ -236,7 +248,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const provider = makeMockProvider({
       _isMock: false,
       strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
-      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
+      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" }),
       getReceipt: async () => ({ executionStatus: "REVERTED", blockNumber: 100, events: [] }),
     } as unknown as Partial<M5Provider>);
     await expect(runner.run(provider)).rejects.toThrow();
@@ -247,10 +259,39 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const provider = makeMockProvider({
       _isMock: false,
       strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
-      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
+      strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" }),
       getReceipt: async () => null,
     } as unknown as Partial<M5Provider>);
     await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.UNKNOWN_RECEIPT);
+  });
+
+  it("does not rebroadcast when a timed-out operation is recovered on the same runner", async () => {
+    let submissions = 0;
+    let receiptMode: "missing" | "success" = "missing";
+    const txHash = "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab";
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n, receiptTimeoutMs: 20, receiptIntervalMs: 1 });
+    const provider = makeSuccessProvider({
+      strk20InvokeTransaction: async () => {
+        submissions += 1;
+        return { transaction_hash: txHash };
+      },
+      getReceipt: async () => receiptMode === "missing"
+        ? null
+        : {
+            transactionHash: txHash,
+            executionStatus: "SUCCEEDED",
+            finalityStatus: "ACCEPTED_ON_L2",
+            blockNumber: 13945591,
+            events: [{ address: PRIVACY_POOL_SEPOLIA, keys: ["0x1"], data: [] }],
+          },
+    } as unknown as Partial<M5Provider>);
+
+    await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.UNKNOWN_RECEIPT);
+    receiptMode = "success";
+    const recovered = await runner.run(provider);
+
+    expect((recovered as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
+    expect(submissions).toBe(1);
   });
 
   it("receipt polling recovers from RECEIVED before a terminal receipt", async () => {
@@ -263,13 +304,110 @@ describe("M5VesuRunner — X2 provider-injected", () => {
         if (reads === 1) {
           return { executionStatus: "RECEIVED", blockNumber: null, events: [] };
         }
-        return terminal.getReceipt("0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca");
+        return terminal.getReceipt("0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab");
       },
     } as unknown as Partial<M5Provider>);
 
     const result = await runner.run(provider);
     expect((result as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
     expect(reads).toBe(2);
+  });
+
+  it("successful status without accepted finality or block cannot become completion", async () => {
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeSuccessProvider({
+      getReceipt: async () => ({
+        executionStatus: "SUCCEEDED",
+        blockNumber: null,
+        events: [{ address: PRIVACY_POOL_SEPOLIA, keys: ["0x1"], data: [] }],
+      }),
+    } as unknown as Partial<M5Provider>);
+    await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.UNKNOWN_RECEIPT);
+  });
+
+  it("does not promote maturity observed against a different confirmation block", async () => {
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeSuccessProvider({
+      observeMaturity: async () => ({
+        confirmedBlock: 13945590,
+        maturityTargetBlock: 13945600,
+        currentBlock: 13945600,
+        balanceConsent: "granted" as const,
+      }),
+    } as unknown as Partial<M5Provider>);
+
+    const result = await runner.run(provider);
+    expect((result as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
+    expect((result as { predicates: { maturityObserved: boolean } }).predicates.maturityObserved).toBe(false);
+    expect((result as { predicates: { maturityState: string } }).predicates.maturityState).toBe("maturing");
+  });
+
+  it("does not promote conservation when the explicit note/share amount is zero", async () => {
+    const amount = 1_000_000_000_000_000_000n;
+    const txHash = "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" as `0x${string}`;
+    const runner = new M5VesuRunner({
+      inAmount: amount,
+      primarySourceId: "rpc-one",
+      independentSourceId: "rpc-two",
+      independentRpc: {
+        sourceId: "rpc-two",
+        getTransactionReceipt: async () => ({
+          transactionHash: txHash,
+          executionStatus: "SUCCEEDED",
+          finalityStatus: "ACCEPTED_ON_L2",
+          blockNumber: 13945591,
+          events: [{ address: PRIVACY_POOL_SEPOLIA, keys: ["0x1"] }],
+        }),
+        getBalance: async () => 0n,
+        getTransaction: async () => ({ calldata: ["0x1", HELPER_ADDRESS_SEPOLIA] }),
+      },
+      validator: { validate: async () => ({ ok: true, pool: true, mine: true }) },
+    });
+    const provider = makeSuccessProvider({
+      strk20InvokeTransaction: async () => ({ transaction_hash: txHash }),
+      callBalance: async () => 0n,
+      observeVesuDeposit: async () => ({
+        contractAddress: VTOKEN_STRK_SEPOLIA,
+        receiver: HELPER_ADDRESS_SEPOLIA,
+        assets: amount,
+      }),
+      observeOpenNote: async () => ({ noteId: "note-1", token: VTOKEN_STRK_SEPOLIA, amount: 1n }),
+      observeMaturity: async () => ({
+        confirmedBlock: 13945591,
+        maturityTargetBlock: 13945601,
+        currentBlock: 13945601,
+        balanceConsent: "granted" as const,
+      }),
+      observeConservation: async () => ({
+        inputDelivered: amount,
+        vTokenShares: 0n,
+        noteAmount: 0n,
+        helperStrkBalance: 0n,
+        helperVTokenBalance: 0n,
+      }),
+    } as unknown as Partial<M5Provider>);
+
+    const result = await runner.run(provider);
+    expect((result as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
+    expect((result as { predicates: { conservationOk: boolean } }).predicates.conservationOk).toBe(false);
+  });
+
+  it("independent receipt block divergence fails closed", async () => {
+    const runner = new M5VesuRunner({
+      inAmount: 1_000_000_000_000_000_000n,
+      independentRpc: {
+        sourceId: "rpc-two",
+        getTransactionReceipt: async () => ({
+          executionStatus: "SUCCEEDED",
+          finalityStatus: "ACCEPTED_ON_L2",
+          blockNumber: 13945590,
+          events: [{ address: PRIVACY_POOL_SEPOLIA, keys: ["0x1"] }],
+        }),
+        getBalance: async () => 0n,
+      },
+      primarySourceId: "rpc-one",
+    });
+    await expect(runner.run(makeSuccessProvider())).rejects.toThrow(M5_ERROR_CODE.INDEPENDENT_READ_MISMATCH);
   });
 
   it("validator mine=false → M5-010", async () => {
@@ -327,6 +465,44 @@ describe("M5VesuRunner — X2 provider-injected", () => {
 
     expect(await adapter.isRegistered()).toBeNull();
     expect((adapter as unknown as { getBlockNumber?: unknown }).getBlockNumber).toBeUndefined();
+  });
+
+  it("WalletV6 adapter preserves first-party finality and raw transaction calldata facts", async () => {
+    const tx = "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123ab" as `0x${string}`;
+    const wallet: WalletAccountV6Like = {
+      address: "0x047c0f8b01b9c7c75c669dc549bc305a0f2d796808117339a1c87730162b131c",
+      provider: {
+        getChainId: async () => "SN_SEPOLIA",
+        getTransactionReceipt: async () => ({
+          transaction_hash: tx,
+          execution_status: "SUCCEEDED",
+          finality_status: "ACCEPTED_ON_L2",
+          block_number: 123,
+          sender_address: "0x123",
+          events: [{ from_address: PRIVACY_POOL_SEPOLIA, keys: ["0x1"], data: ["0x2"] }],
+        }),
+        getTransaction: async () => ({ calldata: ["0x1", HELPER_ADDRESS_SEPOLIA] }),
+      },
+      strk20PrepareInvoke: async () => ({
+        call: { contract_address: PRIVACY_POOL_SEPOLIA, entry_point: "invoke", calldata: [] },
+        proof: { data: "", output: [], proof_facts: [] },
+      }),
+      strk20InvokeTransaction: async () => ({ transaction_hash: tx }),
+    };
+    const adapter = new WalletV6M5Adapter({
+      wallet,
+      capabilityProvider: {
+        supportedWalletApi: async () => ["0.10.3"],
+        supportedSpecs: async () => [],
+        requestChainId: async () => "SN_SEPOLIA",
+      },
+      walletFeatures: {},
+      feeReader: { getFeeAmount: async () => ({ fee: 1n, blockNumber: 1 }) },
+    });
+    const receipt = await adapter.getReceipt(tx);
+    expect(receipt?.finalityStatus).toBe("ACCEPTED_ON_L2");
+    expect(receipt?.events[0]?.data).toEqual(["0x2"]);
+    expect(await adapter.getTransaction(tx)).toEqual({ calldata: ["0x1", HELPER_ADDRESS_SEPOLIA] });
   });
 
   it("mock provider with no real prover → BLOCKED, not fake success", async () => {
