@@ -45,6 +45,7 @@ export type M3RunnerPublicConfig = {
   controllerAddress: string;
   registryAddress?: string;
   rpcUrl?: string;
+  /** Required explicit registry ABI version for both dry-run and live; aliases 1/2 normalize to v1/v2. */
   registryVersion?: "v1" | "v2" | "1" | "2";
   starknetNetwork?: string;
   /** Optional signing provider presence signal (injected, not read from file) */
@@ -145,8 +146,8 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
     }
     if (sameStarknetContractAddress(normalizedRegistryAddress, normalizedControllerAddress)) throw new Error(`M3_CONFIG_BLOCKED: controller must not equal registry`);
   }
-  const versionRaw = input.registryVersion ?? (input.liveRequested ? undefined : "v1");
-  if (!versionRaw) throw new Error("M3_CONFIG_BLOCKED: registryVersion required for live");
+  const versionRaw = input.registryVersion;
+  if (!versionRaw) throw new Error("M3_CONFIG_BLOCKED: registryVersion required for live or dry-run");
   const version = versionRaw === "1" ? "v1" : versionRaw === "2" ? "v2" : versionRaw;
   if (version !== "v1" && version !== "v2") throw new Error(`M3_CONFIG_BLOCKED: invalid registryVersion ${versionRaw}`);
   return {

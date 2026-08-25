@@ -29,9 +29,6 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => Promis
     effective.STARKNET_CHAIN_ID = "SN_SEPOLIA";
     effective.NEXT_PUBLIC_STARKNET_NETWORK = "SN_SEPOLIA";
   }
-  if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && effective.STARKNET_REGISTRY_VERSION === undefined) {
-    effective.STARKNET_REGISTRY_VERSION = "v1";
-  }
   const prev: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(effective)) {
     prev[k] = process.env[k];
@@ -81,7 +78,7 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
       async getTransactionReceipt() { return {} as Record<string, unknown>; },
       async getBlockNumber() { return 100; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const ports = createStarknetReadPorts({ starknetReadProvider: fakeProvider as never });
       expect(ports).not.toBeNull();
       expect(ports!.provider).toBe(fakeProvider);
@@ -113,7 +110,7 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
       async getTransactionStatus() { return {} as Record<string, unknown>; },
       async getBlockNumber() { return 100; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never });
       expect(factory.isStarknetConfigured).toBe(true);
       expect(factory.eventIndexerAdapter).not.toBeNull();
@@ -134,7 +131,7 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
       async callContract() { return ["0x0"] as string[]; },
       // no getEvents
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       expect(() => createStarknetReadPorts({ starknetReadProvider: badProvider as never })).toThrow(/requires_getEvents/);
     });
   });
@@ -143,7 +140,7 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
     const badProvider = {
       async getEvents() { return { events: [], continuation_token: null } as never; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       expect(() => createStarknetReadPorts({ starknetReadProvider: badProvider as never })).toThrow(/missing_callContract/);
     });
   });
@@ -171,6 +168,7 @@ describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
     await withEnv({
       STARKNET_RPC_URL: "https://fake.rpc",
       STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_REGISTRY_VERSION: "v1",
       STARKNET_CHAIN_ID: "SN_MAIN",
       NEXT_PUBLIC_STARKNET_NETWORK: "SN_MAIN",
     }, async () => {
@@ -185,6 +183,7 @@ describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
     await withEnv({
       STARKNET_RPC_URL: "https://fake.rpc",
       STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_REGISTRY_VERSION: "v1",
       STARKNET_CHAIN_ID: "SN_SEPOLIA",
       NEXT_PUBLIC_STARKNET_NETWORK: "SN_SEPOLIA",
     }, async () => {
@@ -199,6 +198,7 @@ describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
     await withEnv({
       STARKNET_RPC_URL: "https://fake.rpc",
       STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_REGISTRY_VERSION: "v1",
       STARKNET_CHAIN_ID: "SN_MAIN",
       NEXT_PUBLIC_STARKNET_NETWORK: "SN_SEPOLIA",
     }, async () => {
@@ -210,6 +210,7 @@ describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
     await withEnv({
       STARKNET_RPC_URL: "https://fake.rpc",
       STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_REGISTRY_VERSION: "v1",
       STARKNET_CHAIN_ID: "SN_DEVNET",
       NEXT_PUBLIC_STARKNET_NETWORK: undefined,
     }, async () => {
@@ -221,6 +222,7 @@ describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
     await withEnv({
       STARKNET_RPC_URL: "https://fake.rpc",
       STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_REGISTRY_VERSION: "v1",
       STARKNET_CHAIN_ID: undefined,
       NEXT_PUBLIC_STARKNET_NETWORK: undefined,
     }, async () => {
@@ -286,7 +288,7 @@ describe("FACTORY_WIRING_FIX — defect 2: DUAL READERS canonicalized", () => {
       async getEvents() { return { events: [], continuation_token: null } as never; },
       async getBlockNumber() { return 100; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REG }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REG, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never });
       await expect(factory.registryReadPort.getIdentity("prism:001")).rejects.toMatchObject({ code: "ERR-002" });
       await expect(factory.registryReadPort.resolve("prism:P1", "BASE")).rejects.toMatchObject({ code: "ERR-002" });
@@ -298,8 +300,17 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
   beforeEach(() => resetFactory());
   afterEach(() => resetFactory());
 
+  it("requires an explicit registry version for offline application factories", () => {
+    expect(() => createIsolatedFactory(1_789_000_000)).toThrow(/starknet_registry_version_required/);
+    expect(() => createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v3" as never })).toThrow(/invalid_starknet_registry_version/);
+    const v1 = createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v1" });
+    const v2 = createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v2" });
+    expect(v1.registry.registryVersion).toBe("v1");
+    expect(v2.registry.registryVersion).toBe("v2");
+  });
+
   it("production guard rejects absent Starknet read and TEST_DOUBLE_X2 submit, while isolated tests stay explicit", () => {
-    const f = createIsolatedFactory(1_789_000_000);
+    const f = createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v1" });
     expect(f.runtimeMode).toBe("test");
     expect(() => f.assertChainTouchingConfigured()).not.toThrow();
     expect(() => assertChainTouchingConfiguredForFactory({
@@ -344,7 +355,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
   });
 
   it("default factory is TEST_DOUBLE_X2, isStarknetSubmitConfigured false, never reads private keys", () => {
-    const f = createIsolatedFactory(1_789_000_000);
+    const f = createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v1" });
     expect(f.submitPortMode).toBe("TEST_DOUBLE_X2");
     expect(f.isStarknetSubmitConfigured).toBe(false);
     expect(isStarknetSubmitConfiguredForFactory(f)).toBe(false);
@@ -368,7 +379,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       async getEvents() { return { events: [], continuation_token: null } as never; },
       async getBlockNumber() { return 100; },
     };
-    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const f = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never });
       expect(f.isStarknetConfigured).toBe(true);
       // Still test double — explicit signal that submit is not live
@@ -467,7 +478,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
   });
 
   it("missing submit config: factory does not secretly wire private keys from env", async () => {
-    await withEnv({ STARKNET_PRIVATE_KEY: "0xdead", STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ STARKNET_PRIVATE_KEY: "0xdead", STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const fakeProvider = {
         async callContract() { return ["0x0"] as string[]; },
         async getEvents() { return { events: [], continuation_token: null } as never; },
@@ -494,7 +505,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
     const origLog = console.log;
     console.log = (...args: unknown[]) => logs.push(args.join(" "));
     try {
-      await withEnv({ STARKNET_RPC_URL: "https://secret.rpc/xyz", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+      await withEnv({ STARKNET_RPC_URL: "https://secret.rpc/xyz", STARKNET_REGISTRY_ADDRESS: REGISTRY, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
         const fakeProvider = {
           async callContract() { return ["0x0"] as string[]; },
           async getEvents() { return { events: [], continuation_token: null } as never; },

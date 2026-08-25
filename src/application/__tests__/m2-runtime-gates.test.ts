@@ -26,9 +26,6 @@ const NOW = 1_789_000_000;
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>) {
   const effective = { ...overrides };
-  if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && effective.STARKNET_REGISTRY_VERSION === undefined) {
-    effective.STARKNET_REGISTRY_VERSION = "v1";
-  }
   const prev: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(effective)) {
     prev[k] = process.env[k];
@@ -78,7 +75,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
   });
 
   it("startup failure: invalid STARKNET_RPC_URL protocol fails closed, never attempts connection", async () => {
-    await withEnv({ STARKNET_RPC_URL: "ftp://invalid", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
+    await withEnv({ PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined, STARKNET_RPC_URL: "ftp://invalid", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
       expect(() => new StarknetRegistryReader({ rpcUrl: "ftp://invalid", registryAddress: REGISTRY })).toThrow(/invalid_rpc_url/);
       // Factory path: invalid rpc url must fail-closed even in dev/test, never silent memory fallback
       resetFactory();
@@ -93,7 +90,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
 
   // Recovery: durable operation survives close/reopen (memory simulates durability), worker recoverAtStartup replays non-terminal list
   it("recovery: durable submitted op survives factory restart and worker recovers via listNonTerminal", async () => {
-    const factory = createIsolatedFactory(NOW);
+    const factory = createIsolatedFactory(NOW, { submitPortRegistryVersion: "v1" });
     // Create an operation, advance to submitted
     let op = await factory.operationStore.create({ id: "op-recover", idempotencyKey: "idem-recover", requestFingerprint: "fp-recover", now: NOW });
     op = await factory.operationStore.transition(op.id, { to: "awaiting_authorization", now: NOW + 1, expectedVersion: op.version });
@@ -315,7 +312,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
   });
 
   it("safe shutdown: factory.shutdown stops worker, closeFactory is idempotent and leaves no dangling timer", async () => {
-    const factory = createIsolatedFactory(NOW + 5000);
+    const factory = createIsolatedFactory(NOW + 5000, { submitPortRegistryVersion: "v1" });
     expect(factory.reconciliationWorker.isRunning()).toBe(false);
     // Attempt daemon start in test must throw (X2 guard)
     await expect(factory.reconciliationWorker.start()).rejects.toThrow(/must not start in tests/);
@@ -341,7 +338,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
   });
 
   it("factory exposes durable wiring: operationStore, prismEventsStore (null in memory), ledger/indexer, K=5 resolveService, worker lifecycle", async () => {
-    const f = createIsolatedFactory(NOW);
+    const f = createIsolatedFactory(NOW, { submitPortRegistryVersion: "v1" });
     expect(f.operationStore).toBeDefined();
     expect(f.prismEventsStore).toBeNull(); // memory path is null events store; Postgres path would have PostgresPrismEventsStore
     expect(f.resolveService).toBeInstanceOf(WatermarkedResolveService);

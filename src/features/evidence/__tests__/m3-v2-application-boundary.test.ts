@@ -50,4 +50,17 @@ describe("M3 V2 application boundary", () => {
       idGenerator: deps.idGenerator,
     })).toThrow(/registryVersion must be explicitly v1 or v2/);
   });
+
+  it("rejects an invalid application registry version instead of silently selecting V1", async () => {
+    const deps = await buildM3DryRunDeps({});
+    expect(() => new PrismApplicationService({
+      challengeService: deps.challengeService,
+      operationStore: deps.operationStore,
+      registry: deps.registry,
+      submitPort: deps.submitPort,
+      registryVersion: "v3" as never,
+      clock: deps.clock,
+      idGenerator: deps.idGenerator,
+    })).toThrow(/registryVersion must be explicitly v1 or v2/);
+  });
 });

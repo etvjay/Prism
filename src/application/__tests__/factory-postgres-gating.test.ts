@@ -80,7 +80,7 @@ describe("Factory — Postgres environment gating", () => {
   });
 
   it("dev/test without URL uses in-memory adapters (isolated factory path)", async () => {
-    await withEnv({ NODE_ENV: "test", PRISM_POSTGRES_TEST_URL: undefined, PRISM_REQUIRE_POSTGRES: undefined }, async () => {
+    await withEnv({ NODE_ENV: "test", PRISM_POSTGRES_TEST_URL: undefined, PRISM_REQUIRE_POSTGRES: undefined, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const f = await getAppFactory();
       expect(f.isPostgres).toBe(false);
       expect(f.ownershipStore).toBeDefined();
@@ -91,7 +91,7 @@ describe("Factory — Postgres environment gating", () => {
   });
 
   it("development singleton keeps local doubles query-only and blocks chain-touching handlers", async () => {
-    await withEnv({ NODE_ENV: "development", PRISM_RUNTIME_MODE: undefined, PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined, STARKNET_RPC_URL: undefined, STARKNET_REGISTRY_ADDRESS: undefined }, async () => {
+    await withEnv({ NODE_ENV: "development", PRISM_RUNTIME_MODE: undefined, PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined, STARKNET_RPC_URL: undefined, STARKNET_REGISTRY_ADDRESS: undefined, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       resetFactory();
       const f = await getAppFactory();
       expect(f.runtimeMode).toBe("development");
@@ -162,7 +162,7 @@ describe("Factory — Postgres environment gating", () => {
 
   it("createIsolatedFactory always uses in-memory regardless of env (isolated tests)", async () => {
     await withEnv({ NODE_ENV: "production", PRISM_POSTGRES_TEST_URL: "postgresql://localhost/prism_test", PRISM_REQUIRE_POSTGRES: "1" }, async () => {
-      const iso = createIsolatedFactory(1_789_000_100);
+      const iso = createIsolatedFactory(1_789_000_100, { submitPortRegistryVersion: "v1" });
       expect(iso.isPostgres).toBe(false);
       // isolated factory should not attempt postgres connection
       const op = await iso.operationStore.create({
@@ -177,7 +177,7 @@ describe("Factory — Postgres environment gating", () => {
   });
 
   it("resetFactory clears singleton so next call re-evaluates env", async () => {
-    await withEnv({ NODE_ENV: "test", PRISM_POSTGRES_TEST_URL: undefined }, async () => {
+    await withEnv({ NODE_ENV: "test", PRISM_POSTGRES_TEST_URL: undefined, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const f1 = await getAppFactory();
       expect(f1.isPostgres).toBe(false);
       resetFactory();

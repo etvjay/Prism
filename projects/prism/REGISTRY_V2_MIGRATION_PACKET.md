@@ -93,7 +93,7 @@ STARKNET_REGISTRY_CLASS_HASH=<V2 class hash>
 PRISM_STARKNET_INDEXER_START_BLOCK=<V2 deployment block>
 ```
 
-The V2 submit adapter must be selected explicitly. V1's felt-masked adapter must never silently route to V2. When the application factory receives an injected submit port, `submitPortRegistryVersion` must match `STARKNET_REGISTRY_VERSION`; missing/mismatched versions fail closed.
+The V2 submit adapter must be selected explicitly. V1's felt-masked adapter must never silently route to V2. The M3 runner and application/factory paths require an explicit `registryVersion` for both dry-run and live execution; omission never defaults to V1. When the application factory receives an injected submit port, `submitPortRegistryVersion` must match `STARKNET_REGISTRY_VERSION`; missing/mismatched versions fail closed. Offline test fixtures may pass `submitPortRegistryVersion: "v1"` explicitly.
 
 ## Required V2 evidence gates
 

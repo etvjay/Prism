@@ -9,8 +9,8 @@
 //
 // Usage:
 //   node ops/testnet/m3-base-sequence.runner.mjs --self-test
-//   node ops/testnet/m3-base-sequence.runner.mjs --dry-run [--env testnet] [--chain-id 84532] [--domain prism.example] [--prism-id prism:1] [--controller 0x...] [--execution-account 0x...] [--registry 0x...]
-//   node ops/testnet/m3-base-sequence.runner.mjs --env testnet --live --chain-id 84532 --domain prism.example --prism-id prism:1 --controller 0x... --execution-account 0x... --registry 0x... --rpc https://...
+//   node ops/testnet/m3-base-sequence.runner.mjs --dry-run [--env testnet] [--chain-id 84532] [--domain prism.example] [--prism-id prism:1] [--controller 0x...] [--execution-account 0x...] [--registry 0x...] --registry-version v1|v2
+//   node ops/testnet/m3-base-sequence.runner.mjs --env testnet --live --chain-id 84532 --domain prism.example --prism-id prism:1 --controller 0x... --execution-account 0x... --registry 0x... --registry-version v1|v2 --rpc https://...
 //     (live requires STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY or keystore and BASE_SIGNER_PRIVATE_KEY in env — otherwise precise blocker, no receipt fabricated)
 //
 // Exit codes:
@@ -93,21 +93,19 @@ const controllerArg = get("--controller", process.env.CONTROLLER_ADDRESS ?? "0x1
 const execArg = get("--execution-account", get("--executionAccount", process.env.BASE_EXECUTION_ACCOUNT ?? process.env.EXECUTION_ACCOUNT ?? null));
 const registryArg = get("--registry", process.env.STARKNET_REGISTRY_ADDRESS ?? process.env.PRISM_REGISTRY_ADDRESS ?? null);
 const registryVersionInput = get("--registry-version", process.env.STARKNET_REGISTRY_VERSION ?? null);
-const registryVersionArg = registryVersionInput ?? "v1";
 const rpcArg = get("--rpc", process.env.STARKNET_RPC_URL ?? process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? null);
 const liveRequested = has("--live");
 const dryRunFlag = has("--dry-run") || !liveRequested;
-const registryVersionRaw = String(registryVersionArg).toLowerCase();
-const normalizedRegistryVersion = registryVersionRaw === "1" ? "v1" : registryVersionRaw === "2" ? "v2" : registryVersionRaw;
+const registryVersionRaw = registryVersionInput === null ? "" : String(registryVersionInput).trim().toLowerCase();
 
-if (!['v1', 'v2'].includes(normalizedRegistryVersion)) {
-  console.error(`✕ invalid --registry-version: ${registryVersionArg} (expected v1 or v2)`);
+if (!registryVersionRaw) {
+  console.error("✕ registryVersion required for live and dry-run (--registry-version or STARKNET_REGISTRY_VERSION)");
   process.exit(1);
 }
-
-if (liveRequested && !registryVersionInput) {
-  console.error("✕ live V1/V2 registry version must be explicit (--registry-version or STARKNET_REGISTRY_VERSION)");
-  process.exit(2);
+const normalizedRegistryVersion = registryVersionRaw === "1" ? "v1" : registryVersionRaw === "2" ? "v2" : registryVersionRaw;
+if (!["v1", "v2"].includes(normalizedRegistryVersion)) {
+  console.error(`✕ invalid --registry-version: ${registryVersionInput} (expected v1 or v2)`);
+  process.exit(1);
 }
 
 if (has("--help") || has("-h")) {
@@ -121,15 +119,15 @@ Flags:
   --controller 0x<hex>  (Starknet controller address)
   --execution-account 0x<40hex> (Base EOA/smart wallet; dry-run generates ephemeral if omitted)
   --registry 0x<hex>    (Starknet registry address, required for --live)
-  --registry-version v1|v2  (explicit registry ABI version; default v1)
+  --registry-version v1|v2  (required explicit registry ABI version for dry-run and live; no default)
   --rpc <url>           (Starknet RPC URL, required for --live)
   --dry-run             (default when --live not set — never fabricates receipt)
   --live                (requires signing provider env: STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY etc.)
   --self-test           (runs offline gate suite, no RPC)
 Examples:
-  node ops/testnet/m3-base-sequence.runner.mjs --dry-run --env testnet --chain-id 84532 --domain prism.example --prism-id prism:1
+  node ops/testnet/m3-base-sequence.runner.mjs --dry-run --env testnet --chain-id 84532 --domain prism.example --prism-id prism:1 --registry-version v1
   node ops/testnet/m3-base-sequence.runner.mjs --self-test
-  STARKNET_RPC_URL=... STARKNET_REGISTRY_ADDRESS=... STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY=... BASE_SIGNER_PRIVATE_KEY=... node ops/testnet/m3-base-sequence.runner.mjs --live --env testnet --chain-id 84532 --domain prism.example --prism-id prism:1 --controller 0x... --execution-account 0x...
+  STARKNET_RPC_URL=... STARKNET_REGISTRY_ADDRESS=... STARKNET_REGISTRY_VERSION=v1 STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY=... BASE_SIGNER_PRIVATE_KEY=... node ops/testnet/m3-base-sequence.runner.mjs --live --env testnet --chain-id 84532 --domain prism.example --prism-id prism:1 --controller 0x... --execution-account 0x...
 `);
   process.exit(0);
 }

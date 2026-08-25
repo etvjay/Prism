@@ -37,8 +37,8 @@ const TX_HASH: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 // Helpers
 // ---------------------------------------------------------------------------
 
-function validPublicConfig(overrides: Partial<ReturnType<typeof validPublicConfigBase>> = {}) {
-  return validPublicConfigBase(overrides);
+function validPublicConfig(overrides: Record<string, unknown> = {}) {
+  return validPublicConfigBase(overrides) as Parameters<typeof validateM3PublicConfig>[0];
 }
 function validPublicConfigBase(overrides: Record<string, unknown> = {}) {
   return {
@@ -50,6 +50,8 @@ function validPublicConfigBase(overrides: Record<string, unknown> = {}) {
     controllerAddress: CONTROLLER,
     registryAddress: REGISTRY,
     rpcUrl: "https://sepolia.test.rpc",
+    // Offline fixtures choose the ABI explicitly; the runner must not default it.
+    registryVersion: "v1" as const,
     starknetNetwork: "SN_SEPOLIA" as const,
     hasLiveSigningProvider: false,
     liveRequested: false,
@@ -67,6 +69,19 @@ describe("M3 gate — injected public config validation (fail closed)", () => {
     expect(cfg.registryFeltPrismId).toBe("0x1");
     expect(cfg.normalizedDomain).toBe(M3_DEFAULT_DOMAIN);
     expect(cfg.chainId).toBe(84532);
+  });
+
+  it("rejects omitted registryVersion for both dry-run and live validation", () => {
+    const withoutVersion = validPublicConfig({ registryVersion: undefined });
+    expect(() => validateM3PublicConfig(withoutVersion, M3_MANIFEST_CHAIN_ID_TESTNET)).toThrow(/registryVersion required.*live or dry-run/);
+    expect(() => validateM3PublicConfig({ ...withoutVersion, liveRequested: true }, M3_MANIFEST_CHAIN_ID_TESTNET)).toThrow(/registryVersion required.*live or dry-run/);
+  });
+
+  it("rejects invalid registryVersion without changing the explicit V1/V2 boundary", () => {
+    expect(() => validateM3PublicConfig(validPublicConfig({ registryVersion: "v3" }), M3_MANIFEST_CHAIN_ID_TESTNET)).toThrow(/invalid registryVersion v3/);
+    expect(validateM3PublicConfig(validPublicConfig({ registryVersion: "v2" }), M3_MANIFEST_CHAIN_ID_TESTNET).registryVersion).toBe("v2");
+    expect(validateM3PublicConfig(validPublicConfig({ registryVersion: "1" }), M3_MANIFEST_CHAIN_ID_TESTNET).registryVersion).toBe("v1");
+    expect(validateM3PublicConfig(validPublicConfig({ registryVersion: "2" }), M3_MANIFEST_CHAIN_ID_TESTNET).registryVersion).toBe("v2");
   });
 
   it("rejects chainId mismatch (altered_fields:chain_id) — fail closed", () => {
@@ -521,6 +536,7 @@ describe("M3 gate — full dry-run sequence (parent-executable, no live broadcas
         controllerAddress: CONTROLLER,
         registryAddress: REGISTRY,
         rpcUrl: "https://sepolia.test.rpc",
+        registryVersion: "v1",
       },
       M3_MANIFEST_CHAIN_ID_TESTNET,
     );

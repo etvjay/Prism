@@ -97,7 +97,7 @@ export interface FactoryStarknetOverrides {
     getBlockNumber?(): Promise<number>;
     getBlockLatestAccepted?(): Promise<{ block_number: number }>;
   };
-  /** Explicit ABI version for an injected submit port; required when Starknet read wiring is configured. */
+  /** Explicit ABI version for an injected submit port or isolated offline fixture; there is no V1 default. */
   submitPortRegistryVersion?: StarknetRegistryVersion;
   /** Explicit registry address for an injected test double that cannot declare one itself. */
   submitPortRegistryAddress?: string;
@@ -238,6 +238,22 @@ function getStarknetRegistryVersion(): StarknetRegistryVersion {
   return value;
 }
 
+function requireExplicitRegistryVersion(value: unknown): StarknetRegistryVersion {
+  if (value === undefined || value === null || value === "") {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_registry_version_required");
+  }
+  if (value !== "v1" && value !== "v2") {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_version");
+  }
+  return value;
+}
+
+function getConfiguredRegistryVersion(overrides?: FactoryStarknetOverrides): StarknetRegistryVersion {
+  return overrides?.submitPortRegistryVersion === undefined
+    ? getStarknetRegistryVersion()
+    : requireExplicitRegistryVersion(overrides.submitPortRegistryVersion);
+}
+
 function assertSubmitPortAbiVersion(submitPort: StarknetSubmitPort | undefined, registryVersion: StarknetRegistryVersion): void {
   const declared = submitPort?.registryVersion;
   if (declared !== undefined && declared !== registryVersion) {
@@ -366,7 +382,7 @@ function createMemoryFactory(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : getConfiguredRegistryVersion(overrides);
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   // Submit port semantics are explicit: the default is a local-only double;
@@ -519,7 +535,7 @@ async function createPostgresFactory(
   const eventIndexerAdapter = starknetPorts ? starknetPorts.indexer : null;
   const starknetReadProvider = starknetPorts ? starknetPorts.provider : null;
   const isStarknetConfigured = starknetPorts !== null;
-  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
+  const registryVersion = starknetPorts ? getStarknetRegistryVersion() : getConfiguredRegistryVersion(overrides);
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
   const eventProjectionCoordinator = starknetPorts

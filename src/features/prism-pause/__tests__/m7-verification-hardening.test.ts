@@ -122,7 +122,7 @@ describe("M7 verification trust and omission hardening", () => {
   });
 
   it("defaults the REST adapter to UNKNOWN facts, while an explicitly injected test provider can pass", async () => {
-    const defaultFactory = createIsolatedFactory();
+    const defaultFactory = createIsolatedFactory(undefined, { submitPortRegistryVersion: "v1" });
     const defaultIntent = await defaultFactory.pauseService.createIntent({
       prismId: "prism:m7-default",
       purpose: "payment",
@@ -138,7 +138,7 @@ describe("M7 verification trust and omission hardening", () => {
     expect(defaultVerified.reasonCodes).toContain(PAUSE_REASON_CODE.SIMULATION_UNKNOWN);
 
     const provider: VerificationSourceProvider = () => passingSources;
-    const testFactory = createIsolatedFactory(1_789_000_001, { verificationSourceProvider: provider });
+    const testFactory = createIsolatedFactory(1_789_000_001, { verificationSourceProvider: provider, submitPortRegistryVersion: "v1" });
     const testIntent = await testFactory.pauseService.createIntent({
       prismId: "prism:m7-injected",
       purpose: "payment",

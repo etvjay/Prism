@@ -7,9 +7,15 @@ import { closeFactory, getAppFactory, getStarknetNetwork, resetFactory } from ".
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const RPC_URL = process.env.STARKNET_RPC_URL;
 const REGISTRY = process.env.STARKNET_REGISTRY_ADDRESS;
+const RAW_REGISTRY_VERSION = process.env.STARKNET_REGISTRY_VERSION?.trim().toLowerCase();
+const REGISTRY_VERSION: "v1" | "v2" | null = RAW_REGISTRY_VERSION === "1" || RAW_REGISTRY_VERSION === "v1"
+  ? "v1"
+  : RAW_REGISTRY_VERSION === "2" || RAW_REGISTRY_VERSION === "v2"
+    ? "v2"
+    : null;
 const NETWORK = RPC_URL && REGISTRY ? getStarknetNetwork() : null;
-const SCOPE = REGISTRY && NETWORK ? { registryAddress: REGISTRY, network: NETWORK, registryVersion: (process.env.STARKNET_REGISTRY_VERSION === "2" ? "v2" : "v1") as "v1" | "v2" } : null;
-const suite = TEST_URL && RPC_URL && REGISTRY && NETWORK ? describe : describe.skip;
+const SCOPE = REGISTRY && NETWORK && REGISTRY_VERSION ? { registryAddress: REGISTRY, network: NETWORK, registryVersion: REGISTRY_VERSION } : null;
+const suite = TEST_URL && RPC_URL && REGISTRY && NETWORK && REGISTRY_VERSION ? describe : describe.skip;
 
 suite("live durable projection through application factory", () => {
   afterEach(async () => {

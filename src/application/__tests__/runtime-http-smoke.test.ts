@@ -19,7 +19,7 @@ function controller() {
 }
 
 describe("Runtime HTTP smoke — isolated local server (no live chain)", () => {
-  const factory = createIsolatedFactory(1_789_000_000);
+  const factory = createIsolatedFactory(1_789_000_000, { submitPortRegistryVersion: "v1" });
   let server: Server;
   let baseUrl: string;
 
