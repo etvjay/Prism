@@ -13,7 +13,10 @@ import {
   reconstruct,
   type ProjectionState,
 } from "./event-indexer";
-import type { PrismEventsStore } from "../adapters/postgres-prism-events-store";
+import type {
+  PrismEventsOrderCursor,
+  PrismEventsStore,
+} from "../adapters/postgres-prism-events-store";
 import type {
   EventProjectionCheckpoint,
   EventProjectionCheckpointInput,
@@ -53,6 +56,14 @@ export type EventProjectionRunResult = {
   duplicates: number;
   checkpointVersion: number | null;
 };
+
+export const EVENT_PROJECTION_RECONSTRUCTION_PAGE_SIZE = 1000;
+/**
+ * Bound reconstruction independently of the store page size. The indexer has
+ * the same 1,000-page hard bound and a 100-event default chunk, so this keeps
+ * a projection bounded without silently treating a partial read as current.
+ */
+export const EVENT_PROJECTION_RECONSTRUCTION_MAX_EVENTS = 100_000;
 
 export class EventProjectionCoordinator implements ProjectionReadPort {
   private readonly registryAddress: string;
@@ -187,13 +198,63 @@ export class EventProjectionCoordinator implements ProjectionReadPort {
     return this.checkpointStore.get(this.scope);
   }
 
+  private async listProjectionEvents(toBlock: number | null): Promise<readonly RegistryCanonicalEvent[]> {
+    if (toBlock !== null && (!Number.isSafeInteger(toBlock) || toBlock < 0)) {
+      throw new Error("event_projection_invalid_checkpoint_watermark");
+    }
+    const events: RegistryCanonicalEvent[] = [];
+    let cursor: PrismEventsOrderCursor | null = null;
+    for (;;) {
+      const page = await this.eventsStore.listOrderedPage(this.scope, {
+        after: cursor,
+        toBlock,
+        limit: EVENT_PROJECTION_RECONSTRUCTION_PAGE_SIZE,
+      });
+      if (page.events.length > EVENT_PROJECTION_RECONSTRUCTION_PAGE_SIZE) {
+        throw new Error("event_projection_reconstruction_page_oversized");
+      }
+      if (events.length + page.events.length > EVENT_PROJECTION_RECONSTRUCTION_MAX_EVENTS) {
+        throw new Error("event_projection_reconstruction_limit_exceeded");
+      }
+      if (page.events.length === 0) {
+        if (page.nextCursor !== null) throw new Error("event_projection_reconstruction_cursor_stalled");
+        return events;
+      }
+      for (let index = 1; index < page.events.length; index++) {
+        if (compareProjectionEvents(page.events[index - 1], page.events[index]) > 0) {
+          throw new Error("event_projection_reconstruction_order_invalid");
+        }
+      }
+      if (cursor !== null && compareProjectionEventToCursor(page.events[0], cursor) <= 0) {
+        throw new Error("event_projection_reconstruction_cursor_stalled");
+      }
+      const lastEvent = page.events[page.events.length - 1];
+      if (page.nextCursor === null) {
+        if (page.events.length === EVENT_PROJECTION_RECONSTRUCTION_PAGE_SIZE) {
+          throw new Error("event_projection_reconstruction_page_truncated");
+        }
+        events.push(...page.events);
+        return events;
+      }
+      if (!sameProjectionCursor(page.nextCursor, projectionCursor(lastEvent))) {
+        throw new Error("event_projection_reconstruction_cursor_invalid");
+      }
+      if (cursor !== null && compareProjectionCursors(page.nextCursor, cursor) <= 0) {
+        throw new Error("event_projection_reconstruction_cursor_stalled");
+      }
+      events.push(...page.events);
+      cursor = page.nextCursor;
+    }
+  }
+
   /**
    * Read the durable, scope-bound event projection for application fallback
    * resolution. The scan watermark is preferred over the newest event block
    * so an empty/old-event scan still carries the actual indexed head.
    */
   async getProjection(): Promise<ProjectionState> {
-    const events = await this.eventsStore.listOrdered(this.scope, 1000);
+    const checkpoint = await this.checkpointStore.get(this.scope);
+    const events = await this.listProjectionEvents(checkpoint?.scanWatermark ?? null);
     const canonicalEvents = events.map((event) => {
       const payload = event.payload as { prismId?: unknown };
       if (typeof payload.prismId !== "string") throw new Error("event_projection_prism_id_invalid");
@@ -203,10 +264,33 @@ export class EventProjectionCoordinator implements ProjectionReadPort {
       };
     });
     const projection = reconstruct(canonicalEvents);
-    const checkpoint = await this.checkpointStore.get(this.scope);
     const watermark = maxNullable(projection.watermark, checkpoint?.scanWatermark ?? null);
     return watermark === projection.watermark ? projection : { ...projection, watermark };
   }
+}
+
+function projectionCursor(event: RegistryCanonicalEvent): PrismEventsOrderCursor {
+  return { blockNumber: event.blockNumber, txHash: event.txHash.toLowerCase() as PrismEventsOrderCursor["txHash"], eventIndex: event.eventIndex };
+}
+
+function compareProjectionEvents(a: RegistryCanonicalEvent, b: RegistryCanonicalEvent): number {
+  return compareProjectionCursors(projectionCursor(a), projectionCursor(b));
+}
+
+function compareProjectionEventToCursor(event: RegistryCanonicalEvent, cursor: PrismEventsOrderCursor): number {
+  return compareProjectionCursors(projectionCursor(event), cursor);
+}
+
+function compareProjectionCursors(a: PrismEventsOrderCursor, b: PrismEventsOrderCursor): number {
+  if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+  const aTxHash = a.txHash.toLowerCase();
+  const bTxHash = b.txHash.toLowerCase();
+  if (aTxHash !== bTxHash) return aTxHash < bTxHash ? -1 : 1;
+  return a.eventIndex - b.eventIndex;
+}
+
+function sameProjectionCursor(a: PrismEventsOrderCursor, b: PrismEventsOrderCursor): boolean {
+  return compareProjectionCursors(a, b) === 0;
 }
 
 function maxEventBlock(events: readonly RegistryCanonicalEvent[]): number | null {

@@ -55,4 +55,25 @@ describe("PrismEventsStore scoped correlation", () => {
     ]);
     expect((await store.listByBlockRange(11, 12, SCOPE_A_V1)).map((event) => event.blockNumber)).toEqual([12]);
   });
+
+  it("iterates deterministic scoped keyset pages without crossing an upper watermark", async () => {
+    const store = new InMemoryPrismEventsStore();
+    const firstEvent = { ...EVENT, txHash: TX_B, blockNumber: 12 };
+    const secondEvent = { ...EVENT, txHash: "0x9999999999999999999999999999999999999999999999999999999999999999" as Hex, blockNumber: 10 };
+    await store.insert(firstEvent, SCOPE_A_V1);
+    await store.insert(secondEvent, SCOPE_A_V1);
+    await store.insert({ ...EVENT, txHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as Hex, blockNumber: 11 }, SCOPE_B_V1);
+
+    const first = await store.listOrderedPage(SCOPE_A_V1, { limit: 1, toBlock: 11 });
+    expect(first.events).toHaveLength(1);
+    expect(first.events[0]).toMatchObject({ txHash: secondEvent.txHash, blockNumber: 10, eventIndex: 0 });
+    expect(first.nextCursor).toMatchObject({ blockNumber: 10, eventIndex: 0 });
+    const afterFirst = await store.listOrderedPage(SCOPE_A_V1, { limit: 1, toBlock: 11, after: first.nextCursor });
+    expect(afterFirst.events).toHaveLength(0);
+    expect(afterFirst.nextCursor).toBeNull();
+
+    const unbounded = await store.listOrderedPage(SCOPE_A_V1, { limit: 1, after: first.nextCursor });
+    expect(unbounded.events).toHaveLength(1);
+    expect(unbounded.events[0]).toMatchObject({ txHash: firstEvent.txHash, blockNumber: 12, eventIndex: 0 });
+  });
 });

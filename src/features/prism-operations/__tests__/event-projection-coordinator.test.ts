@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryPrismEventsStore } from "../adapters/postgres-prism-events-store";
+import type { PrismEventsOrderPage, PrismEventsOrderPageRequest } from "../adapters/postgres-prism-events-store";
 import { EventProjectionCoordinator } from "../domain/event-projection-coordinator";
 import { InMemoryEventProjectionCheckpointStore } from "../domain/event-projection-checkpoint";
 import { resolveBinding, type RegistryCanonicalEvent } from "../domain/event-indexer";
@@ -152,6 +153,122 @@ describe("EventProjectionCoordinator", () => {
     expect(result.inserted).toBe(0);
     expect(result.duplicates).toBe(1);
     expect(await events.count(SCOPE)).toBe(1);
+  });
+
+  it("reconstructs past the first 1,000 events so a terminal revoke is not stale", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const txHash = (value: number): RegistryCanonicalEvent["txHash"] => `0x${value.toString(16).padStart(64, "0")}` as RegistryCanonicalEvent["txHash"];
+    const created: RegistryCanonicalEvent = {
+      txHash: txHash(1),
+      eventIndex: 0,
+      blockNumber: 1,
+      kind: "PrismIdentityCreated",
+      payload: { prismId: "prism:42", controller: "0x2" },
+    };
+    const bound: RegistryCanonicalEvent = {
+      txHash: txHash(2),
+      eventIndex: 0,
+      blockNumber: 2,
+      kind: "ExecutionIdentityBound",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x3", proofDigest: TX },
+    };
+    const filler = Array.from({ length: 999 }, (_, index): RegistryCanonicalEvent => ({
+      txHash: txHash(index + 3),
+      eventIndex: 0,
+      blockNumber: index + 3,
+      kind: "PrismIdentityCreated",
+      payload: { prismId: `prism:${index + 43}`, controller: "0x2" },
+    }));
+    const revoked: RegistryCanonicalEvent = {
+      txHash: txHash(1002),
+      eventIndex: 0,
+      blockNumber: 1002,
+      kind: "BindingRevoked",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x3" },
+    };
+    const allEvents = [created, bound, ...filler, revoked];
+    const source = indexer([{ events: allEvents, watermark: 1002 }]);
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: source,
+    });
+
+    const run = await coordinator.runOnce();
+    expect(run.inserted).toBe(allEvents.length);
+    expect(run.nextFromBlock).toBe(1003);
+    expect(await events.count(SCOPE)).toBe(allEvents.length);
+    expect((await coordinator.getCheckpoint())?.scanWatermark).toBe(1002);
+
+    const projection = await coordinator.getProjection();
+    expect(projection.watermark).toBe(1002);
+    expect(projection.identities.has("prism:42")).toBe(true);
+    expect(resolveBinding(projection, "prism:42", "BASE")).toBeNull();
+    expect([...projection.bindings.values()]).toContainEqual(expect.objectContaining({
+      prismId: "prism:42",
+      venue: "BASE",
+      executionAccount: "0x3",
+      status: "REVOKED",
+      revokedAtBlock: 1002,
+    }));
+
+    // A persisted event beyond the CAS checkpoint is not yet part of the
+    // served projection; serving it would turn an incomplete scan into stale-success.
+    await events.insert({
+      txHash: txHash(1003),
+      eventIndex: 0,
+      blockNumber: 1003,
+      kind: "ExecutionIdentityBound",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x4", proofDigest: TX },
+    }, SCOPE);
+    const checkpointBoundProjection = await coordinator.getProjection();
+    expect(checkpointBoundProjection.watermark).toBe(1002);
+    expect(resolveBinding(checkpointBoundProjection, "prism:42", "BASE")).toBeNull();
+  });
+
+  it("fails closed when reconstruction exceeds the hard event safety limit", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    let pageNumber = 0;
+    events.listOrderedPage = async (_scope: typeof SCOPE, _request?: PrismEventsOrderPageRequest): Promise<PrismEventsOrderPage> => {
+      const start = pageNumber++ * 1000;
+      const count = start === 100_000 ? 1 : 1000;
+      const pageEvents = Array.from({ length: count }, (_, index): RegistryCanonicalEvent => ({
+        txHash: `0x${(start + index).toString(16).padStart(64, "0")}` as RegistryCanonicalEvent["txHash"],
+        eventIndex: 0,
+        blockNumber: start + index,
+        kind: "PrismIdentityCreated",
+        payload: { prismId: `prism:${start + index}`, controller: "0x2" },
+        ...SCOPE,
+      }));
+      const last = pageEvents[pageEvents.length - 1];
+      return {
+        events: pageEvents,
+        nextCursor: {
+          blockNumber: last.blockNumber,
+          txHash: last.txHash,
+          eventIndex: last.eventIndex,
+        },
+      };
+    };
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: indexer([]),
+    });
+
+    await expect(coordinator.getProjection()).rejects.toThrow("event_projection_reconstruction_limit_exceeded");
+    expect(pageNumber).toBe(101);
+    expect(await checkpoints.get(SCOPE)).toBeNull();
   });
 
   it("does not advance checkpoint when event persistence fails", async () => {

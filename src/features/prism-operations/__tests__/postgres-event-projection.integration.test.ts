@@ -6,7 +6,7 @@ import { Pool } from "pg";
 import { PostgresPrismEventsStore } from "../adapters/postgres-prism-events-store";
 import { EventProjectionCoordinator } from "../domain/event-projection-coordinator";
 import { PostgresEventProjectionCheckpointStore } from "../domain/event-projection-checkpoint";
-import type { RegistryCanonicalEvent } from "../domain/event-indexer";
+import { resolveBinding, type RegistryCanonicalEvent } from "../domain/event-indexer";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
@@ -24,6 +24,10 @@ const EVENT: RegistryCanonicalEvent = {
   kind: "PrismIdentityCreated",
   payload: { prismId: "0x1", controller: "0x2" },
 };
+
+function numericTxHash(value: number): RegistryCanonicalEvent["txHash"] {
+  return `0x${value.toString(16).padStart(64, "0")}` as RegistryCanonicalEvent["txHash"];
+}
 
 function options() {
   return { connectionString: TEST_URL, options: `-c search_path=${TEST_SCHEMA}` };
@@ -91,6 +95,76 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
     expect(replay.duplicates).toBe(1);
     expect(replay.nextFromBlock).toBe(13);
     expect(await events.count(SCOPE)).toBe(1);
+  });
+
+  it("reconstructs past the first 1,000 Postgres events so a terminal revoke is not stale", async () => {
+    const registryAddress = `0x${"8".repeat(64)}`;
+    const scope = { registryAddress, network: "SN_SEPOLIA", registryVersion: "v1" as const };
+    const created: RegistryCanonicalEvent = {
+      txHash: numericTxHash(1),
+      eventIndex: 0,
+      blockNumber: 1,
+      kind: "PrismIdentityCreated",
+      payload: { prismId: "prism:42", controller: "0x2" },
+    };
+    const bound: RegistryCanonicalEvent = {
+      txHash: numericTxHash(2),
+      eventIndex: 0,
+      blockNumber: 2,
+      kind: "ExecutionIdentityBound",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x3", proofDigest: TX },
+    };
+    const filler = Array.from({ length: 999 }, (_, index): RegistryCanonicalEvent => ({
+      txHash: numericTxHash(index + 3),
+      eventIndex: 0,
+      blockNumber: index + 3,
+      kind: "PrismIdentityCreated",
+      payload: { prismId: `prism:${index + 43}`, controller: "0x2" },
+    }));
+    const revoked: RegistryCanonicalEvent = {
+      txHash: numericTxHash(1002),
+      eventIndex: 0,
+      blockNumber: 1002,
+      kind: "BindingRevoked",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x3" },
+    };
+    const allEvents = [created, bound, ...filler, revoked];
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints!,
+      eventsStore: events!,
+      indexer: { fetchAllRegistryEvents: async () => ({ events: allEvents, watermark: 1002, pagesFetched: 1 }) },
+    });
+
+    const run = await coordinator.runOnce();
+    expect(run.inserted).toBe(allEvents.length);
+    expect((await checkpoints!.get(scope))?.scanWatermark).toBe(1002);
+    expect(await events!.count(scope)).toBe(allEvents.length);
+
+    const projection = await coordinator.getProjection();
+    expect(projection.watermark).toBe(1002);
+    expect(projection.identities.has("prism:42")).toBe(true);
+    expect([...projection.bindings.values()]).toContainEqual(expect.objectContaining({
+      prismId: "prism:42",
+      venue: "BASE",
+      executionAccount: "0x3",
+      status: "REVOKED",
+      revokedAtBlock: 1002,
+    }));
+
+    await events!.insert({
+      txHash: numericTxHash(1003),
+      eventIndex: 0,
+      blockNumber: 1003,
+      kind: "ExecutionIdentityBound",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount: "0x4", proofDigest: TX },
+    }, scope);
+    const checkpointBoundProjection = await coordinator.getProjection();
+    expect(checkpointBoundProjection.watermark).toBe(1002);
+    expect(resolveBinding(checkpointBoundProjection, "prism:42", "BASE")).toBeNull();
   });
 
   it("CAS allows exactly one initial checkpoint writer", async () => {

@@ -78,12 +78,33 @@ export class PrismEventsStoreError extends Error {
   }
 }
 
+export type PrismEventsOrderCursor = {
+  readonly blockNumber: number;
+  readonly txHash: Hex;
+  readonly eventIndex: number;
+};
+
+export type PrismEventsOrderPageRequest = {
+  readonly after?: PrismEventsOrderCursor | null;
+  /** Null/undefined means no upper block bound. */
+  readonly toBlock?: number | null;
+  readonly limit?: number;
+};
+
+export type PrismEventsOrderPage = {
+  readonly events: readonly RegistryCanonicalEvent[];
+  /** Non-null means another page must be read, including an exactly-full page. */
+  readonly nextCursor: PrismEventsOrderCursor | null;
+};
+
 export interface PrismEventsStore {
   insert(event: RegistryCanonicalEvent, scope?: RegistryEventScopeInput): Promise<{ inserted: boolean; duplicate: boolean }>;
   insertMany(events: readonly RegistryCanonicalEvent[], scope?: RegistryEventScopeInput): Promise<{ inserted: number; duplicates: number }>;
   /** Missing scope is accepted at the type boundary only to fail closed at runtime. */
   get(txHash: Hex, eventIndex: number, scope?: RegistryEventScopeInput): Promise<RegistryCanonicalEvent | null>;
   listOrdered(scopeOrLimit?: RegistryEventScopeInput | number, limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
+  /** Keyset page over one scope, ordered by (block_number, tx_hash, event_index). */
+  listOrderedPage(scope: RegistryEventScopeInput, request?: PrismEventsOrderPageRequest): Promise<PrismEventsOrderPage>;
   listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
   count(scope?: RegistryEventScopeInput): Promise<number>;
   close(): Promise<void>;
@@ -179,6 +200,50 @@ function rowToEvent(row: PrismEventRow): RegistryCanonicalEvent {
 
 function queryScope(scope: RegistryEventScopeInput | number | undefined): RegistryEventScope {
   return normalizeScope(typeof scope === "number" ? undefined : scope);
+}
+
+const MAX_ORDER_PAGE_SIZE = 1000;
+
+function orderPageLimit(requested: number | undefined): number {
+  const value = requested ?? MAX_ORDER_PAGE_SIZE;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new PrismEventsStoreError("invalid_record", "invalid_order_page_limit");
+  }
+  return Math.min(MAX_ORDER_PAGE_SIZE, value);
+}
+
+function orderPageCursor(cursor: PrismEventsOrderCursor | null | undefined): PrismEventsOrderCursor | null {
+  if (cursor === undefined || cursor === null) return null;
+  if (!Number.isSafeInteger(cursor.blockNumber) || cursor.blockNumber < 0) {
+    throw new PrismEventsStoreError("invalid_record", "invalid_order_page_cursor_block");
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(cursor.txHash)) {
+    throw new PrismEventsStoreError("invalid_record", "invalid_order_page_cursor_tx");
+  }
+  if (!Number.isSafeInteger(cursor.eventIndex) || cursor.eventIndex < 0) {
+    throw new PrismEventsStoreError("invalid_record", "invalid_order_page_cursor_index");
+  }
+  return { blockNumber: cursor.blockNumber, txHash: cursor.txHash.toLowerCase() as Hex, eventIndex: cursor.eventIndex };
+}
+
+function orderPageToBlock(toBlock: number | null | undefined): number | null {
+  if (toBlock === undefined || toBlock === null) return null;
+  if (!Number.isSafeInteger(toBlock) || toBlock < 0) {
+    throw new PrismEventsStoreError("invalid_record", "invalid_order_page_to_block");
+  }
+  return toBlock;
+}
+
+function cursorForEvent(event: RegistryCanonicalEvent): PrismEventsOrderCursor {
+  return { blockNumber: event.blockNumber, txHash: event.txHash.toLowerCase() as Hex, eventIndex: event.eventIndex };
+}
+
+function compareEventToCursor(event: RegistryCanonicalEvent, cursor: PrismEventsOrderCursor): number {
+  if (event.blockNumber !== cursor.blockNumber) return event.blockNumber - cursor.blockNumber;
+  const eventTxHash = event.txHash.toLowerCase();
+  const cursorTxHash = cursor.txHash.toLowerCase();
+  if (eventTxHash !== cursorTxHash) return eventTxHash < cursorTxHash ? -1 : 1;
+  return event.eventIndex - cursor.eventIndex;
 }
 
 export class PostgresPrismEventsStore implements PrismEventsStore {
@@ -295,6 +360,32 @@ export class PostgresPrismEventsStore implements PrismEventsStore {
     }
   }
 
+  async listOrderedPage(inputScope: RegistryEventScopeInput, request: PrismEventsOrderPageRequest = {}): Promise<PrismEventsOrderPage> {
+    this.assertOpen();
+    const scope = queryScope(inputScope);
+    const bounded = orderPageLimit(request.limit);
+    const after = orderPageCursor(request.after);
+    const toBlock = orderPageToBlock(request.toBlock);
+    try {
+      const res = await this.pool.query(
+        `SELECT registry_address, network, registry_version, tx_hash, event_index, block_number, kind, payload
+         FROM prism_events
+         WHERE registry_address = $1 AND network = $2 AND registry_version = $3
+           AND ($4::bigint IS NULL OR block_number <= $4)
+           AND ($5::bigint IS NULL OR block_number > $5
+             OR (block_number = $5 AND (tx_hash > $6 OR (tx_hash = $6 AND event_index > $7))))
+         ORDER BY block_number ASC, tx_hash ASC, event_index ASC
+         LIMIT $8`,
+        [scope.registryAddress, scope.network, scope.registryVersion, toBlock, after?.blockNumber ?? null, after?.txHash ?? null, after?.eventIndex ?? null, bounded],
+      );
+      const events = res.rows.map((r) => rowToEvent(r as PrismEventRow));
+      return { events, nextCursor: events.length === bounded ? cursorForEvent(events[events.length - 1]) : null };
+    } catch (cause) {
+      if (cause instanceof PrismEventsStoreError) throw cause;
+      throw new PrismEventsStoreError("store_read_failed", "listOrderedPage failed", cause);
+    }
+  }
+
   async listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
     this.assertOpen();
     const scope = queryScope(scopeOrLimit);
@@ -381,6 +472,24 @@ export class InMemoryPrismEventsStore implements PrismEventsStore {
     });
     filtered.sort(compareEvents);
     return filtered.slice(0, bounded);
+  }
+
+  async listOrderedPage(inputScope: RegistryEventScopeInput, request: PrismEventsOrderPageRequest = {}): Promise<PrismEventsOrderPage> {
+    this.assertOpen();
+    const scope = queryScope(inputScope);
+    const bounded = orderPageLimit(request.limit);
+    const after = orderPageCursor(request.after);
+    const toBlock = orderPageToBlock(request.toBlock);
+    const filtered = [...this.map.values()].filter((event) => {
+      const eventScopeValue = eventScope(event);
+      return eventScopeValue !== null
+        && scopeMatches(eventScopeValue, scope)
+        && (toBlock === null || event.blockNumber <= toBlock)
+        && (after === null || compareEventToCursor(event, after) > 0);
+    });
+    filtered.sort(compareEvents);
+    const events = filtered.slice(0, bounded);
+    return { events, nextCursor: events.length === bounded ? cursorForEvent(events[events.length - 1]) : null };
   }
 
   async listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
