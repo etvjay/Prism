@@ -15,6 +15,7 @@ export const testPauseVerificationSourceProvider: VerificationSourceProvider = (
       intentPlanMatch: { matches: null, unknown: true },
       simulation: { success: null, effectMatches: null, freshnessOk: null, unknown: true },
       additionalApproval: { requiresApproval: null, unknown: true },
+      resolutionContinuity: { unknown: true },
     } satisfies VerificationSources;
   }
 
@@ -26,5 +27,6 @@ export const testPauseVerificationSourceProvider: VerificationSourceProvider = (
     intentPlanMatch: { matches: true },
     simulation: { success: true, effectMatches: true, freshnessOk: true },
     additionalApproval: { requiresApproval: false },
+    resolutionContinuity: { risks: [] },
   } satisfies VerificationSources;
 };

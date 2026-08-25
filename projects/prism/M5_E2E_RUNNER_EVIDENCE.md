@@ -13,11 +13,18 @@ Provider-injected, no mock proof as evidence. Simulate `strk20PrepareInvoke(...,
 ```
 src/features/prism-strk20/m5/constants.ts
 src/features/prism-strk20/m5/ports.ts
-src/features/prism-strk20/m5/runner.ts      — capability → fee/registration → exact simulation → actions [transfer OPEN, invoke [STRK,VTOKEN,u128,${openNoteIds[0]}]] → wallet proof boundary → terminal-receipt polling/recovery → independent RPC → public no-strand read → validator gate
+src/features/prism-strk20/m5/runner.ts      — capability → fee/registration → exact simulation → actions [transfer OPEN, invoke [STRK,VTOKEN,u128,${openNoteIds[0]}]] → wallet proof boundary → operation/recovery fence → terminal-receipt polling → independent RPC receipt/calldata → pool origin attribution → public no-strand read → optional typed facts → validator gate
+src/features/prism-strk20/m5/validation.ts   — exact calldata, receipt, pool-origin, and typed-observation validation
+src/features/prism-strk20/m5/operation.ts    — one-submission recovery fence
+src/features/prism-strk20/m5/maturity.ts     — explicit maturity state
 src/features/prism-strk20/m5/rpc.ts         — fetch-based public RPC (no secrets)
 src/features/prism-strk20/m5/validator.ts   — STRK20_VALIDATOR_PATH/URL when configured; null → X2
 src/features/prism-strk20/m5/wallet-adapter.ts — WalletAccountV6 (starknet 10.4.0, get-starknet 6.0.3, types-js 0.10.3) → M5Provider
-src/features/prism-strk20/m5/__tests__/runner.test.ts — 27 X2 adversarial tests
+src/features/prism-strk20/m5/__tests__/runner.test.ts — 31 X2 adversarial tests
+src/features/prism-strk20/m5/__tests__/validation.test.ts — 6 validation/attribution tests
+src/features/prism-strk20/m5/__tests__/operation.test.ts — 4 operation/recovery tests
+src/features/prism-strk20/m5/__tests__/maturity.test.ts — 3 maturity-state tests
+src/features/prism-strk20/m5/__tests__/rpc.test.ts — 5 X2 JSON-RPC shape/readback tests
 ops/m5-vesu-e2e/harness.mjs                 — CLI: --self-test / offline BLOCKED / --live (requires wallet)
 ops/m5-vesu-e2e/README.md
 ```
@@ -28,10 +35,11 @@ ops/m5-vesu-e2e/README.md
 contracts/prism_vesu_lending_helper: scarb build → ok (starknet 2.20.0)
 contracts/prism_vesu_lending_helper: snforge test → 16 passed, 0 failed
 contracts/prism_allocation_helper: snforge test → 11 passed, 0 failed (regression)
-npm test -- src/features/prism-strk20/m5/__tests__/runner.test.ts → 27 passed, 0 failed
-npm test -- src/features/prism-strk20/m5/__tests__/rpc.test.ts → 2 passed, 0 failed (entry_point_selector/readback shape)
+npm test -- src/features/prism-strk20/m5/__tests__/runner.test.ts → 31 passed, 0 failed
+npm test -- src/features/prism-strk20/m5/__tests__/rpc.test.ts → 5 passed, 0 failed (entry_point_selector/transaction calldata/u256/readback shape)
+npm test -- M5 validation/operation/maturity suites → 13 passed, 0 failed
 npm test -- action/receipt/privacy focused tests → 52 passed, 0 failed
-npm test (full) → 884 passed, 1 skipped
+npm test (full) → 1030 passed, 1 skipped (100 files)
 npm run typecheck → 0 errors
 npm run build → compiled, static 7/7
 git diff --check → 0
@@ -135,7 +143,7 @@ In this environment (no injected WalletAccountV6, no prover, no note-readback se
 BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER
 ```
 
-The runner is **ready** (`M5_E2E_RUNNER_READY_X2` observed via 27 X2 tests), while
+The runner is **ready** (`M5_E2E_RUNNER_READY_X2` observed via 31 X2 tests), while
 the complete route is blocked by both the missing wallet/prover session and the
 missing explicit calldata/Vesu/note/maturity evidence surfaces. The narrow
 helper→Vesu probe remains separate evidence and does not close the pool route.
@@ -162,3 +170,22 @@ STRK20_VALIDATOR_PATH=ops/evidence/validate.mjs  # or actual hub scripts/build-p
 ```
 
 Do not use `sncast` or raw account invoke — it cannot produce the SNIP-36 proof and is not an M5 substitute.
+
+## Local boundary addendum — 2026-08-25
+
+`M5_LOCAL_BOUNDARY_CLOSEOUT.md` records the incremental X2 closure after this
+snapshot: strict first-party STRK20 action/calldata validation, Starknet field
+address bounds, malformed receipt rejection, pinned pool-event origin
+attribution (never transaction sender), raw `starknet_getTransactionByHash`
+calldata read contract, strict u256 balance decoding, one-submission recovery
+fence, timeout/unknown receipt attention state, and explicit maturity/open-note/
+Vesu/conservation ports. These additions do not change the evidence ceiling.
+
+A live wallet/prover session, live raw calldata, typed Vesu Deposit, note
+readback, maturity, independent endpoint, and upstream validator result remain
+**not observed**. The local closeout remains:
+
+```text
+M5_LOCAL_BOUNDARY_READY_X2
+BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER
+```

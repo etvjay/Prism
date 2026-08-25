@@ -729,10 +729,33 @@ describe("App boundary — application command/query contract", () => {
           payload: { controllerAddress: CONTROLLER },
         });
       } else if (kind === "bind") {
+        const owner = makeEoaSigner();
+        const issued = await h.app.issueChallenge({
+          headers: { requestId: "bind-issue" },
+          session,
+          payload: { prismId: PRISM_ID, venue: VENUE, executionAccount: owner.address.toLowerCase() },
+        });
+        if (!issued.ok) throw new Error("bind challenge issue failed");
+        const signature = await owner.signMessage({ message: issued.data.messageToSign });
+        const verified = await h.app.submitProof({
+          headers: { requestId: "bind-verify" },
+          session,
+          payload: { challengeId: issued.data.challengeId, presented: presentedFromIssued(issued.data as any), signature: signature as Hex },
+        });
+        if (!verified.ok) throw new Error("bind proof verification failed");
         result = await app.bind({
           headers: { requestId: "final-bind", idempotencyKey },
           session,
-          payload: { prismId: PRISM_ID, venue: VENUE, executionAccount, proofDigest: `0x${"1".repeat(64)}` as Hex, controllerAddress: CONTROLLER },
+          payload: {
+            prismId: PRISM_ID,
+            venue: VENUE,
+            executionAccount: owner.address.toLowerCase(),
+            proofDigest: verified.data.digest,
+            challengeId: issued.data.challengeId,
+            chainId: issued.data.chainId,
+            expiresAt: issued.data.expiresAt,
+            controllerAddress: CONTROLLER,
+          },
         });
       } else {
         h.registry.seedBinding(PRISM_ID, VENUE, executionAccount);

@@ -63,6 +63,7 @@ const passingSources: VerificationSources = {
   intentPlanMatch: { matches: true },
   simulation: { success: true, effectMatches: true, freshnessOk: true },
   additionalApproval: { requiresApproval: false },
+  resolutionContinuity: { risks: [] },
 };
 
 describe("P3 typed checks and policy engine (fail-closed UNKNOWN)", () => {

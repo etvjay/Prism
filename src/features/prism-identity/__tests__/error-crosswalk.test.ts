@@ -241,6 +241,9 @@ const BROKEN_STORE_SINGLETON: OwnershipProofStore = {
   async consumeNonce() {
     return "unknown" as const;
   },
+  async claimVerifiedBinding() {
+    throw new Error("store down");
+  },
   async transitionState() {
     return false;
   },

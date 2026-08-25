@@ -27,11 +27,24 @@ export const PRIVACY_POOL_MAINNET =
 export const MAX_U128 = (1n << 128n) - 1n;
 export const MIN_AMOUNT = 1n;
 
+// First-party STRK20 wallet API placeholder. The wallet resolves this to the
+// id of the first transfer action whose amount is `OPEN`.
+export const OPEN_NOTE_ZERO_PLACEHOLDER = "${openNoteIds[0]}" as const;
+
+// Starknet ContractAddress is a field element in the address range [0, 2^251).
+// A syntactically valid 64-hex value above this limit is not a contract address.
+export const STARKNET_ADDRESS_LIMIT = 1n << 251n;
 const STARKNET_ADDRESS = /^0x[0-9a-f]{1,64}$/i;
 
 /** Structural guard for public Starknet contract addresses at this boundary. */
 export function isValidStarknetAddress(value: unknown): value is string {
-  return typeof value === "string" && STARKNET_ADDRESS.test(value);
+  if (typeof value !== "string" || !STARKNET_ADDRESS.test(value)) return false;
+  try {
+    const numeric = BigInt(value);
+    return numeric >= 0n && numeric < STARKNET_ADDRESS_LIMIT;
+  } catch {
+    return false;
+  }
 }
 
 // STRK decimals (18) — no conversion in helper; note is shares denominated

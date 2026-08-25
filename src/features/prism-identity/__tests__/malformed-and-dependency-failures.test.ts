@@ -26,6 +26,9 @@ const BROKEN_STORE = {
   async consumeNonce() {
     return "unknown" as const;
   },
+  async claimVerifiedBinding() {
+    throw new Error("disk full");
+  },
   async transitionState() {
     return false;
   },

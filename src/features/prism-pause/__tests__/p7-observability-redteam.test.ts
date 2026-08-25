@@ -25,6 +25,7 @@ const passingSources: VerificationSources = {
   intentPlanMatch: { matches: true },
   simulation: { success: true, effectMatches: true, freshnessOk: true },
   additionalApproval: { requiresApproval: false },
+  resolutionContinuity: { risks: [] },
 };
 const unknownSources: VerificationSources = {
   recipientBinding: { status: "UNKNOWN", observedValue: null },

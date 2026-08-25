@@ -420,6 +420,9 @@ export async function runM3DryRunSequence(
         venue: validatedConfig.venue,
         executionAccount: (verifiedEoa ? (signer.address.toLowerCase() as string) : executionAccount) as EvmAddress,
         proofDigest: verifiedEoa.digest,
+        challengeId: issued.challengeId,
+        chainId: issued.chainId,
+        expiresAt: issued.expiresAt,
         controllerAddress: validatedConfig.normalizedControllerAddress,
       },
     });

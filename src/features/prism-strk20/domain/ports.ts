@@ -23,6 +23,8 @@ export type ScreeningOutcome = "approved" | "rejected" | "unavailable";
 export interface DepositObservation {
   txHash: Hex;
   executionStatus: "SUCCEEDED" | "REVERTED" | "RECEIVED";
+  /** Optional provider finality; absent remains UNKNOWN at the app boundary. */
+  finalityStatus?: string;
   screening: ScreeningOutcome;
   blockNumber: number | null;
   receiptEvents?: { address: string; keys: string[] }[]; // minimal for pool check
@@ -37,7 +39,10 @@ export interface PrivateBalanceObservation {
 export interface TransferObservation {
   txHash: Hex;
   executionStatus: "SUCCEEDED" | "REVERTED" | "RECEIVED";
+  /** Optional provider finality; absent remains UNKNOWN at the app boundary. */
+  finalityStatus?: string;
   blockNumber: number | null;
+  receiptEvents?: { address: string; keys: string[] }[];
 }
 
 /**
@@ -51,7 +56,7 @@ export interface Strk20WalletPort {
   // Environment — via walletV6.requestChainId or account.provider.getChainId
   observeChainId(): Promise<string>;
   // Registration: wallet handles it; dapp only checks if registration is required
-  isRegistered(): Promise<boolean>;
+  isRegistered(): Promise<boolean | null>;
   // Fee: read from pool get_fee_amount via wallet or RPC reader (injected)
   observeFee(): Promise<PoolFeeObservation>;
   // ERC-20 approve step (first wallet prompt)

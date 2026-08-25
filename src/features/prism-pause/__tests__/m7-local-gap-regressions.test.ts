@@ -26,6 +26,7 @@ const passingSources: VerificationSources = {
   intentPlanMatch: { matches: true },
   simulation: { success: true, effectMatches: true, freshnessOk: true },
   additionalApproval: { requiresApproval: false },
+  resolutionContinuity: { risks: [] },
 };
 
 const policy: Policy = {

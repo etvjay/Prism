@@ -13,9 +13,11 @@ capability check
 → simulate/prepared invoke (empty proof, calldata shape verified)
 → exact STRK20 actions [transfer OPEN, invoke helper [STRK, VTOKEN, u128, openNoteId]]
 → wallet-side SNIP-36 proof submission boundary
-→ terminal receipt polling/recovery (`RECEIVED`/`PENDING` are not completion)
-→ independent public RPC readback (second path for X3)
+→ terminal receipt polling/recovery (`RECEIVED`/`PENDING`/`UNKNOWN` are not completion; one-submission fence)
+→ independent public RPC readback (receipt + raw transaction calldata; explicit second source for X3)
+→ pinned pool-event origin attribution (never transaction sender)
 → public no-strand read (helper STRK==0, vToken==0; not full note conservation)
+→ optional explicit Vesu/note/maturity/conservation ports (never inferred)
 → upstream validator invocation when configured
 ```
 
@@ -26,11 +28,17 @@ All failure states are distinct: `NOT_REGISTERED` (or registration unknown), `SC
 - `src/features/prism-strk20/m5/constants.ts` — pinned addresses (STRK, vToken, pool, helper)
 - `src/features/prism-strk20/m5/ports.ts` — injected ports (no viewing keys)
 - `src/features/prism-strk20/m5/runner.ts` — domain runner (pure, injectable)
+- `src/features/prism-strk20/m5/validation.ts` — exact calldata, receipt, pool-origin, and typed-observation validation
+- `src/features/prism-strk20/m5/operation.ts` — one-submission operation/recovery fence
+- `src/features/prism-strk20/m5/maturity.ts` — explicit maturity-state contract
 - `src/features/prism-strk20/m5/rpc.ts` — public/read-only RPC reader
 - `src/features/prism-strk20/m5/validator.ts` — upstream validator when `STRK20_VALIDATOR_PATH/URL` set
 - `src/features/prism-strk20/m5/wallet-adapter.ts` — `WalletAccountV6` → `M5Provider` (current types: starknet 10.4.0, get-starknet 6.0.3, types-js 0.10.3)
-- `src/features/prism-strk20/m5/__tests__/runner.test.ts` — 27 X2 adversarial tests (no wallet, no RPC)
-- `src/features/prism-strk20/m5/__tests__/rpc.test.ts` — 2 X2 JSON-RPC shape/readback tests
+- `src/features/prism-strk20/m5/__tests__/runner.test.ts` — 31 X2 adversarial tests
+- `src/features/prism-strk20/m5/__tests__/validation.test.ts` — 6 validation/attribution tests
+- `src/features/prism-strk20/m5/__tests__/operation.test.ts` — 4 operation/recovery tests
+- `src/features/prism-strk20/m5/__tests__/maturity.test.ts` — 3 maturity-state tests
+- `src/features/prism-strk20/m5/__tests__/rpc.test.ts` — 5 X2 JSON-RPC shape/readback tests
 - `ops/m5-vesu-e2e/harness.mjs` — CLI harness (offline → BLOCKED, never fabricates hash)
 
 ## Boundaries

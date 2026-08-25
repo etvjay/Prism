@@ -19,13 +19,19 @@ export interface InjectedWalletProvider {
   supportedWalletApi(): Promise<string[]>;
   supportedSpecs(): Promise<string[]>;
   requestChainId(): Promise<string>;
-  isRegistered(): Promise<boolean>;
+  isRegistered(): Promise<boolean | null>;
   getFeeAmount(): Promise<{ fee: bigint; blockNumber: number | null }>;
   approve(params: { token: Hex; amount: bigint; spender: Hex }): Promise<Hex>;
   shield(params: { token: Hex; amount: bigint; quotedFee: bigint }): Promise<DepositObservation>;
   balances(params: { tokens: Hex[] }): Promise<PrivateBalanceObservation>;
   transfer(params: { token: Hex; amount: bigint; recipient: Hex; quotedFee: bigint }): Promise<TransferObservation>;
-  getReceipt(txHash: Hex): Promise<{ executionStatus: string; blockNumber: number | null; events: { address: string; keys: string[] }[] } | null>;
+  getReceipt(txHash: Hex): Promise<{
+    executionStatus: string;
+    finalityStatus?: string;
+    finality_status?: string;
+    blockNumber: number | null;
+    events: { address: string; keys: string[] }[];
+  } | null>;
 }
 
 export class InjectedWalletStrk20Adapter implements Strk20WalletPort {
@@ -45,7 +51,7 @@ export class InjectedWalletStrk20Adapter implements Strk20WalletPort {
     return this.provider.requestChainId();
   }
 
-  async isRegistered(): Promise<boolean> {
+  async isRegistered(): Promise<boolean | null> {
     return this.provider.isRegistered();
   }
 
@@ -95,6 +101,7 @@ export class InjectedWalletStrk20Adapter implements Strk20WalletPort {
     return {
       txHash,
       executionStatus: r.executionStatus as DepositObservation["executionStatus"],
+      finalityStatus: r.finalityStatus ?? r.finality_status ?? "UNKNOWN",
       screening: "approved",
       blockNumber: r.blockNumber,
       receiptEvents: r.events,

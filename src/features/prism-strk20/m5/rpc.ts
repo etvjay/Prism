@@ -70,14 +70,56 @@ export async function fetchBalanceViaRpc(rpcUrl: string, token: string, account:
   });
   const res = await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body });
   if (!res.ok) throw new Error(`balance_of RPC failed: ${res.status}`);
-  const json = (await res.json()) as { result?: string[]; error?: { message: string } };
+  const json = (await res.json()) as { result?: unknown; error?: { message: string } };
   if (json.error) throw new Error(json.error.message);
-  const result = json.result ?? [];
-  if (result.length === 0) return 0n;
-  // u256 is two felts: low, high
-  const low = BigInt(result[0]);
-  const high = result.length > 1 ? BigInt(result[1]) : 0n;
+  const result = json.result;
+  if (!Array.isArray(result) || result.length !== 2 || !result.every((value) => typeof value === "string")) {
+    throw new Error("u256_balance_shape_invalid");
+  }
+  // Standard Cairo u256 is exactly two u128 limbs, low then high. Reject
+  // extra/missing limbs instead of silently truncating a provider response.
+  let low: bigint;
+  let high: bigint;
+  try {
+    low = BigInt(result[0] as string);
+    high = BigInt(result[1] as string);
+  } catch {
+    throw new Error("u256_balance_limb_invalid");
+  }
+  if (low < 0n || low > (1n << 128n) - 1n || high < 0n || high > (1n << 128n) - 1n) {
+    throw new Error("u256_balance_limb_out_of_range");
+  }
   return low + (high << 128n);
+}
+
+export async function fetchTransactionViaRpc(
+  rpcUrl: string,
+  txHash: Hex,
+): Promise<{ transactionHash: string; calldata: string[] } | null> {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "starknet_getTransactionByHash",
+    params: [txHash],
+  });
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as {
+    result?: { transaction_hash?: string; transactionHash?: string; calldata?: unknown };
+    error?: { message: string };
+  };
+  if (json.error || !json.result) return null;
+  if (!Array.isArray(json.result.calldata) || !json.result.calldata.every((v) => typeof v === "string")) {
+    throw new Error("transaction_calldata_missing_or_malformed");
+  }
+  return {
+    transactionHash: json.result.transaction_hash ?? json.result.transactionHash ?? txHash,
+    calldata: json.result.calldata,
+  };
 }
 
 export async function fetchBlockNumberViaRpc(rpcUrl: string): Promise<number> {
@@ -89,14 +131,18 @@ export async function fetchBlockNumberViaRpc(rpcUrl: string): Promise<number> {
   return json.result ?? 0;
 }
 
-export function createIndependentRpcReader(rpcUrl: string) {
+export function createIndependentRpcReader(rpcUrl: string, sourceId?: string) {
   return {
+    ...(sourceId ? { sourceId } : {}),
     getTransactionReceipt: (txHash: Hex) => fetchReceiptViaRpc(rpcUrl, txHash),
     getBalance: (token: string, account: string) => fetchBalanceViaRpc(rpcUrl, token, account),
+    getTransaction: (txHash: Hex) => fetchTransactionViaRpc(rpcUrl, txHash),
     getBlockNumber: () => fetchBlockNumberViaRpc(rpcUrl),
   };
 }
 
 export function hasIndependentRead(secondUrl: string | null | undefined, primaryUrl: string): boolean {
-  return !!secondUrl && secondUrl !== primaryUrl;
+  const second = secondUrl?.trim() ?? "";
+  const primary = primaryUrl.trim();
+  return second.length > 0 && primary.length > 0 && second !== primary;
 }

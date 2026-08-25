@@ -474,3 +474,82 @@ Malformed, signed, leading-zero, zero, non-decimal, and overflow values are reje
 **Evidence boundary**
 
 This decision authorizes the explicit boundary conversion. It does not authorize deployment, signing, or live M3 evidence.
+
+---
+
+## DEC-PRISM-019 — External aliases are not Prism identity roots
+
+**Layer:** Product/Identity
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+Starknet ID, ENS, and future naming providers are external alias/resolution systems. An alias is never equal to a Prism ID. An alias becomes associated with a Prism identity only through an explicit, verified association record.
+
+---
+
+## DEC-PRISM-020 — Authority and disclosure are independent
+
+**Layer:** Product/Security
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+Control or authorization of an execution endpoint does not imply that the identity-to-endpoint relationship is publicly discoverable. Identity, endpoint, authority, delegation, and disclosure remain separate domain concepts.
+
+---
+
+## DEC-PRISM-021 — Private endpoints are never plaintext public state
+
+**Layer:** Security/Privacy
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+A private endpoint must never be published in plaintext through Starknet state, public events, public projections, API responses, logs, or evidence. Private-binding creation/read remains blocked until encryption-at-rest, key ownership, and recovery are proven by an accepted protection provider. Ordinary browser localStorage is not secure storage.
+
+This does not block wallet-owned STRK20 private execution, whose notes, viewing keys, and proofs remain wallet/provider-owned.
+
+---
+
+## DEC-PRISM-022 — Privacy Mode is a policy bundle
+
+**Layer:** Product/Privacy
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+A global Privacy Mode may bundle user preferences, but binding-level disclosure policy remains canonical. v0 exposes PUBLIC and PRIVATE behavior only. SELECTIVE remains represented in the domain for forward compatibility but has no v0 route until requester authorization and disclosure capabilities are proven.
+
+---
+
+## DEC-PRISM-023 — Public-to-private does not erase history
+
+**Layer:** Product/Privacy
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+PUBLIC → PRIVATE means future Prism unpublication plus a historical-public warning. It must never claim that a previously public association was never public or erase third-party blockchain/indexer history.
+
+---
+
+## DEC-PRISM-024 — Session grants are bounded authority, not identity
+
+**Layer:** Security/Authority
+**Status:** Accepted
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+A SessionGrant is temporary bounded authority. It is not a Prism identity, root ownership, persistent execution account, shadow account, or substitute for the owner/controller. Session scope, target, selector, token, call, expiry, revocation, and exhaustion constraints are mandatory. Real session-key enforcement remains outside v0 until a selected account implementation proves it.
+
+---
+
+## DEC-PRISM-025 — Shadow accounts remain deferred
+
+**Layer:** Product/Execution
+**Status:** Accepted as deferred
+**Decided by:** Jason
+**Decided at:** 2026-08-25
+
+STRK20 shadow accounts remain a separate future execution mechanism and are not an MVP dependency. They must not be conflated with SessionGrant, session keys, ordinary accounts, or Prism identity. Reopening this scope requires pinned wallet/account interface evidence and a new decision.

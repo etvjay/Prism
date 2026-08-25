@@ -144,6 +144,9 @@ describe("IssueChallenge (CMD-B-01)", () => {
       async consumeNonce() {
         return "unknown" as const;
       },
+      async claimVerifiedBinding() {
+        return "unknown" as const;
+      },
       async transitionState() {
         return false;
       },

@@ -61,6 +61,11 @@ export type ChallengeState = "ISSUED" | "VERIFIED" | "REJECTED" | "EXPIRED";
 
 export type NonceState = "UNUSED" | "CONSUMED";
 
+/** Offchain single-use fence for the proof-to-bind handoff. This is distinct
+ * from the registry's onchain consumed_digests map: it records that one
+ * verified challenge has been reserved for one bind submission. */
+export type BindingUseState = "UNUSED" | "CONSUMED";
+
 export interface OwnershipChallengeFields {
   schemaVersion: number;
   /** EIP-155 chain id of the network the execution account lives on.
@@ -80,10 +85,31 @@ export interface StoredOwnershipChallenge extends OwnershipChallengeFields {
   digest: Hex;
   state: ChallengeState;
   nonceState: NonceState;
+  /** Optional for pre-binding-fence records; absent legacy rows are treated as UNUSED. */
+  bindingUseState?: BindingUseState;
   verifiedSignatureClass?: SignatureClass;
   verifiedAt?: number;
   rejection?: { code: string; detail?: string };
 }
+
+export interface VerifiedBindingClaim {
+  readonly challengeId: Hex;
+  readonly proofDigest: Hex;
+  readonly prismId: PrismId;
+  readonly venue: Venue;
+  readonly executionAccount: EvmAddress;
+  readonly chainId: number;
+  readonly expiresAt: number;
+  readonly now: number;
+}
+
+export type BindingClaimResult =
+  | "claimed"
+  | "already_claimed"
+  | "unknown"
+  | "not_verified"
+  | "expired"
+  | "mismatch";
 
 /**
  * Durable server-side challenge/nonce storage.
@@ -100,6 +126,12 @@ export interface OwnershipProofStore {
   consumeNonce(
     challengeId: Hex,
   ): Promise<"consumed" | "already_consumed" | "unknown">;
+  /**
+   * Atomically reserve one VERIFIED challenge for one bind submission. The
+   * conditional write re-checks every proof-to-bind field and expiry so a
+   * caller cannot turn a stale read or arbitrary digest into authority.
+   */
+  claimVerifiedBinding(input: VerifiedBindingClaim): Promise<BindingClaimResult>;
   /** Optimistic guarded transition; returns false when current state differs. */
   transitionState(
     challengeId: Hex,

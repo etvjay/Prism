@@ -152,7 +152,16 @@ export async function runDecisiveFixture(
   const bindRes = await app.bind({
     headers: { requestId: "h-bind", idempotencyKey: "idem-harness-bind", correlationId: "corr-harness" },
     session,
-    payload: { prismId: PRISM_ID, venue: VENUE, executionAccount, proofDigest: verified.data.digest, controllerAddress: deps.controllerAddress },
+    payload: {
+      prismId: PRISM_ID,
+      venue: VENUE,
+      executionAccount,
+      proofDigest: verified.data.digest,
+      challengeId: issued.data.challengeId,
+      chainId: issued.data.chainId,
+      expiresAt: issued.data.expiresAt,
+      controllerAddress: deps.controllerAddress,
+    },
   });
   if (!bindRes.ok) throw new Error(`bind failed: ${bindRes.error.code}`);
   if ((bindRes.data.state as string) !== "submitted") throw new Error(`bind must be submitted (got ${bindRes.data.state})`);
