@@ -86,7 +86,12 @@ export class InMemoryPauseStore implements PauseStore {
     // re-check after yield (race simulation)
     if (this.intentsByKey.has(intent.clientIdempotencyKey)) {
       const raced = this.intents.get(this.intentsByKey.get(intent.clientIdempotencyKey)!);
-      if (raced) return clone(raced);
+      if (raced) {
+        if (!sameIntentFingerprint(raced, intent)) {
+          throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `idempotency_key_conflict:${intent.clientIdempotencyKey}`);
+        }
+        return clone(raced);
+      }
     }
     if (this.intents.has(intent.intentId)) throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `duplicate_intent_id:${intent.intentId}`);
     this.intents.set(intent.intentId, clone(intent));

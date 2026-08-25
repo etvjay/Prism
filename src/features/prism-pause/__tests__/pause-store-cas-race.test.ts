@@ -5,7 +5,7 @@ import { createIntent } from "../domain/intent";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { createPause, computeApprovalScopeHash, toVerifying, completeVerification, release } from "../domain/pause";
 import { makeCheck } from "../domain/checks";
-import { PAUSE_REASON_CODE } from "../domain/errors";
+import { PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "../domain/errors";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import { testPauseAuthorityResolver } from "./test-authority";
 
@@ -98,6 +98,47 @@ describe("P2 durable store CAS / race / restart", () => {
     const pause2 = await svc.pause({ intentId: intent1.intentId, planHash: plan.planHash, now: 1200 });
     expect(pause2.pauseId).toBe(pause1.pauseId);
     expect(store.snapshotPauses().length).toBe(1);
+  });
+
+  it("concurrent same-key intents reject authority fingerprint drift after the race recheck", async () => {
+    const store = new InMemoryPauseStore();
+    const shared = {
+      principal: "prism:alice",
+      purpose: "payment" as const,
+      requestedRecipient: "0xabc",
+      requestedAsset: "0xdead",
+      requestedAmount: "100",
+      requestedRoute: "base:0xdead:transfer",
+      createdAt: 1000,
+      expiresAt: 20_000,
+      clientIdempotencyKey: "idem_race_authority",
+      policyVersion: "v1",
+    };
+    const userIntent = createIntent({
+      ...shared,
+      intentId: "intent_race_user",
+      initiator: "user",
+      agentId: null,
+    });
+    const agentIntent = createIntent({
+      ...shared,
+      intentId: "intent_race_agent",
+      initiator: "agent",
+      agentId: "agent_1",
+    });
+
+    const results = await Promise.allSettled([
+      store.putIntent(userIntent),
+      store.putIntent(agentIntent),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toMatchObject({ code: PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT });
+    const persisted = await store.getIntentByIdempotencyKey(shared.clientIdempotencyKey);
+    expect(persisted?.initiator).toBeDefined();
+    expect([userIntent.initiator, agentIntent.initiator]).toContain(persisted?.initiator);
   });
 
   it("expired intent → not pausable", async () => {

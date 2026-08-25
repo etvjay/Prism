@@ -9,6 +9,7 @@ import { createExecutionPlan } from "../domain/execution-plan";
 import { createIntent } from "../domain/intent";
 import { createPause, toVerifying } from "../domain/pause";
 import { PauseService } from "../application/pause-service";
+import { testPauseAuthorityResolver } from "./test-authority";
 import type { PauseDecision } from "../ports/pause-store";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
@@ -227,7 +228,7 @@ suite("PostgresPauseStore (LIVE integration, M7 decision durability)", () => {
   it("service transition rolls back pause state when its audit metadata append fails", async () => {
     const suffix = uniqueSuffix();
     const { pause } = await createPauseFixture(suffix);
-    const service = new PauseService(store, { store });
+    const service = new PauseService(store, { store, authorityResolver: testPauseAuthorityResolver });
     const constraint = `pause_transition_atomicity_${suffix}`;
     await adminPool.query(
       `ALTER TABLE "${TEST_SCHEMA}"."execution_pauses" ADD CONSTRAINT "${constraint}" CHECK (pause_id <> '${pause.pauseId}' OR decision_ids_json::jsonb = '[]'::jsonb)`,
@@ -255,7 +256,7 @@ suite("PostgresPauseStore (LIVE integration, M7 decision durability)", () => {
 
   it("service CAS race commits one correlated cancellation and rejects the loser", async () => {
     const { pause } = await createPauseFixture(uniqueSuffix());
-    const service = new PauseService(store, { store });
+    const service = new PauseService(store, { store, authorityResolver: testPauseAuthorityResolver });
     const results = await Promise.allSettled([
       service.cancel({ pauseId: pause.pauseId, now: 1_789_000_030, expectedVersion: pause.version }),
       service.cancel({ pauseId: pause.pauseId, now: 1_789_000_030, expectedVersion: pause.version }),
