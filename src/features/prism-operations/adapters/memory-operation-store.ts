@@ -78,6 +78,7 @@ export class InMemoryOperationStore implements OperationStore {
         txHash: input.txHash !== undefined ? (input.txHash as Hex | null) : undefined,
         errorCode: input.errorCode !== undefined ? input.errorCode : undefined,
         errorDetail: input.errorDetail !== undefined ? input.errorDetail : undefined,
+        submissionAttempted: input.submissionAttempted !== undefined ? input.submissionAttempted : undefined,
       });
       idempotent = result.idempotent;
       if (idempotent) {

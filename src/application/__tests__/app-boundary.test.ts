@@ -15,8 +15,23 @@ import { InMemoryOperationStore } from "../../features/prism-operations/adapters
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { PrismApplicationService } from "../prism-application";
 import { InMemoryRegistry } from "../adapters/in-memory-registry";
+import type { StarknetSubmitPort } from "../ports";
+import type { AppResponse } from "../schemas";
 import type { Hex } from "../../features/prism-operations/domain/operation";
+import type { TransitionOperationInput } from "../../features/prism-operations/domain/operation-store";
 import type { AppSession } from "../auth";
+
+class FailNextSubmittedTransitionStore extends InMemoryOperationStore {
+  private failNextSubmitted = true;
+
+  override async transition(id: string, input: TransitionOperationInput) {
+    if (this.failNextSubmitted && input.to === "submitted") {
+      this.failNextSubmitted = false;
+      throw new Error("injected_final_submission_persistence_failure");
+    }
+    return super.transition(id, input);
+  }
+}
 
 const DOMAIN = "prism.example";
 const BASE_ACCOUNT = makeEoaSigner().address.toLowerCase();
@@ -611,6 +626,139 @@ describe("App boundary — application command/query contract", () => {
     expect(after?.state).toBe("requires_attention");
     expect(after?.txHash).toBe(TX_HASH);
   });
+
+  it("retry: final persistence failure quarantines every retry path without a second adapter call", async () => {
+    const h = buildHarness();
+    const operationStore = new FailNextSubmittedTransitionStore();
+    let executeCalls = 0;
+    const adapter = new StarknetSubmitAdapter({
+      account: {
+        address: ADAPTER_CONTROLLER,
+        async execute() {
+          executeCalls++;
+          return { transaction_hash: TX_HASH };
+        },
+      },
+      registryAddress: "0x3333",
+    });
+    let op = await operationStore.create({
+      id: "op-retry-final-persistence-failure",
+      kind: "create_identity",
+      idempotencyKey: "idem-retry-final-persistence-failure",
+      requestFingerprint: JSON.stringify({ kind: "create_identity", controllerAddress: ADAPTER_CONTROLLER }),
+      now: h.clock.now(),
+    });
+    op = await operationStore.transition(op.id, { to: "awaiting_authorization", now: h.clock.now() + 1, expectedVersion: op.version });
+    op = await operationStore.transition(op.id, { to: "ready", now: h.clock.now() + 2, expectedVersion: op.version });
+    op = await operationStore.transition(op.id, {
+      to: "failed_retryable",
+      now: h.clock.now() + 3,
+      expectedVersion: op.version,
+      errorCode: "ERR-021",
+      errorDetail: "rpc_unavailable",
+    });
+
+    const retryApp = new PrismApplicationService({
+      challengeService: h.challengeService,
+      operationStore,
+      registry: h.registry,
+      submitPort: adapter,
+      submitPortMode: "STARKNET_INJECTED",
+      isStarknetSubmitConfigured: true,
+      registryVersion: "v1",
+      clock: h.clock,
+      idGenerator: idGen(),
+    });
+
+    const firstRetry = await retryApp.retryOperation(op.id, h.clock.now() + 5);
+    expect(firstRetry.ok).toBe(false);
+    if (firstRetry.ok) throw new Error("post-submit persistence failure must not succeed");
+    expect(firstRetry.error.code).toBe("ERR-022");
+    expect(firstRetry.error.retryable).toBe("poll_only");
+
+    const quarantined = await operationStore.getById(op.id);
+    expect(quarantined?.state).toBe("requires_attention");
+    expect(quarantined?.txHash).toBeNull();
+    expect(quarantined?.submissionAttempted).toBe(true);
+
+    const secondRetry = await retryApp.retryOperation(op.id, h.clock.now() + 6);
+    expect(secondRetry.ok).toBe(false);
+    if (secondRetry.ok) throw new Error("quarantined operation must not be resubmitted");
+    expect(secondRetry.error.code).toBe("ERR-023");
+    expect(executeCalls).toBe(1);
+  });
+
+  it.each(["create", "bind", "revoke"] as const)(
+    "%s final submission persistence failure is poll-only and cannot be retried",
+    async (kind) => {
+      const h = buildHarness();
+      const operationStore = new FailNextSubmittedTransitionStore();
+      const calls = { create: 0, bind: 0, revoke: 0 };
+      const adapter: StarknetSubmitPort = {
+        async submitCreateIdentity() {
+          calls.create++;
+          return { txHash: TX_HASH };
+        },
+        async submitBind() {
+          calls.bind++;
+          return { txHash: TX_HASH };
+        },
+        async submitRevoke() {
+          calls.revoke++;
+          return { txHash: TX_HASH };
+        },
+      };
+      const app = new PrismApplicationService({
+        challengeService: h.challengeService,
+        operationStore,
+        registry: h.registry,
+        submitPort: adapter,
+        registryVersion: "v1",
+        clock: h.clock,
+        idGenerator: idGen(),
+      });
+      const session = appSession(h.clock.now());
+      const executionAccount = makeEoaSigner().address.toLowerCase();
+      const idempotencyKey = `idem-final-persistence-${kind}`;
+      let result: AppResponse<unknown>;
+
+      if (kind === "create") {
+        result = await app.createIdentity({
+          headers: { requestId: "final-create", idempotencyKey },
+          session,
+          payload: { controllerAddress: CONTROLLER },
+        });
+      } else if (kind === "bind") {
+        result = await app.bind({
+          headers: { requestId: "final-bind", idempotencyKey },
+          session,
+          payload: { prismId: PRISM_ID, venue: VENUE, executionAccount, proofDigest: `0x${"1".repeat(64)}` as Hex, controllerAddress: CONTROLLER },
+        });
+      } else {
+        h.registry.seedBinding(PRISM_ID, VENUE, executionAccount);
+        result = await app.revoke({
+          headers: { requestId: "final-revoke", idempotencyKey },
+          session,
+          payload: { prismId: PRISM_ID, venue: VENUE, executionAccount, controllerAddress: CONTROLLER },
+        });
+      }
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("post-submit persistence failure must not succeed");
+      expect(result.error.code).toBe("ERR-022");
+      expect(result.error.retryable).toBe("poll_only");
+      const operation = await operationStore.getByIdempotencyKey(idempotencyKey);
+      expect(operation?.state).toBe("requires_attention");
+      expect(operation?.txHash).toBeNull();
+      expect(operation?.submissionAttempted).toBe(true);
+
+      const retry = await app.retryOperation(operation!.id, h.clock.now() + 5);
+      expect(retry.ok).toBe(false);
+      if (retry.ok) throw new Error("requires_attention must not be automatically resubmitted");
+      expect(retry.error.code).toBe("ERR-023");
+      expect(calls[kind]).toBe(1);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // Auth separation — app session ≠ execution authority

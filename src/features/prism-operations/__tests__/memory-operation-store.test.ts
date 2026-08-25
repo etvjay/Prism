@@ -107,4 +107,52 @@ describe("InMemoryOperationStore reconciliation CAS", () => {
     expect(persisted?.reconciliationWatermark).toBe(42);
     expect(persisted?.reconciliationMetadata).toEqual({ writer: "first" });
   });
+
+  it("persists a monotonic submission fence through quarantine and submitted, and never clears it", async () => {
+    const store = new InMemoryOperationStore();
+    let operation = await store.create({
+      id: "op-submission-fence",
+      idempotencyKey: "idem-submission-fence",
+      requestFingerprint: "fp-submission-fence",
+      now: NOW,
+    });
+    operation = await store.transition(operation.id, {
+      to: "awaiting_authorization",
+      now: NOW + 1,
+      expectedVersion: operation.version,
+    });
+    operation = await store.transition(operation.id, {
+      to: "ready",
+      now: NOW + 2,
+      expectedVersion: operation.version,
+    });
+    operation = await store.transition(operation.id, {
+      to: "requires_attention",
+      now: NOW + 3,
+      expectedVersion: operation.version,
+      errorCode: "ERR-022",
+      errorDetail: "submission_attempted_poll_only",
+      submissionAttempted: true,
+    });
+    expect(operation.submissionAttempted).toBe(true);
+
+    operation = await store.transition(operation.id, {
+      to: "submitted",
+      now: NOW + 4,
+      expectedVersion: operation.version,
+      txHash: TX_HASH,
+    });
+    expect(operation.submissionAttempted).toBe(true);
+    expect(operation.txHash).toBe(TX_HASH);
+
+    await expect(
+      store.transition(operation.id, {
+        to: "processing",
+        now: NOW + 5,
+        expectedVersion: operation.version,
+        txHash: TX_HASH,
+        submissionAttempted: false,
+      }),
+    ).rejects.toMatchObject({ detail: "submission_attempted_fence_cannot_clear" });
+  });
 });

@@ -138,6 +138,8 @@ export interface Operation {
   readonly errorCode: string | null;
   readonly errorDetail: string | null;
   readonly attempts: number;
+  /** Monotonic durable fence: once an adapter may have been invoked, no automatic resubmit is safe. */
+  readonly submissionAttempted: boolean;
   // Correlation metadata preserved across transitions without mutation
   readonly correlationId: string | null;
 }
@@ -169,6 +171,7 @@ export function createOperation(input: CreateOperationInput): Operation {
     errorCode: null,
     errorDetail: null,
     attempts: 0,
+    submissionAttempted: false,
     correlationId: input.correlationId ?? null,
   };
 }
@@ -204,7 +207,10 @@ const ALLOWED: Record<OperationState, TransitionSet> = {
   reverted: s(),
   expired: s(),
   cancelled: s(),
-  requires_attention: s("processing", "failed_retryable", "failed_terminal", "cancelled", "reconciled"),
+  // The application marks ready -> requires_attention before invoking an
+  // adapter. A valid returned hash may then advance this fenced row to
+  // submitted; this edge is never a retry permission by itself.
+  requires_attention: s("submitted", "processing", "failed_retryable", "failed_terminal", "cancelled", "reconciled"),
 };
 
 // ---------------------------------------------------------------------------
@@ -218,6 +224,8 @@ export interface TransitionInput {
   txHash?: Hex | null;
   errorCode?: string | null;
   errorDetail?: string | null;
+  /** Monotonic submission fence. It may be set true, never cleared. */
+  submissionAttempted?: boolean;
   // reason is audit-only and never influences state routing
   reason?: string | null;
 }
@@ -295,6 +303,10 @@ export function transition(operation: Operation, input: TransitionInput): Transi
       OPERATION_ERROR_CODE.STALE_STATE_CONFLICT,
       `stale_version:expected_${input.expectedVersion}_got_${operation.version}`,
     );
+  }
+
+  if (operation.submissionAttempted && input.submissionAttempted === false) {
+    throw new OperationError(OPERATION_ERROR_CODE.STALE_STATE_CONFLICT, "submission_attempted_fence_cannot_clear");
   }
 
   // INV-SYS-005 guard: submitted/processing/confirming/confirmed may not
@@ -412,6 +424,7 @@ export function transition(operation: Operation, input: TransitionInput): Transi
     errorCode: input.errorCode !== undefined ? input.errorCode : operation.errorCode,
     errorDetail: input.errorDetail !== undefined ? input.errorDetail : operation.errorDetail,
     attempts: operation.attempts + (isFailureBranch(input.to) || input.to === "requires_attention" ? 1 : 0),
+    submissionAttempted: operation.submissionAttempted || input.submissionAttempted === true,
   };
 
   return { operation: next, idempotent: false };
@@ -429,9 +442,9 @@ export function retryTargets(from: OperationState): OperationState[] {
   return Array.from(targets);
 }
 
-/** Whether the operation can be retried (is in a retryable failure). */
+/** Whether the operation can be automatically resubmitted. */
 export function canRetry(operation: Operation): boolean {
-  return isRetryableFailure(operation.state as OperationState);
+  return operation.state === "failed_retryable" && operation.txHash === null && operation.submissionAttempted !== true;
 }
 
 /** Duration-agnostic staleness check for versioned compare-and-set callers. */

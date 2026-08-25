@@ -28,7 +28,7 @@ import type {
 } from "./schemas";
 import { ok, err } from "./schemas";
 import { isConcreteStarknetSubmitAdapter, type IdGenerator, type RegistryReadPort, type StarknetSubmitPort } from "./ports";
-import type { OperationStore } from "../features/prism-operations/domain/operation-store";
+import type { OperationStore, PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { Clock } from "../features/prism-identity/domain/ports";
 import { PrismChallengeService } from "../features/prism-identity/application/challenge-service";
@@ -172,6 +172,33 @@ export class PrismApplicationService {
     }
   }
 
+  /**
+   * Persist the no-duplicate fence before crossing into any submit adapter.
+   * `requires_attention` is deliberately poll-only; the monotonic field also
+   * protects rows classified as failed_retryable after a definite adapter
+   * error, because a transport error cannot prove that no broadcast occurred.
+   */
+  private async markSubmissionAttempted(op: PersistedOperation, now: number): Promise<PersistedOperation> {
+    return this.deps.operationStore.transition(op.id, {
+      to: "requires_attention",
+      now: now + 3,
+      expectedVersion: op.version,
+      errorCode: APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS,
+      errorDetail: "submission_attempted_poll_only",
+      submissionAttempted: true,
+    });
+  }
+
+  private markerFailure(operationId: string, cause: unknown): AppError {
+    const detail = (cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "submission_attempt_marker_failed";
+    return new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `dependency_failure:op_${operationId}:submission_attempt_marker_failed:${detail}`);
+  }
+
+  private submissionPersistenceFailure(operationId: string, cause: unknown): AppError {
+    const detail = (cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "submission_persistence_failed";
+    return new AppError(APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, `submission_status_unknown:op_${operationId}:submission_persistence_failed:${detail}`);
+  }
+
   // -------------------------------------------------------------------------
   // Issue / Verify (challenge lifecycle — sync, no Operation row)
   // -------------------------------------------------------------------------
@@ -271,24 +298,48 @@ export class PrismApplicationService {
       op = await this.deps.operationStore.transition(op.id, { to: "awaiting_authorization", now: now + 1, expectedVersion: op.version });
       op = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 2, expectedVersion: op.version });
 
-      // 3) Attempt chain submission — fail-closed on dependency.
+      // 3) Fence the operation before any chain submission. A store failure
+      // here is a pre-submit dependency failure, so the adapter is not called.
+      let attempted: PersistedOperation;
       try {
-        const { txHash } = await this.deps.submitPort.submitCreateIdentity({ operationId: op.id, controllerAddress });
-        op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
-        return ok<CreateIdentityData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
+        attempted = await this.markSubmissionAttempted(op, now);
       } catch (cause) {
+        throw this.markerFailure(op.id, cause);
+      }
+
+      let txHash: Hex;
+      try {
+        const result = await this.deps.submitPort.submitCreateIdentity({ operationId: attempted.id, controllerAddress });
+        if (!isValidTxHash(result?.txHash)) throw new AppError(APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, "submit_invalid_tx_hash");
+        txHash = result.txHash;
+      } catch (cause) {
+        if (cause instanceof AppError && cause.code === APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS) throw cause;
         const failure = submitFailure(cause);
         try {
-          op = await this.deps.operationStore.transition(op.id, {
+          await this.deps.operationStore.transition(attempted.id, {
             to: failure.state,
-            now: now + 3,
-            expectedVersion: op.version,
+            now: now + 4,
+            expectedVersion: attempted.version,
             errorCode: failure.code,
             errorDetail: failure.detail,
           });
         } catch {}
-        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
+        throw new AppError(failure.code, failureResponseDetail(attempted.id, failure));
       }
+
+      try {
+        op = await this.deps.operationStore.transition(attempted.id, {
+          to: "submitted",
+          now: now + 4,
+          expectedVersion: attempted.version,
+          txHash,
+        });
+      } catch (cause) {
+        // The fence is already durable. Never compensate with failed_retryable:
+        // that state plus a null hash would make a second broadcast possible.
+        throw this.submissionPersistenceFailure(attempted.id, cause);
+      }
+      return ok<CreateIdentityData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
     } catch (e) {
       if (e instanceof AppError && e.code === APP_ERROR_CODE.RPC_UNAVAILABLE) {
         // Preserve operation linkage for dependency failure case — caller can fetch via store.
@@ -357,30 +408,51 @@ export class PrismApplicationService {
       op = await this.deps.operationStore.transition(op.id, { to: "awaiting_authorization", now: now + 1, expectedVersion: op.version });
       op = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 2, expectedVersion: op.version });
 
+      let attempted: PersistedOperation;
       try {
-        const { txHash } = await this.deps.submitPort.submitBind({
-          operationId: op.id,
+        attempted = await this.markSubmissionAttempted(op, now);
+      } catch (cause) {
+        throw this.markerFailure(op.id, cause);
+      }
+
+      let txHash: Hex;
+      try {
+        const result = await this.deps.submitPort.submitBind({
+          operationId: attempted.id,
           prismId,
           venue,
           executionAccount,
           proofDigest: proofDigest as Hex,
           controllerAddress,
         });
-        op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
-        return ok<BindData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
+        if (!isValidTxHash(result?.txHash)) throw new AppError(APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, "submit_invalid_tx_hash");
+        txHash = result.txHash;
       } catch (cause) {
+        if (cause instanceof AppError && cause.code === APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS) throw cause;
         const failure = submitFailure(cause);
         try {
-          op = await this.deps.operationStore.transition(op.id, {
+          await this.deps.operationStore.transition(attempted.id, {
             to: failure.state,
-            now: now + 3,
-            expectedVersion: op.version,
+            now: now + 4,
+            expectedVersion: attempted.version,
             errorCode: failure.code,
             errorDetail: failure.detail,
           });
         } catch {}
-        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
+        throw new AppError(failure.code, failureResponseDetail(attempted.id, failure));
       }
+
+      try {
+        op = await this.deps.operationStore.transition(attempted.id, {
+          to: "submitted",
+          now: now + 4,
+          expectedVersion: attempted.version,
+          txHash,
+        });
+      } catch (cause) {
+        throw this.submissionPersistenceFailure(attempted.id, cause);
+      }
+      return ok<BindData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
     } catch (e) {
       return this.mapError(e, requestId);
     }
@@ -419,23 +491,44 @@ export class PrismApplicationService {
       }
       op = await this.deps.operationStore.transition(op.id, { to: "awaiting_authorization", now: now + 1, expectedVersion: op.version });
       op = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 2, expectedVersion: op.version });
+      let attempted: PersistedOperation;
       try {
-        const { txHash } = await this.deps.submitPort.submitRevoke({ operationId: op.id, prismId, venue, executionAccount, controllerAddress });
-        op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
-        return ok<RevokeData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
+        attempted = await this.markSubmissionAttempted(op, now);
       } catch (cause) {
+        throw this.markerFailure(op.id, cause);
+      }
+
+      let txHash: Hex;
+      try {
+        const result = await this.deps.submitPort.submitRevoke({ operationId: attempted.id, prismId, venue, executionAccount, controllerAddress });
+        if (!isValidTxHash(result?.txHash)) throw new AppError(APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, "submit_invalid_tx_hash");
+        txHash = result.txHash;
+      } catch (cause) {
+        if (cause instanceof AppError && cause.code === APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS) throw cause;
         const failure = submitFailure(cause);
         try {
-          op = await this.deps.operationStore.transition(op.id, {
+          await this.deps.operationStore.transition(attempted.id, {
             to: failure.state,
-            now: now + 3,
-            expectedVersion: op.version,
+            now: now + 4,
+            expectedVersion: attempted.version,
             errorCode: failure.code,
             errorDetail: failure.detail,
           });
         } catch {}
-        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
+        throw new AppError(failure.code, failureResponseDetail(attempted.id, failure));
       }
+
+      try {
+        op = await this.deps.operationStore.transition(attempted.id, {
+          to: "submitted",
+          now: now + 4,
+          expectedVersion: attempted.version,
+          txHash,
+        });
+      } catch (cause) {
+        throw this.submissionPersistenceFailure(attempted.id, cause);
+      }
+      return ok<RevokeData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
     } catch (e) {
       return this.mapError(e, requestId);
     }
@@ -516,68 +609,66 @@ export class PrismApplicationService {
       if (mode === "TEST_DOUBLE_X2" || this.deps.isStarknetSubmitConfigured === false || !isConcreteStarknetSubmitAdapter(this.deps.submitPort)) {
         throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_unconfigured");
       }
+      // A durable fence survives a failed_retryable classification. Such a row
+      // may be reconciled, but it can never be automatically broadcast again.
+      if (op.submissionAttempted) {
+        throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "retry_submission_already_attempted");
+      }
       const submission = parseRetrySubmission(op.kind, op.requestFingerprint);
 
-      // The ready state is persisted before the adapter is called. If the
-      // adapter fails, the operation is moved back to failed_retryable; it is
-      // never promoted to submitted without its returned, validated hash.
+      // Move back to ready only for an unfenced, pre-submit failure, then fence
+      // it again immediately before crossing into the adapter.
       const ready = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 1, expectedVersion: op.version });
+      let attempted: PersistedOperation;
+      try {
+        attempted = await this.markSubmissionAttempted(ready, now + 1);
+      } catch (cause) {
+        throw this.markerFailure(ready.id, cause);
+      }
+
       let submittedResult: { txHash: Hex };
       try {
         switch (submission.kind) {
           case "create_identity":
-            submittedResult = await this.deps.submitPort.submitCreateIdentity({ operationId: op.id, controllerAddress: submission.controllerAddress });
+            submittedResult = await this.deps.submitPort.submitCreateIdentity({ operationId: attempted.id, controllerAddress: submission.controllerAddress });
             break;
           case "bind_execution_identity":
-            submittedResult = await this.deps.submitPort.submitBind({ operationId: op.id, ...submission });
+            submittedResult = await this.deps.submitPort.submitBind({ operationId: attempted.id, ...submission });
             break;
           case "revoke_binding":
-            submittedResult = await this.deps.submitPort.submitRevoke({ operationId: op.id, ...submission });
+            submittedResult = await this.deps.submitPort.submitRevoke({ operationId: attempted.id, ...submission });
             break;
         }
+        if (!isValidTxHash(submittedResult?.txHash)) throw new AppError(APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, "submit_invalid_tx_hash");
       } catch (cause) {
+        if (cause instanceof AppError && cause.code === APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS) throw cause;
         const failure = submitFailure(cause);
         try {
-          await this.deps.operationStore.transition(op.id, {
+          await this.deps.operationStore.transition(attempted.id, {
             to: failure.state,
-            now: now + 2,
-            expectedVersion: ready.version,
+            now: now + 3,
+            expectedVersion: attempted.version,
             errorCode: failure.code,
             errorDetail: failure.detail,
           });
         } catch {
-          // Preserve the original dependency failure; a concurrent worker can
-          // reconcile the row if the compensating CAS loses.
+          // Preserve the original dependency failure; the durable fence remains
+          // the no-duplicate boundary if the compensating CAS loses.
         }
-        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
+        throw new AppError(failure.code, failureResponseDetail(attempted.id, failure));
       }
 
-      if (!isValidTxHash(submittedResult?.txHash)) {
-        const failure: SubmitFailure = {
-          code: APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS,
-          detail: "submit_invalid_tx_hash",
-          state: "requires_attention",
-        };
-        try {
-          await this.deps.operationStore.transition(op.id, {
-            to: failure.state,
-            now: now + 2,
-            expectedVersion: ready.version,
-            errorCode: failure.code,
-            errorDetail: failure.detail,
-          });
-        } catch {
-          // Best effort only; do not fabricate a submitted state or retry.
-        }
-        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
+      let next: PersistedOperation;
+      try {
+        next = await this.deps.operationStore.transition(attempted.id, {
+          to: "submitted",
+          now: now + 3,
+          expectedVersion: attempted.version,
+          txHash: submittedResult.txHash,
+        });
+      } catch (cause) {
+        throw this.submissionPersistenceFailure(attempted.id, cause);
       }
-
-      const next = await this.deps.operationStore.transition(op.id, {
-        to: "submitted",
-        now: now + 2,
-        expectedVersion: ready.version,
-        txHash: submittedResult.txHash,
-      });
       return ok({ operationId: next.id, state: next.state }, { operationId: next.id, state: next.state, version: next.version }, requestId);
     } catch (e) {
       return this.mapError(e, requestId);

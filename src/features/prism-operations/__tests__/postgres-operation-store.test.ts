@@ -58,7 +58,7 @@ const TX_HASH: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const NOW = 1_789_000_000;
 
 describe("PostgresOperationStore (unit/SQL contract)", () => {
-  it("create issues fully parameterized INSERT with all 16 typed fields", async () => {
+  it("create issues fully parameterized INSERT with all 17 typed fields", async () => {
     const fake = installFakePool();
     const { PostgresOperationStore: Store } = await loadStoreModule();
     const store = new Store({ connectionString: "postgres://u:p@db:5432/prism" });
@@ -87,6 +87,7 @@ describe("PostgresOperationStore (unit/SQL contract)", () => {
       null,
       null,
       0,
+      false,
       "corr-1",
       NOW,
       NOW,
@@ -137,6 +138,7 @@ describe("PostgresOperationStore (unit/SQL contract)", () => {
       errorCode: null,
       errorDetail: null,
       attempts: 0,
+      submissionAttempted: false,
       correlationId: "corr-1",
       createdAt: 1_789_000_000,
       updatedAt: 1_789_000_010,
@@ -346,7 +348,7 @@ describe("PostgresOperationStore (unit/SQL contract)", () => {
     // The UPDATE must be parameterized and check version
     const upd = fake.queries.find((q) => q.text.includes("UPDATE prism_operations SET"));
     expect(upd).toBeDefined();
-    expect(upd!.text).toContain("WHERE id = $1 AND version = $14");
+    expect(upd!.text).toContain("WHERE id = $1 AND version = $15");
     expect(upd!.text).not.toContain(TX_HASH);
     expect(upd!.values).toContain(TX_HASH);
     expect(upd!.values).toContain(2);
@@ -557,6 +559,8 @@ describe("PostgresOperationStore (unit/SQL contract)", () => {
       expect(mod.OPERATION_STORE_MIGRATION_SQL).toContain("reconciliation_watermark BIGINT");
       expect(mod.OPERATION_STORE_MIGRATION_SQL).toContain("state TEXT NOT NULL CHECK (state IN (");
       expect(mod.OPERATION_STORE_MIGRATION_SQL).toContain("tx_hash TEXT");
+      expect(mod.OPERATION_STORE_MIGRATION_SQL).toContain("submission_attempted BOOLEAN NOT NULL DEFAULT FALSE");
+      expect(mod.OPERATION_STORE_SCHEMA_VERSION).toBe(2);
     });
   });
 

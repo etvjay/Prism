@@ -6,7 +6,7 @@
 // Persisted fields required for restart/resume per WP-4B:
 //   id, kind, state, version, idempotencyKey, requestFingerprint,
 //   txHash nullable, errorCode nullable, errorDetail nullable,
-//   attempts, correlationId, createdAt, updatedAt,
+//   attempts, submissionAttempted, correlationId, createdAt, updatedAt,
 //   reconciliationWatermark nullable, reconciliationMetadata nullable.
 // Fields are stored exactly as typed; no fabrication of chain truth.
 
@@ -35,6 +35,7 @@ export interface TransitionOperationInput {
   readonly txHash?: Hex | null;
   readonly errorCode?: string | null;
   readonly errorDetail?: string | null;
+  readonly submissionAttempted?: boolean;
   readonly reconciliationWatermark?: number | null;
   readonly reconciliationMetadata?: Record<string, unknown> | null;
   readonly correlationId?: string | null;

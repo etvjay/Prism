@@ -11,7 +11,7 @@
 //   expectedVersion; otherwise throws OperationError ERR-023 `stale_version`.
 // - Canonical restart fields persisted: id, kind, state, version,
 //   idempotency_key, request_fingerprint, tx_hash, error_code, error_detail,
-//   attempts, correlation_id, created_at, updated_at, authoritative_source,
+//   attempts, submission_attempted, correlation_id, created_at, updated_at, authoritative_source,
 //   reconciliation_watermark, reconciliation_metadata.
 // - No RPC/indexer coupling: pure store.
 // - Fail-closed: connect/migrate/write failures throw
@@ -31,7 +31,7 @@ import type {
 import { NON_TERMINAL_STATES } from "../domain/operation-store";
 
 /** Current schema version for the operation table. Independent from ownership store. */
-export const OPERATION_STORE_SCHEMA_VERSION = 1;
+export const OPERATION_STORE_SCHEMA_VERSION = 2;
 
 /** Versioned migration for `prism_operations` (idempotent). */
 export const OPERATION_STORE_MIGRATION_SQL = `
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS prism_operations (
   error_code TEXT,
   error_detail TEXT,
   attempts INTEGER NOT NULL,
+  submission_attempted BOOLEAN NOT NULL DEFAULT FALSE,
   correlation_id TEXT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS prism_operations (
   reconciliation_watermark BIGINT,
   reconciliation_metadata TEXT
 );
+ALTER TABLE prism_operations ADD COLUMN IF NOT EXISTS submission_attempted BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_prism_operations_state ON prism_operations(state);
 CREATE INDEX IF NOT EXISTS idx_prism_operations_idempotency_key ON prism_operations(idempotency_key);
 `;
@@ -90,6 +92,7 @@ const COLUMNS = [
   "error_code",
   "error_detail",
   "attempts",
+  "submission_attempted",
   "correlation_id",
   "created_at",
   "updated_at",
@@ -109,6 +112,7 @@ interface Row {
   error_code: string | null;
   error_detail: string | null;
   attempts: number | string;
+  submission_attempted: boolean | string | null;
   correlation_id: string | null;
   created_at: number | string;
   updated_at: number | string;
@@ -126,6 +130,10 @@ function toInt(value: string | number): number {
 function nullableInt(value: string | number | null): number | null {
   if (value === null) return null;
   return toInt(value as string | number);
+}
+
+function toBoolean(value: boolean | string | null | undefined): boolean {
+  return value === true || value === "true";
 }
 
 function rowToRecord(row: Row): PersistedOperation {
@@ -148,6 +156,7 @@ function rowToRecord(row: Row): PersistedOperation {
     errorCode: row.error_code,
     errorDetail: row.error_detail,
     attempts: toInt(row.attempts as string | number),
+    submissionAttempted: toBoolean(row.submission_attempted),
     correlationId: row.correlation_id,
     createdAt: toInt(row.created_at as string | number),
     updatedAt: toInt(row.updated_at as string | number),
@@ -199,6 +208,10 @@ export class PostgresOperationStore implements OperationStore {
             "store_migrate_failed",
             `database operation_schema_version ${meta.rows[0].value} is newer than supported ${OPERATION_STORE_SCHEMA_VERSION}`,
           );
+        } else if (Number.parseInt(meta.rows[0].value, 10) < OPERATION_STORE_SCHEMA_VERSION) {
+          await client.query("UPDATE prism_store_meta SET value = $1 WHERE key = 'operation_schema_version'", [
+            String(OPERATION_STORE_SCHEMA_VERSION),
+          ]);
         }
         await client.query("COMMIT");
       } catch (inner) {
@@ -236,7 +249,7 @@ export class PostgresOperationStore implements OperationStore {
     };
     try {
       await this.pool.query(
-        `INSERT INTO prism_operations (${COLUMNS.join(", ")}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        `INSERT INTO prism_operations (${COLUMNS.join(", ")}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [
           record.id,
           record.kind,
@@ -248,6 +261,7 @@ export class PostgresOperationStore implements OperationStore {
           record.errorCode,
           record.errorDetail,
           record.attempts,
+          record.submissionAttempted,
           record.correlationId,
           record.createdAt,
           record.updatedAt,
@@ -345,6 +359,7 @@ export class PostgresOperationStore implements OperationStore {
         txHash: input.txHash !== undefined ? input.txHash : undefined,
         errorCode: input.errorCode !== undefined ? input.errorCode : undefined,
         errorDetail: input.errorDetail !== undefined ? input.errorDetail : undefined,
+        submissionAttempted: input.submissionAttempted !== undefined ? input.submissionAttempted : undefined,
       });
       idempotent = result.idempotent;
       if (idempotent) {
@@ -397,7 +412,7 @@ export class PostgresOperationStore implements OperationStore {
     // Atomic CAS update: succeeds only when current version still equals expectedVersion.
     try {
       const result = await this.pool.query(
-        `UPDATE prism_operations SET kind = $2, state = $3, version = $4, tx_hash = $5, error_code = $6, error_detail = $7, attempts = $8, correlation_id = $9, updated_at = $10, authoritative_source = $11, reconciliation_watermark = $12, reconciliation_metadata = $13 WHERE id = $1 AND version = $14`,
+        `UPDATE prism_operations SET kind = $2, state = $3, version = $4, tx_hash = $5, error_code = $6, error_detail = $7, attempts = $8, submission_attempted = $9, correlation_id = $10, updated_at = $11, authoritative_source = $12, reconciliation_watermark = $13, reconciliation_metadata = $14 WHERE id = $1 AND version = $15`,
         [
           nextOp.id,
           nextOp.kind,
@@ -407,6 +422,7 @@ export class PostgresOperationStore implements OperationStore {
           nextOp.errorCode,
           nextOp.errorDetail,
           nextOp.attempts,
+          nextOp.submissionAttempted,
           nextOp.correlationId,
           nextOp.updatedAt,
           nextOp.authoritativeSource,
