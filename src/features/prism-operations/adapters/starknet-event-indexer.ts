@@ -5,7 +5,13 @@
 // Never reads secrets from files; provider is injected.
 
 import type { Hex } from "../domain/operation";
-import type { RegistryCanonicalEvent, RegistryEventKind } from "../domain/event-indexer";
+import {
+  eventKey,
+  normalizeRegistryEventScope,
+  type RegistryAbiVersion,
+  type RegistryCanonicalEvent,
+  type RegistryEventKind,
+} from "../domain/event-indexer";
 import type { EventIndexerPort, IndexerObservation } from "../domain/ports";
 
 /** Minimal RpcProvider surface needed — injectable for tests. */
@@ -35,7 +41,9 @@ export interface StarknetEventReader {
   getBlockNumber?(): Promise<number>;
 }
 
-export type StarknetRegistryVersion = "v1" | "v2";
+export type StarknetRegistryVersion = RegistryAbiVersion;
+
+export const DEFAULT_MAX_EVENT_PAGES = 1_000;
 
 export type StarknetEventIndexerOptions = {
   /** Injected RpcProvider-like reader (no secret file reads). */
@@ -43,11 +51,19 @@ export type StarknetEventIndexerOptions = {
   /** Registry contract address to filter events (0x hex). */
   registryAddress: string;
   /** ABI version controls ExecutionIdentityBound digest decoding. */
-  registryVersion: StarknetRegistryVersion;
+  registryVersion?: StarknetRegistryVersion;
+  /** Alias for callers that name the setting abiVersion. */
+  abiVersion?: StarknetRegistryVersion;
+  /** Network is persisted with every canonical event; omission fails closed. */
+  network?: string;
   /** Require every provider event to identify this exact registry address. Defaults true. */
   requireEventOrigin?: boolean;
   /** Chunk size for getEvents pagination. Defaults to 100. */
   chunkSize?: number;
+  /** Hard bound on fetchAllRegistryEvents pages. */
+  maxPages?: number;
+  /** Alias for callers that name the setting maxPageCount. */
+  maxPageCount?: number;
 };
 
 export class StarknetEventIndexerError extends Error {
@@ -145,15 +161,17 @@ function decodeBaseVenue(value: string | undefined): "BASE" | null {
  * Deterministic event indexer adapter.
  * - Calls injected reader.getEvents
  * - Sorts by (block_number, transaction_hash, event_index)
- * - Deduplicates by (tx_hash, event_index)
+ * - Deduplicates by (registry scope, tx_hash, event_index)
  * - Implements narrow EventIndexerPort for per-tx observe path
  */
 export class StarknetEventIndexerAdapter implements EventIndexerPort {
   private readonly reader: StarknetEventReader;
   private readonly registryAddress: string;
+  private readonly network: string;
   private readonly registryVersion: StarknetRegistryVersion;
   private readonly requireEventOrigin: boolean;
   private readonly chunkSize: number;
+  private readonly maxPages: number;
 
   constructor(options: StarknetEventIndexerOptions) {
     if (!options.reader || typeof options.reader.getEvents !== "function") {
@@ -162,14 +180,28 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     if (!isNonZeroContractAddress(options.registryAddress)) {
       throw new Error("invariant_violation: registryAddress must be a nonzero ContractAddress");
     }
-    if (options.registryVersion !== "v1" && options.registryVersion !== "v2") {
+    const registryVersion = options.registryVersion ?? options.abiVersion;
+    if (options.registryVersion !== undefined && options.abiVersion !== undefined && options.registryVersion !== options.abiVersion) {
+      throw new Error("invariant_violation: registryVersion and abiVersion mismatch");
+    }
+    if (registryVersion !== "v1" && registryVersion !== "v2") {
       throw new Error("invariant_violation: registryVersion must be v1 or v2");
     }
+    if (typeof options.network !== "string" || options.network.trim().length === 0) {
+      throw new Error("invariant_violation: network is required for event projection scope");
+    }
+    const maxPages = options.maxPages ?? options.maxPageCount ?? DEFAULT_MAX_EVENT_PAGES;
+    if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+      throw new Error("invariant_violation: maxPages must be a positive safe integer");
+    }
+    const scope = normalizeRegistryEventScope({ registryAddress: options.registryAddress, network: options.network, registryVersion, abiVersion: options.abiVersion });
     this.reader = options.reader;
-    this.registryAddress = options.registryAddress.toLowerCase();
-    this.registryVersion = options.registryVersion;
+    this.registryAddress = scope.registryAddress;
+    this.network = scope.network;
+    this.registryVersion = registryVersion;
     this.requireEventOrigin = options.requireEventOrigin ?? true;
     this.chunkSize = options.chunkSize ?? 100;
+    this.maxPages = maxPages;
   }
 
   /** Fetch one page of registry events in [fromBlock, toBlock] with deterministic ordering per page. */
@@ -230,6 +262,10 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
         blockNumber,
         kind,
         payload,
+        registryAddress: this.registryAddress,
+        network: this.network,
+        registryVersion: this.registryVersion,
+        abiVersion: this.registryVersion,
       } as RegistryCanonicalEvent);
     }
 
@@ -240,11 +276,11 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
       return a.eventIndex - b.eventIndex;
     });
 
-    // Idempotency: deduplicate by (tx_hash, event_index) — first occurrence wins per page
+    // Idempotency: deduplicate by scoped correlation — first occurrence wins per page
     const seen = new Set<string>();
     const deduped: RegistryCanonicalEvent[] = [];
     for (const ev of mapped) {
-      const key = `${ev.txHash.toLowerCase()}:${ev.eventIndex}`;
+      const key = eventKey(ev);
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(ev);
@@ -271,20 +307,38 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     const aggregated: RegistryCanonicalEvent[] = [];
     const seen = new Set<string>();
     let continuationToken: string | null = null;
+    const seenContinuationTokens = new Set<string>();
     let pagesFetched = 0;
     let watermark: number | null = null;
-    do {
+    for (;;) {
+      if (pagesFetched >= this.maxPages) {
+        throw new StarknetEventIndexerError(`max_pages_exceeded:${this.maxPages}`);
+      }
+      if (continuationToken !== null) {
+        if (seenContinuationTokens.has(continuationToken)) {
+          throw new StarknetEventIndexerError("repeated_continuation_token");
+        }
+        seenContinuationTokens.add(continuationToken);
+      }
       const page = await this.fetchRegistryEvents({ fromBlock: input.fromBlock, toBlock: input.toBlock, continuationToken });
       pagesFetched++;
       for (const ev of page.events) {
-        const key = `${ev.txHash.toLowerCase()}:${ev.eventIndex}`;
+        const key = eventKey(ev);
         if (seen.has(key)) continue;
         seen.add(key);
         aggregated.push(ev);
       }
       if (page.watermark !== null) watermark = watermark === null ? page.watermark : Math.max(watermark, page.watermark);
-      continuationToken = page.continuationToken;
-    } while (continuationToken !== null && continuationToken !== undefined && continuationToken !== "");
+      const nextToken = page.continuationToken ?? null;
+      if (nextToken === null || nextToken === "") {
+        continuationToken = null;
+        break;
+      }
+      if (nextToken === continuationToken || seenContinuationTokens.has(nextToken)) {
+        throw new StarknetEventIndexerError("repeated_continuation_token");
+      }
+      continuationToken = nextToken;
+    }
 
     // A scan watermark is the highest confirmed block actually read, not the
     // newest matching event. This prevents an old-but-valid event from making

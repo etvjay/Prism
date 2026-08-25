@@ -1,6 +1,7 @@
 // Postgres prism_events adapter — LEDGER_INDEX per CONTRACT_SPEC §5.
 // Authority: EVENT_CATALOGUE.md + events.yaml reconstruction guarantee.
-// Table is keyed by (tx_hash, event_index) UNIQUE, deterministic ordering by
+// Table is keyed by (registry_address, network, registry_version, tx_hash,
+// event_index) UNIQUE, deterministic ordering by
 // (block_number, tx_hash, event_index), idempotent upsert. No view enrichment.
 // Never mutates canonical chain truth; rebuildable from chain.
 //
@@ -10,9 +11,19 @@
 
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 import type { Hex } from "../domain/operation";
-import type { RegistryCanonicalEvent, RegistryEventKind } from "../domain/event-indexer";
+import {
+  eventScope,
+  normalizeRegistryEventScope,
+  scopeKey,
+  scopeMatches,
+  withEventScope,
+  type RegistryCanonicalEvent,
+  type RegistryEventKind,
+  type RegistryEventScope,
+  type RegistryEventScopeInput,
+} from "../domain/event-indexer";
 
-export const PRISM_EVENTS_SCHEMA_VERSION = 1;
+export const PRISM_EVENTS_SCHEMA_VERSION = 2;
 
 export const PRISM_EVENTS_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS prism_events_meta (
@@ -20,16 +31,34 @@ CREATE TABLE IF NOT EXISTS prism_events_meta (
   value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS prism_events (
+  registry_address TEXT NOT NULL,
+  network TEXT NOT NULL,
+  registry_version TEXT NOT NULL CHECK (registry_version IN ('v1','v2')),
   tx_hash TEXT NOT NULL,
   event_index INTEGER NOT NULL,
   block_number BIGINT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('PrismIdentityCreated','ExecutionIdentityBound','BindingRevoked')),
   payload TEXT NOT NULL,
   created_at BIGINT NOT NULL,
-  PRIMARY KEY (tx_hash, event_index)
+  PRIMARY KEY (registry_address, network, registry_version, tx_hash, event_index)
 );
+-- Existing v1 rows have no trustworthy registry/network/ABI identity. Keep
+-- them unscoped instead of inventing metadata; all new reads are scoped.
+ALTER TABLE prism_events ADD COLUMN IF NOT EXISTS registry_address TEXT;
+ALTER TABLE prism_events ADD COLUMN IF NOT EXISTS network TEXT;
+ALTER TABLE prism_events ADD COLUMN IF NOT EXISTS registry_version TEXT;
+ALTER TABLE prism_events DROP CONSTRAINT IF EXISTS prism_events_pkey;
+ALTER TABLE prism_events DROP CONSTRAINT IF EXISTS prism_events_scope_complete;
+ALTER TABLE prism_events ADD CONSTRAINT prism_events_scope_complete CHECK (
+  (registry_address IS NULL AND network IS NULL AND registry_version IS NULL)
+  OR (registry_address IS NOT NULL AND network IS NOT NULL AND registry_version IN ('v1','v2'))
+) NOT VALID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_prism_events_scope_correlation
+  ON prism_events (registry_address, network, registry_version, tx_hash, event_index)
+  WHERE registry_address IS NOT NULL AND network IS NOT NULL AND registry_version IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_prism_events_block ON prism_events(block_number);
 CREATE INDEX IF NOT EXISTS idx_prism_events_kind ON prism_events(kind);
+CREATE INDEX IF NOT EXISTS idx_prism_events_scope_block ON prism_events(registry_address, network, registry_version, block_number);
 `;
 
 export type PrismEventsStoreErrorCode =
@@ -37,7 +66,8 @@ export type PrismEventsStoreErrorCode =
   | "store_migrate_failed"
   | "store_write_failed"
   | "store_read_failed"
-  | "invalid_record";
+  | "invalid_record"
+  | "scope_required";
 
 export class PrismEventsStoreError extends Error {
   readonly code: PrismEventsStoreErrorCode;
@@ -49,12 +79,13 @@ export class PrismEventsStoreError extends Error {
 }
 
 export interface PrismEventsStore {
-  insert(event: RegistryCanonicalEvent): Promise<{ inserted: boolean; duplicate: boolean }>;
-  insertMany(events: readonly RegistryCanonicalEvent[]): Promise<{ inserted: number; duplicates: number }>;
-  get(txHash: Hex, eventIndex: number): Promise<RegistryCanonicalEvent | null>;
-  listOrdered(limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
-  listByBlockRange(fromBlock: number, toBlock: number, limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
-  count(): Promise<number>;
+  insert(event: RegistryCanonicalEvent, scope?: RegistryEventScopeInput): Promise<{ inserted: boolean; duplicate: boolean }>;
+  insertMany(events: readonly RegistryCanonicalEvent[], scope?: RegistryEventScopeInput): Promise<{ inserted: number; duplicates: number }>;
+  /** Missing scope is accepted at the type boundary only to fail closed at runtime. */
+  get(txHash: Hex, eventIndex: number, scope?: RegistryEventScopeInput): Promise<RegistryCanonicalEvent | null>;
+  listOrdered(scopeOrLimit?: RegistryEventScopeInput | number, limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
+  listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit?: number): Promise<readonly RegistryCanonicalEvent[]>;
+  count(scope?: RegistryEventScopeInput): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -67,8 +98,39 @@ function mergePoolConfig(options: PostgresPrismEventsStoreOptions): PoolConfig {
   return { ...(flat as PoolConfig), ...(pool as PoolConfig | undefined) };
 }
 
-function toRow(event: RegistryCanonicalEvent) {
+function normalizeScope(input: RegistryEventScopeInput | undefined): RegistryEventScope {
+  if (!input) throw new PrismEventsStoreError("scope_required", "registry scope is required");
+  try {
+    return normalizeRegistryEventScope(input);
+  } catch (cause) {
+    throw new PrismEventsStoreError("invalid_record", cause instanceof Error ? cause.message : "invalid_registry_scope");
+  }
+}
+
+function resolveEventScope(event: RegistryCanonicalEvent, explicit?: RegistryEventScopeInput): { event: RegistryCanonicalEvent; scope: RegistryEventScope } {
+  let existing: RegistryEventScope | null;
+  try {
+    existing = eventScope(event);
+  } catch (cause) {
+    throw new PrismEventsStoreError("invalid_record", cause instanceof Error ? cause.message : "invalid_event_scope");
+  }
+  const scope = explicit ? normalizeScope(explicit) : existing;
+  if (!scope) throw new PrismEventsStoreError("scope_required", "registry scope is required for event persistence");
+  if (existing && !scopeMatches(existing, scope)) {
+    throw new PrismEventsStoreError("invalid_record", "event_scope_mismatch");
+  }
+  try {
+    return { event: withEventScope(event, scope), scope };
+  } catch (cause) {
+    throw new PrismEventsStoreError("invalid_record", cause instanceof Error ? cause.message : "invalid_event_scope");
+  }
+}
+
+function toRow(event: RegistryCanonicalEvent, scope: RegistryEventScope) {
   return {
+    registry_address: scope.registryAddress,
+    network: scope.network,
+    registry_version: scope.registryVersion,
     tx_hash: event.txHash.toLowerCase(),
     event_index: event.eventIndex,
     block_number: event.blockNumber,
@@ -78,12 +140,29 @@ function toRow(event: RegistryCanonicalEvent) {
   };
 }
 
-function rowToEvent(row: { tx_hash: string; event_index: number | string; block_number: number | string; kind: string; payload: string }): RegistryCanonicalEvent {
+type PrismEventRow = {
+  registry_address: string | null;
+  network: string | null;
+  registry_version: string | null;
+  tx_hash: string;
+  event_index: number | string;
+  block_number: number | string;
+  kind: string;
+  payload: string;
+};
+
+function rowToEvent(row: PrismEventRow): RegistryCanonicalEvent {
   let payload: RegistryCanonicalEvent["payload"];
+  let scope: RegistryEventScope;
   try {
     payload = JSON.parse(row.payload) as RegistryCanonicalEvent["payload"];
-  } catch {
-    throw new PrismEventsStoreError("store_read_failed", `corrupt payload for ${row.tx_hash}:${row.event_index}`);
+    scope = normalizeRegistryEventScope({
+      registryAddress: row.registry_address ?? "",
+      network: row.network ?? "",
+      registryVersion: row.registry_version as "v1" | "v2",
+    });
+  } catch (cause) {
+    throw new PrismEventsStoreError("store_read_failed", `corrupt scoped event for ${row.tx_hash}:${row.event_index}${cause instanceof Error ? `:${cause.message}` : ""}`);
   }
   return {
     txHash: row.tx_hash as Hex,
@@ -91,7 +170,15 @@ function rowToEvent(row: { tx_hash: string; event_index: number | string; block_
     blockNumber: typeof row.block_number === "number" ? row.block_number : Number.parseInt(String(row.block_number), 10),
     kind: row.kind as RegistryEventKind,
     payload,
+    registryAddress: scope.registryAddress,
+    network: scope.network,
+    registryVersion: scope.registryVersion,
+    abiVersion: scope.abiVersion,
   };
+}
+
+function queryScope(scope: RegistryEventScopeInput | number | undefined): RegistryEventScope {
+  return normalizeScope(typeof scope === "number" ? undefined : scope);
 }
 
 export class PostgresPrismEventsStore implements PrismEventsStore {
@@ -119,6 +206,8 @@ export class PostgresPrismEventsStore implements PrismEventsStore {
           await client.query("INSERT INTO prism_events_meta (key, value) VALUES ('schema_version', $1)", [String(PRISM_EVENTS_SCHEMA_VERSION)]);
         } else if (Number.parseInt(meta.rows[0].value, 10) > PRISM_EVENTS_SCHEMA_VERSION) {
           throw new PrismEventsStoreError("store_migrate_failed", `database schema_version ${meta.rows[0].value} newer than ${PRISM_EVENTS_SCHEMA_VERSION}`);
+        } else if (Number.parseInt(meta.rows[0].value, 10) < PRISM_EVENTS_SCHEMA_VERSION) {
+          await client.query("UPDATE prism_events_meta SET value = $1 WHERE key = 'schema_version'", [String(PRISM_EVENTS_SCHEMA_VERSION)]);
         }
         await client.query("COMMIT");
       } catch (inner) {
@@ -143,14 +232,15 @@ export class PostgresPrismEventsStore implements PrismEventsStore {
     if (this.closed) throw new PrismEventsStoreError("store_connect_failed", "store is closed");
   }
 
-  async insert(event: RegistryCanonicalEvent): Promise<{ inserted: boolean; duplicate: boolean }> {
+  async insert(event: RegistryCanonicalEvent, explicitScope?: RegistryEventScopeInput): Promise<{ inserted: boolean; duplicate: boolean }> {
     this.assertOpen();
-    validateEvent(event);
-    const row = toRow(event);
+    const resolved = resolveEventScope(event, explicitScope);
+    validateEvent(resolved.event);
+    const row = toRow(resolved.event, resolved.scope);
     try {
       const res = await this.pool.query(
-        `INSERT INTO prism_events (tx_hash, event_index, block_number, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tx_hash, event_index) DO NOTHING`,
-        [row.tx_hash, row.event_index, row.block_number, row.kind, row.payload, row.created_at],
+        `INSERT INTO prism_events (registry_address, network, registry_version, tx_hash, event_index, block_number, kind, payload, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+        [row.registry_address, row.network, row.registry_version, row.tx_hash, row.event_index, row.block_number, row.kind, row.payload, row.created_at],
       );
       if (res.rowCount === 1) return { inserted: true, duplicate: false };
       return { inserted: false, duplicate: true };
@@ -160,66 +250,79 @@ export class PostgresPrismEventsStore implements PrismEventsStore {
     }
   }
 
-  async insertMany(events: readonly RegistryCanonicalEvent[]): Promise<{ inserted: number; duplicates: number }> {
+  async insertMany(events: readonly RegistryCanonicalEvent[], explicitScope?: RegistryEventScopeInput): Promise<{ inserted: number; duplicates: number }> {
     if (events.length === 0) return { inserted: 0, duplicates: 0 };
     let inserted = 0;
     let duplicates = 0;
     for (const ev of events) {
-      const r = await this.insert(ev);
+      const r = await this.insert(ev, explicitScope);
       if (r.inserted) inserted++;
       else duplicates++;
     }
     return { inserted, duplicates };
   }
 
-  async get(txHash: Hex, eventIndex: number): Promise<RegistryCanonicalEvent | null> {
+  async get(txHash: Hex, eventIndex: number, inputScope?: RegistryEventScopeInput): Promise<RegistryCanonicalEvent | null> {
     this.assertOpen();
+    const scope = queryScope(inputScope);
     try {
-      const res = await this.pool.query(`SELECT tx_hash, event_index, block_number, kind, payload FROM prism_events WHERE tx_hash = $1 AND event_index = $2`, [
-        txHash.toLowerCase(),
-        eventIndex,
-      ]);
+      const res = await this.pool.query(
+        `SELECT registry_address, network, registry_version, tx_hash, event_index, block_number, kind, payload FROM prism_events WHERE registry_address = $1 AND network = $2 AND registry_version = $3 AND tx_hash = $4 AND event_index = $5`,
+        [scope.registryAddress, scope.network, scope.registryVersion, txHash.toLowerCase(), eventIndex],
+      );
       if (!res.rowCount || res.rowCount === 0) return null;
-      return rowToEvent(res.rows[0] as never);
+      return rowToEvent(res.rows[0] as PrismEventRow);
     } catch (cause) {
+      if (cause instanceof PrismEventsStoreError) throw cause;
       throw new PrismEventsStoreError("store_read_failed", "get failed", cause);
     }
   }
 
-  async listOrdered(limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
+  async listOrdered(scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
     this.assertOpen();
-    const bounded = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const scope = queryScope(scopeOrLimit);
+    const requested = typeof scopeOrLimit === "number" ? scopeOrLimit : limit;
+    const bounded = Math.max(1, Math.min(1000, Math.floor(requested)));
     try {
       const res = await this.pool.query(
-        `SELECT tx_hash, event_index, block_number, kind, payload FROM prism_events ORDER BY block_number ASC, tx_hash ASC, event_index ASC LIMIT $1`,
-        [bounded],
+        `SELECT registry_address, network, registry_version, tx_hash, event_index, block_number, kind, payload FROM prism_events WHERE registry_address = $1 AND network = $2 AND registry_version = $3 ORDER BY block_number ASC, tx_hash ASC, event_index ASC LIMIT $4`,
+        [scope.registryAddress, scope.network, scope.registryVersion, bounded],
       );
-      return res.rows.map((r) => rowToEvent(r as never));
+      return res.rows.map((r) => rowToEvent(r as PrismEventRow));
     } catch (cause) {
+      if (cause instanceof PrismEventsStoreError) throw cause;
       throw new PrismEventsStoreError("store_read_failed", "listOrdered failed", cause);
     }
   }
 
-  async listByBlockRange(fromBlock: number, toBlock: number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
+  async listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
     this.assertOpen();
-    const bounded = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const scope = queryScope(scopeOrLimit);
+    const requested = typeof scopeOrLimit === "number" ? scopeOrLimit : limit;
+    const bounded = Math.max(1, Math.min(1000, Math.floor(requested)));
     try {
       const res = await this.pool.query(
-        `SELECT tx_hash, event_index, block_number, kind, payload FROM prism_events WHERE block_number >= $1 AND block_number <= $2 ORDER BY block_number ASC, tx_hash ASC, event_index ASC LIMIT $3`,
-        [fromBlock, toBlock, bounded],
+        `SELECT registry_address, network, registry_version, tx_hash, event_index, block_number, kind, payload FROM prism_events WHERE registry_address = $1 AND network = $2 AND registry_version = $3 AND block_number >= $4 AND block_number <= $5 ORDER BY block_number ASC, tx_hash ASC, event_index ASC LIMIT $6`,
+        [scope.registryAddress, scope.network, scope.registryVersion, fromBlock, toBlock, bounded],
       );
-      return res.rows.map((r) => rowToEvent(r as never));
+      return res.rows.map((r) => rowToEvent(r as PrismEventRow));
     } catch (cause) {
+      if (cause instanceof PrismEventsStoreError) throw cause;
       throw new PrismEventsStoreError("store_read_failed", "listByBlockRange failed", cause);
     }
   }
 
-  async count(): Promise<number> {
+  async count(inputScope?: RegistryEventScopeInput): Promise<number> {
     this.assertOpen();
+    const scope = queryScope(inputScope);
     try {
-      const res = await this.pool.query(`SELECT COUNT(*) as cnt FROM prism_events`);
+      const res = await this.pool.query(
+        `SELECT COUNT(*) as cnt FROM prism_events WHERE registry_address = $1 AND network = $2 AND registry_version = $3`,
+        [scope.registryAddress, scope.network, scope.registryVersion],
+      );
       return Number.parseInt(String(res.rows[0].cnt), 10);
     } catch (cause) {
+      if (cause instanceof PrismEventsStoreError) throw cause;
       throw new PrismEventsStoreError("store_read_failed", "count failed", cause);
     }
   }
@@ -240,55 +343,66 @@ export class InMemoryPrismEventsStore implements PrismEventsStore {
   private readonly map = new Map<string, RegistryCanonicalEvent>();
   private closed = false;
 
-  async insert(event: RegistryCanonicalEvent): Promise<{ inserted: boolean; duplicate: boolean }> {
+  async insert(event: RegistryCanonicalEvent, explicitScope?: RegistryEventScopeInput): Promise<{ inserted: boolean; duplicate: boolean }> {
     this.assertOpen();
-    validateEvent(event);
-    const key = `${event.txHash.toLowerCase()}:${event.eventIndex}`;
+    const resolved = resolveEventScope(event, explicitScope);
+    validateEvent(resolved.event);
+    const key = `${scopeKey(resolved.scope)}:${resolved.event.txHash.toLowerCase()}:${resolved.event.eventIndex}`;
     if (this.map.has(key)) return { inserted: false, duplicate: true };
-    this.map.set(key, { ...event, txHash: event.txHash.toLowerCase() as Hex });
+    this.map.set(key, { ...resolved.event, txHash: resolved.event.txHash.toLowerCase() as Hex });
     return { inserted: true, duplicate: false };
   }
 
-  async insertMany(events: readonly RegistryCanonicalEvent[]): Promise<{ inserted: number; duplicates: number }> {
+  async insertMany(events: readonly RegistryCanonicalEvent[], explicitScope?: RegistryEventScopeInput): Promise<{ inserted: number; duplicates: number }> {
     let inserted = 0;
     let duplicates = 0;
     for (const ev of events) {
-      const r = await this.insert(ev);
+      const r = await this.insert(ev, explicitScope);
       if (r.inserted) inserted++;
       else duplicates++;
     }
     return { inserted, duplicates };
   }
 
-  async get(txHash: Hex, eventIndex: number): Promise<RegistryCanonicalEvent | null> {
+  async get(txHash: Hex, eventIndex: number, inputScope?: RegistryEventScopeInput): Promise<RegistryCanonicalEvent | null> {
     this.assertOpen();
-    return this.map.get(`${txHash.toLowerCase()}:${eventIndex}`) ?? null;
+    const scope = queryScope(inputScope);
+    return this.map.get(`${scopeKey(scope)}:${txHash.toLowerCase()}:${eventIndex}`) ?? null;
   }
 
-  async listOrdered(limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
+  async listOrdered(scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
     this.assertOpen();
-    const bounded = Math.max(1, Math.min(1000, Math.floor(limit)));
-    const sorted = [...this.map.values()].sort((a, b) => {
-      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
-      if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) return a.txHash.toLowerCase() < b.txHash.toLowerCase() ? -1 : 1;
-      return a.eventIndex - b.eventIndex;
+    const scope = queryScope(scopeOrLimit);
+    const requested = typeof scopeOrLimit === "number" ? scopeOrLimit : limit;
+    const bounded = Math.max(1, Math.min(1000, Math.floor(requested)));
+    const filtered = [...this.map.values()].filter((event) => {
+      const eventScopeValue = eventScope(event);
+      return eventScopeValue !== null && scopeMatches(eventScopeValue, scope);
     });
-    return sorted.slice(0, bounded);
+    filtered.sort(compareEvents);
+    return filtered.slice(0, bounded);
   }
 
-  async listByBlockRange(fromBlock: number, toBlock: number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
+  async listByBlockRange(fromBlock: number, toBlock: number, scopeOrLimit?: RegistryEventScopeInput | number, limit = 100): Promise<readonly RegistryCanonicalEvent[]> {
     this.assertOpen();
-    const filtered = [...this.map.values()].filter((e) => e.blockNumber >= fromBlock && e.blockNumber <= toBlock);
-    filtered.sort((a, b) => {
-      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
-      if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) return a.txHash.toLowerCase() < b.txHash.toLowerCase() ? -1 : 1;
-      return a.eventIndex - b.eventIndex;
+    const scope = queryScope(scopeOrLimit);
+    const requested = typeof scopeOrLimit === "number" ? scopeOrLimit : limit;
+    const bounded = Math.max(1, Math.min(1000, Math.floor(requested)));
+    const filtered = [...this.map.values()].filter((event) => {
+      const eventScopeValue = eventScope(event);
+      return event.blockNumber >= fromBlock && event.blockNumber <= toBlock && eventScopeValue !== null && scopeMatches(eventScopeValue, scope);
     });
-    return filtered.slice(0, Math.max(1, Math.min(1000, Math.floor(limit))));
+    filtered.sort(compareEvents);
+    return filtered.slice(0, bounded);
   }
 
-  async count(): Promise<number> {
-    return this.map.size;
+  async count(inputScope?: RegistryEventScopeInput): Promise<number> {
+    this.assertOpen();
+    const scope = queryScope(inputScope);
+    return [...this.map.values()].filter((event) => {
+      const eventScopeValue = eventScope(event);
+      return eventScopeValue !== null && scopeMatches(eventScopeValue, scope);
+    }).length;
   }
 
   async close(): Promise<void> {
@@ -298,6 +412,12 @@ export class InMemoryPrismEventsStore implements PrismEventsStore {
   private assertOpen(): void {
     if (this.closed) throw new PrismEventsStoreError("store_connect_failed", "store is closed");
   }
+}
+
+function compareEvents(a: RegistryCanonicalEvent, b: RegistryCanonicalEvent): number {
+  if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+  if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) return a.txHash.toLowerCase() < b.txHash.toLowerCase() ? -1 : 1;
+  return a.eventIndex - b.eventIndex;
 }
 
 function validateEvent(event: RegistryCanonicalEvent): void {

@@ -36,7 +36,7 @@ describe("M1 indexer/watermark runtime — deterministic gate", () => {
       { events: [{ block_number: 10, transaction_hash: TX_A, event_index: 0, keys: [SEL, "0x12"], data: ["0xcccc"] }], continuation_token: null },
     ];
     const reader: StarknetEventReader = { getEvents: async () => { const p = pages[call++] ?? { events: [], continuation_token: null }; return { events: p.events as never[], continuation_token: p.continuation_token } as never; } };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map(e => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([[5, TX_C, 0], [10, TX_A, 0], [10, TX_B, 1]]);
@@ -50,7 +50,7 @@ describe("M1 indexer/watermark runtime — deterministic gate", () => {
     ];
     let call = 0;
     const reader: StarknetEventReader = { getEvents: async () => { const p = pages[call++] ?? { events: [], continuation_token: null }; return { events: p.events as never[], continuation_token: p.continuation_token } as never; } };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 1 });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false, chunkSize: 1 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.events).toHaveLength(2);
     expect(res.events.map(e => e.eventIndex)).toEqual([0, 1]);
@@ -119,7 +119,7 @@ describe("M1 indexer/watermark runtime — deterministic gate", () => {
 
   it("fail-closed unknowns: unknown tx returns null, unknown prism returns None, no invented events", async () => {
     const reader: StarknetEventReader = { getEvents: async () => ({ events: [], continuation_token: null }) };
-    const idx = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
+    const idx = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false });
     const obs = await idx.observeIndexer(TX_A);
     expect(obs?.eventObserved).toBe(false);
 

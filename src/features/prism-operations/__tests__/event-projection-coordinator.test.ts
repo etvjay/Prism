@@ -6,6 +6,7 @@ import type { RegistryCanonicalEvent } from "../domain/event-indexer";
 import type { PrismEventsStore } from "../adapters/postgres-prism-events-store";
 
 const REGISTRY = "0x67b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
+const SCOPE = { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: "v1" as const };
 const TX = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const EVENT: RegistryCanonicalEvent = {
   txHash: TX,
@@ -31,6 +32,7 @@ describe("EventProjectionCoordinator", () => {
     const coordinator = new EventProjectionCoordinator({
       registryAddress: REGISTRY,
       network: "SN_SEPOLIA",
+      registryVersion: "v1" as const,
       initialFromBlock: 0,
       checkpointStore: checkpoints,
       eventsStore: events,
@@ -42,7 +44,7 @@ describe("EventProjectionCoordinator", () => {
     expect(first.advanced).toBe(true);
     expect(first.inserted).toBe(1);
     expect(first.nextFromBlock).toBe(11);
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
     expect((await coordinator.getCheckpoint())?.scanWatermark).toBe(10);
 
     const second = await coordinator.runOnce();
@@ -55,14 +57,16 @@ describe("EventProjectionCoordinator", () => {
     const events = new InMemoryPrismEventsStore();
     const checkpoints = new InMemoryEventProjectionCheckpointStore();
     const source = indexer([{ events: [EVENT], watermark: 10 }, { events: [EVENT], watermark: 10 }]);
-    const make = () => new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA", initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
+    const make = () => new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA",
+      registryVersion: "v1" as const, initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
     await make().runOnce();
     // Simulate a replay from an older range by using a fresh checkpoint store.
-    const replay = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA", initialFromBlock: 0, checkpointStore: new InMemoryEventProjectionCheckpointStore(), eventsStore: events, indexer: source });
+    const replay = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA",
+      registryVersion: "v1" as const, initialFromBlock: 0, checkpointStore: new InMemoryEventProjectionCheckpointStore(), eventsStore: events, indexer: source });
     const result = await replay.runOnce();
     expect(result.inserted).toBe(0);
     expect(result.duplicates).toBe(1);
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
   });
 
   it("does not advance checkpoint when event persistence fails", async () => {
@@ -71,9 +75,10 @@ describe("EventProjectionCoordinator", () => {
     const original = failing.insertMany.bind(failing);
     failing.insertMany = async () => { throw new Error("db_write_failed"); };
     const source = indexer([{ events: [EVENT], watermark: 10 }]);
-    const coordinator = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA", initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: failing, indexer: source });
+    const coordinator = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA",
+      registryVersion: "v1" as const, initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: failing, indexer: source });
     await expect(coordinator.runOnce()).rejects.toThrow("db_write_failed");
-    expect(await checkpoints.get(REGISTRY)).toBeNull();
+    expect(await checkpoints.get(SCOPE)).toBeNull();
     failing.insertMany = original;
   });
 
@@ -81,11 +86,12 @@ describe("EventProjectionCoordinator", () => {
     const events = new InMemoryPrismEventsStore();
     const checkpoints = new InMemoryEventProjectionCheckpointStore();
     const source = indexer([{ events: [EVENT], watermark: 10 }, { events: [EVENT], watermark: 10 }]);
-    const make = () => new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA", initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
+    const make = () => new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA",
+      registryVersion: "v1" as const, initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
     const results = await Promise.all([make().runOnce(), make().runOnce()]);
     expect(results.filter((result) => result.advanced)).toHaveLength(1);
     expect(results.filter((result) => result.reason === "checkpoint_cas_conflict")).toHaveLength(1);
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
   });
 
   it("coalesces overlapping projection ticks for one coordinator", async () => {
@@ -99,6 +105,7 @@ describe("EventProjectionCoordinator", () => {
     const coordinator = new EventProjectionCoordinator({
       registryAddress: REGISTRY,
       network: "SN_SEPOLIA",
+      registryVersion: "v1" as const,
       initialFromBlock: 0,
       checkpointStore: checkpoints,
       eventsStore: events,
@@ -120,7 +127,7 @@ describe("EventProjectionCoordinator", () => {
 
     expect(calls).toBe(1);
     expect(results[0]).toEqual(results[1]);
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
   });
 
   it("keeps checkpoint CAS state independent for multiple registries", async () => {
@@ -129,6 +136,7 @@ describe("EventProjectionCoordinator", () => {
     const inputA = {
       registryAddress: REGISTRY,
       network: "SN_SEPOLIA",
+      registryVersion: "v1" as const,
       nextFromBlock: 11,
       scanWatermark: 10,
       eventWatermark: 10,
@@ -138,20 +146,33 @@ describe("EventProjectionCoordinator", () => {
 
     expect(await checkpoints.compareAndSet(null, inputA, 100)).toBe(true);
     expect(await checkpoints.compareAndSet(null, inputB, 100)).toBe(true);
-    expect((await checkpoints.get(REGISTRY))?.nextFromBlock).toBe(11);
-    expect((await checkpoints.get(registryB))?.nextFromBlock).toBe(21);
+    expect((await checkpoints.get(SCOPE))?.nextFromBlock).toBe(11);
+    expect((await checkpoints.get(registryB, "SN_SEPOLIA", "v1"))?.nextFromBlock).toBe(21);
     expect(await checkpoints.compareAndSet(0, { ...inputA, nextFromBlock: 12, scanWatermark: 11, eventWatermark: 11 }, 101)).toBe(true);
-    expect((await checkpoints.get(registryB))?.nextFromBlock).toBe(21);
+    expect((await checkpoints.get(registryB, "SN_SEPOLIA", "v1"))?.nextFromBlock).toBe(21);
+  });
+
+  it("keeps checkpoint CAS state independent across ABI versions at one address", async () => {
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const v1 = { ...SCOPE, nextFromBlock: 11, scanWatermark: 10, eventWatermark: 10, continuationToken: null };
+    const v2 = { ...v1, registryVersion: "v2" as const, nextFromBlock: 21, scanWatermark: 20 };
+    expect(await checkpoints.compareAndSet(null, v1, 100)).toBe(true);
+    expect(await checkpoints.compareAndSet(null, v2, 100)).toBe(true);
+    expect((await checkpoints.get(SCOPE))?.nextFromBlock).toBe(11);
+    expect((await checkpoints.get(REGISTRY, "SN_SEPOLIA", "v2"))?.nextFromBlock).toBe(21);
+    expect(await checkpoints.compareAndSet(0, { ...v1, nextFromBlock: 12, scanWatermark: 11, eventWatermark: 11 }, 101)).toBe(true);
+    expect((await checkpoints.get(REGISTRY, "SN_SEPOLIA", "v2"))?.nextFromBlock).toBe(21);
   });
 
   it("fails closed when scan watermark is unavailable", async () => {
     const events = new InMemoryPrismEventsStore();
     const checkpoints = new InMemoryEventProjectionCheckpointStore();
     const source = indexer([{ events: [], watermark: null }]);
-    const coordinator = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA", initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
+    const coordinator = new EventProjectionCoordinator({ registryAddress: REGISTRY, network: "SN_SEPOLIA",
+      registryVersion: "v1" as const, initialFromBlock: 0, checkpointStore: checkpoints, eventsStore: events, indexer: source });
     const result = await coordinator.runOnce();
     expect(result.advanced).toBe(false);
     expect(result.reason).toBe("missing_scan_watermark");
-    expect(await checkpoints.get(REGISTRY)).toBeNull();
+    expect(await checkpoints.get(SCOPE)).toBeNull();
   });
 });

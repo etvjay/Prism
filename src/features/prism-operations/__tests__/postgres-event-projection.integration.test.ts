@@ -12,7 +12,11 @@ const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const suite = TEST_URL ? describe : describe.skip;
 const TEST_SCHEMA = `prism_projection_${process.pid}`;
 const REGISTRY = "0x67b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
+const SCOPE = { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: "v1" as const };
+const SCOPE_V2 = { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: "v2" as const };
+const SCOPE_OTHER_REGISTRY = { registryAddress: "0x77b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4", network: "SN_SEPOLIA", registryVersion: "v1" as const };
 const TX = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const;
+const TX_SHARED = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const EVENT: RegistryCanonicalEvent = {
   txHash: TX,
   eventIndex: 0,
@@ -50,6 +54,7 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
     const coordinator = new EventProjectionCoordinator({
       registryAddress: REGISTRY,
       network: "SN_SEPOLIA",
+      registryVersion: "v1",
       initialFromBlock: 0,
       checkpointStore: checkpoints!,
       eventsStore: events!,
@@ -59,20 +64,21 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
     const first = await coordinator.runOnce();
     expect(first.advanced).toBe(true);
     expect(first.inserted).toBe(1);
-    expect(await events!.count()).toBe(1);
-    expect((await checkpoints!.get(REGISTRY))?.nextFromBlock).toBe(11);
+    expect(await events!.count(SCOPE)).toBe(1);
+    expect((await checkpoints!.get(SCOPE))?.nextFromBlock).toBe(11);
 
     await events!.close();
     await checkpoints!.close();
     events = await PostgresPrismEventsStore.create(options());
     checkpoints = await PostgresEventProjectionCheckpointStore.create(options());
-    const reopened = await checkpoints.get(REGISTRY);
+    const reopened = await checkpoints.get(SCOPE);
     expect(reopened).toMatchObject({ nextFromBlock: 11, scanWatermark: 10, eventWatermark: 10, version: 0 });
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
 
     const resumed = new EventProjectionCoordinator({
       registryAddress: REGISTRY,
       network: "SN_SEPOLIA",
+      registryVersion: "v1",
       initialFromBlock: 0,
       checkpointStore: checkpoints,
       eventsStore: events,
@@ -84,19 +90,30 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
     expect(replay.inserted).toBe(0);
     expect(replay.duplicates).toBe(1);
     expect(replay.nextFromBlock).toBe(13);
-    expect(await events.count()).toBe(1);
+    expect(await events.count(SCOPE)).toBe(1);
   });
 
   it("CAS allows exactly one initial checkpoint writer", async () => {
-    const input = { registryAddress: `${REGISTRY.slice(0, -1)}5`, network: "SN_SEPOLIA", nextFromBlock: 0, scanWatermark: 0, eventWatermark: null, continuationToken: null };
+    const input = { registryAddress: `${REGISTRY.slice(0, -1)}5`, network: "SN_SEPOLIA", registryVersion: "v1" as const, nextFromBlock: 0, scanWatermark: 0, eventWatermark: null, continuationToken: null };
     const results = await Promise.all([checkpoints!.compareAndSet(null, input, 100), checkpoints!.compareAndSet(null, input, 100)]);
     expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("persists same tx_hash+event_index independently for registry and ABI scopes", async () => {
+    const shared = { ...EVENT, txHash: TX_SHARED };
+    expect(await events!.insert(shared, SCOPE)).toEqual({ inserted: true, duplicate: false });
+    expect(await events!.insert(shared, SCOPE_V2)).toEqual({ inserted: true, duplicate: false });
+    expect(await events!.insert(shared, SCOPE_OTHER_REGISTRY)).toEqual({ inserted: true, duplicate: false });
+    expect(await events!.count(SCOPE)).toBe(2);
+    expect(await events!.count(SCOPE_V2)).toBe(1);
+    expect(await events!.count(SCOPE_OTHER_REGISTRY)).toBe(1);
+    expect((await events!.get(TX_SHARED, 0, SCOPE_V2))?.registryVersion).toBe("v2");
   });
 
   it("CAS update contention has one winner and preserves the winning version", async () => {
     const contender = await PostgresEventProjectionCheckpointStore.create(options());
     const registry = `${REGISTRY.slice(0, -1)}7`;
-    const base = { registryAddress: registry, network: "SN_SEPOLIA", nextFromBlock: 10, scanWatermark: 9, eventWatermark: null, continuationToken: null };
+    const base = { registryAddress: registry, network: "SN_SEPOLIA", registryVersion: "v1" as const, nextFromBlock: 10, scanWatermark: 9, eventWatermark: null, continuationToken: null };
     const next = { ...base, nextFromBlock: 11, scanWatermark: 10, eventWatermark: 10 };
     try {
       expect(await checkpoints!.compareAndSet(null, base, 100)).toBe(true);
@@ -105,8 +122,8 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
         contender.compareAndSet(0, next, 101),
       ]);
       expect(results.filter(Boolean)).toHaveLength(1);
-      expect((await checkpoints!.get(registry))?.version).toBe(1);
-      expect((await checkpoints!.get(registry))?.nextFromBlock).toBe(11);
+      expect((await checkpoints!.get(registry, "SN_SEPOLIA", "v1"))?.version).toBe(1);
+      expect((await checkpoints!.get(registry, "SN_SEPOLIA", "v1"))?.nextFromBlock).toBe(11);
     } finally {
       await contender.close();
     }

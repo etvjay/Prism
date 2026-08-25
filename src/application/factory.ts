@@ -218,6 +218,13 @@ function getProjectionStartBlock(): number {
   return value;
 }
 
+function getProjectionMaxPages(): number {
+  const raw = (process.env.PRISM_STARKNET_INDEXER_MAX_PAGES ?? "1000").trim();
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_indexer_max_pages");
+  return value;
+}
+
 function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["starknetReadProvider"] {
   return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
 }
@@ -246,7 +253,7 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   assertSubmitPortRegistryAddress(overrides?.submitPort, cfg.registryAddress, overrides?.submitPortRegistryAddress);
   let indexer: StarknetEventIndexerAdapter;
   try {
-    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100 });
+    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, network: "SN_SEPOLIA", registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100, maxPages: getProjectionMaxPages() });
   } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }
@@ -436,6 +443,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     ? new EventProjectionCoordinator({
         registryAddress: getStarknetRegistryAddress()!,
         network: "SN_SEPOLIA",
+        registryVersion,
         initialFromBlock: getProjectionStartBlock(),
         checkpointStore: projectionCheckpointStore,
         eventsStore: prismEventsStore,

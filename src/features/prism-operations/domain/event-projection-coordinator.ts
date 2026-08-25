@@ -1,9 +1,15 @@
 // Durable canonical-event projection coordinator.
 // Ordering: fetch facts → persist canonical events → CAS checkpoint.
 // A crash between persistence and checkpoint is safe: replay is deduplicated
-// by (tx_hash,event_index). A checkpoint never advances past failed persistence.
+// by (registry scope, tx_hash,event_index). A checkpoint never advances past failed persistence.
 
-import type { RegistryCanonicalEvent } from "./event-indexer";
+import {
+  normalizeRegistryEventScope,
+  withEventScope,
+  type RegistryAbiVersion,
+  type RegistryCanonicalEvent,
+  type RegistryEventScope,
+} from "./event-indexer";
 import type { PrismEventsStore } from "../adapters/postgres-prism-events-store";
 import type {
   EventProjectionCheckpoint,
@@ -22,6 +28,8 @@ export interface EventProjectionIndexer {
 export type EventProjectionCoordinatorOptions = {
   registryAddress: string;
   network: string;
+  registryVersion?: RegistryAbiVersion;
+  abiVersion?: RegistryAbiVersion;
   initialFromBlock: number;
   checkpointStore: EventProjectionCheckpointStore;
   eventsStore: PrismEventsStore;
@@ -45,6 +53,8 @@ export type EventProjectionRunResult = {
 export class EventProjectionCoordinator {
   private readonly registryAddress: string;
   private readonly network: string;
+  private readonly registryVersion: RegistryAbiVersion;
+  private readonly scope: RegistryEventScope;
   private readonly initialFromBlock: number;
   private readonly checkpointStore: EventProjectionCheckpointStore;
   private readonly eventsStore: PrismEventsStore;
@@ -56,8 +66,15 @@ export class EventProjectionCoordinator {
     if (!/^0x[0-9a-fA-F]{1,64}$/.test(options.registryAddress)) throw new Error("event_projection_invalid_registry_address");
     if (!Number.isInteger(options.initialFromBlock) || options.initialFromBlock < 0) throw new Error("event_projection_invalid_initial_block");
     if (!options.network) throw new Error("event_projection_missing_network");
-    this.registryAddress = options.registryAddress.toLowerCase();
-    this.network = options.network;
+    if (!options.registryVersion && !options.abiVersion) throw new Error("event_projection_missing_registry_version");
+    try {
+      this.scope = normalizeRegistryEventScope({ registryAddress: options.registryAddress, network: options.network, registryVersion: options.registryVersion, abiVersion: options.abiVersion });
+    } catch (cause) {
+      throw new Error(cause instanceof Error ? cause.message : "event_projection_invalid_scope");
+    }
+    this.registryAddress = this.scope.registryAddress;
+    this.network = this.scope.network;
+    this.registryVersion = this.scope.registryVersion;
     this.initialFromBlock = options.initialFromBlock;
     this.checkpointStore = options.checkpointStore;
     this.eventsStore = options.eventsStore;
@@ -77,13 +94,20 @@ export class EventProjectionCoordinator {
   }
 
   private async runOnceInternal(): Promise<EventProjectionRunResult> {
-    const checkpoint = await this.checkpointStore.get(this.registryAddress);
-    if (checkpoint && (checkpoint.network !== this.network || checkpoint.registryAddress !== this.registryAddress)) {
+    const checkpoint = await this.checkpointStore.get(this.scope);
+    if (checkpoint && (checkpoint.network !== this.network || checkpoint.registryAddress !== this.registryAddress || checkpoint.registryVersion !== this.registryVersion)) {
       throw new Error("event_projection_checkpoint_identity_mismatch");
     }
     const fromBlock = checkpoint?.nextFromBlock ?? this.initialFromBlock;
     const fetched = await this.indexer.fetchAllRegistryEvents({ fromBlock, toBlock: "latest" });
-    const eventWatermark = maxEventBlock(fetched.events);
+    const scopedEvents = fetched.events.map((event) => {
+      try {
+        return withEventScope(event, this.scope);
+      } catch {
+        throw new Error("event_projection_event_scope_mismatch");
+      }
+    });
+    const eventWatermark = maxEventBlock(scopedEvents);
     const scanWatermark = fetched.watermark;
     if (scanWatermark === null) {
       return {
@@ -107,10 +131,11 @@ export class EventProjectionCoordinator {
     }
 
     // Persist first. If this throws, no checkpoint mutation is attempted.
-    const persisted = await this.eventsStore.insertMany(fetched.events);
+    const persisted = await this.eventsStore.insertMany(scopedEvents, this.scope);
     const next: EventProjectionCheckpointInput = {
       registryAddress: this.registryAddress,
       network: this.network,
+      registryVersion: this.registryVersion,
       nextFromBlock: scanWatermark + 1,
       scanWatermark,
       eventWatermark: maxNullable(checkpoint?.eventWatermark ?? null, eventWatermark),
@@ -131,7 +156,7 @@ export class EventProjectionCoordinator {
         checkpointVersion: checkpoint?.version ?? null,
       };
     }
-    const committedCheckpoint = await this.checkpointStore.get(this.registryAddress);
+    const committedCheckpoint = await this.checkpointStore.get(this.scope);
     return {
       advanced: true,
       reason: fetched.events.length ? "events_persisted_and_checkpoint_advanced" : "empty_scan_checkpoint_advanced",
@@ -147,7 +172,7 @@ export class EventProjectionCoordinator {
   }
 
   async getCheckpoint(): Promise<EventProjectionCheckpoint | null> {
-    return this.checkpointStore.get(this.registryAddress);
+    return this.checkpointStore.get(this.scope);
   }
 }
 

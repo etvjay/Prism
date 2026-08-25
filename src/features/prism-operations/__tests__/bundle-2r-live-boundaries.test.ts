@@ -28,6 +28,7 @@ const TX_A: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const TX_B: Hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TX_C: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DIGEST: Hex = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const EVENT_SCOPE = { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: "v1" as const };
 const SEL_CREATED = PRISM_EVENT_SELECTORS.PrismIdentityCreated;
 const SEL_BOUND = PRISM_EVENT_SELECTORS.ExecutionIdentityBound;
 const NOW = 1_789_000_000;
@@ -140,7 +141,7 @@ describe("Bundle 2R Live — getEvents pagination/continuation (T9, SC-27)", () 
         return { events: [], continuation_token: "next-token" };
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false });
     const res = await adapter.fetchRegistryEvents({ fromBlock: 5, continuationToken: "prev" });
     expect(capturedKeys?.[0]).toEqual(expect.arrayContaining(ALL_PRISM_EVENT_SELECTORS as unknown as string[]));
     expect(capturedToken).toBe("prev");
@@ -172,7 +173,7 @@ describe("Bundle 2R Live — getEvents pagination/continuation (T9, SC-27)", () 
         return { events: p.events as never[], continuation_token: p.continuation_token } as never;
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([
@@ -202,11 +203,11 @@ describe("Bundle 2R Live — duplicate event (tx_hash,event_index) uniqueness (T
       kind: "PrismIdentityCreated" as const,
       payload: { prismId: "prism:P1", controller: "0x1111" },
     };
-    const r1 = await store.insert(ev as never);
+    const r1 = await store.insert(ev as never, EVENT_SCOPE);
     expect(r1.inserted).toBe(true);
-    const r2 = await store.insert(ev as never);
+    const r2 = await store.insert(ev as never, EVENT_SCOPE);
     expect(r2.duplicate).toBe(true);
-    expect(await store.count()).toBe(1);
+    expect(await store.count(EVENT_SCOPE)).toBe(1);
   });
 
   it("insertMany with duplicates counts inserted vs duplicates, deterministic ordering", async () => {
@@ -216,10 +217,10 @@ describe("Bundle 2R Live — duplicate event (tx_hash,event_index) uniqueness (T
       { txHash: TX_A, eventIndex: 0, blockNumber: 5, kind: "PrismIdentityCreated" as const, payload: { prismId: "prism:P1", controller: "0x1111" } },
       { txHash: TX_B, eventIndex: 1, blockNumber: 10, kind: "ExecutionIdentityBound" as const, payload: { prismId: "prism:P1", venue: "BASE", executionAccount: TX_B, proofDigest: DIGEST } }, // dup
     ] as never[];
-    const res = await store.insertMany(events);
+    const res = await store.insertMany(events, EVENT_SCOPE);
     expect(res.inserted).toBe(2);
     expect(res.duplicates).toBe(1);
-    const ordered = await store.listOrdered(10);
+    const ordered = await store.listOrdered(EVENT_SCOPE, 10);
     expect(ordered.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([
       [5, TX_A, 0],
       [10, TX_B, 1],

@@ -21,6 +21,7 @@ import type { ChainTxObservation } from "../../features/prism-operations/domain/
 const TX_A: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TX_B: Hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const REGISTRY = "0x1111111111111111111111111111111111111111";
+const EVENT_SCOPE = { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: "v1" as const };
 const NOW = 1_789_000_000;
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void>) {
@@ -181,11 +182,11 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
       kind: "PrismIdentityCreated" as const,
       payload: { prismId: "prism:DUP", controller: "0x111" } as never,
     };
-    const r1 = await eventsStore.insert(ev as never);
+    const r1 = await eventsStore.insert(ev as never, EVENT_SCOPE);
     expect(r1.inserted).toBe(true);
-    const r2 = await eventsStore.insert(ev as never);
+    const r2 = await eventsStore.insert(ev as never, EVENT_SCOPE);
     expect(r2.duplicate).toBe(true);
-    expect(await eventsStore.count()).toBe(1);
+    expect(await eventsStore.count(EVENT_SCOPE)).toBe(1);
     // Domain idempotence too
     let state = emptyProjection();
     const a1 = applyEvent(state, ev as never);
@@ -216,7 +217,7 @@ describe("M2 runtime gates — closed wiring (no live chain required)", () => {
         return { events: page.events as never[], continuation_token: page.continuation_token };
       },
     };
-    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, registryVersion: "v1", requireEventOrigin: false, chunkSize: 2 });
+    const adapter = new StarknetEventIndexerAdapter({ reader: reader as never, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false, chunkSize: 2 });
     const res = await adapter.fetchAllRegistryEvents({ fromBlock: 0 });
     expect(res.pagesFetched).toBe(2);
     expect(res.events.map((e) => [e.blockNumber, e.txHash, e.eventIndex])).toEqual([

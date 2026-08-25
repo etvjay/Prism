@@ -7,6 +7,7 @@ import { closeFactory, getAppFactory, resetFactory } from "../factory";
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
 const RPC_URL = process.env.STARKNET_RPC_URL;
 const REGISTRY = process.env.STARKNET_REGISTRY_ADDRESS;
+const SCOPE = REGISTRY ? { registryAddress: REGISTRY, network: "SN_SEPOLIA", registryVersion: (process.env.STARKNET_REGISTRY_VERSION === "2" ? "v2" : "v1") as "v1" | "v2" } : null;
 const suite = TEST_URL && RPC_URL && REGISTRY ? describe : describe.skip;
 
 suite("live durable projection through application factory", () => {
@@ -24,7 +25,7 @@ suite("live durable projection through application factory", () => {
     expect(result.advanced).toBe(true);
     expect(result.scanWatermark).not.toBeNull();
     expect(result.pagesFetched).toBeGreaterThan(0);
-    expect(await factory.prismEventsStore!.count()).toBeGreaterThanOrEqual(1);
-    expect((await factory.projectionCheckpointStore!.get(REGISTRY!))?.scanWatermark).toBe(result.scanWatermark);
+    expect(await factory.prismEventsStore!.count(SCOPE!)).toBeGreaterThanOrEqual(1);
+    expect((await factory.projectionCheckpointStore!.get(SCOPE!))?.scanWatermark).toBe(result.scanWatermark);
   }, 120_000);
 });

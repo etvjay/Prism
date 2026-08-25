@@ -3,7 +3,8 @@
 // Guarantee: empty state + replay(PrismIdentityCreated)* + replay(ExecutionIdentityBound)* + replay(BindingRevoked)*
 //            = complete canonical identity/binding state (TEST-7-3-1, gate A7-4).
 //
-// Keying: idempotent by (tx_hash, event_index) — the canonical event correlation_id.
+// Keying: idempotent by (registry scope, tx_hash, event_index) — the canonical
+// event correlation_id. Legacy unscoped pure-domain callers retain their old key.
 // Transport-neutral: pure domain, no RPC or DB imports.
 //
 // Consumer responsibilities enforced by tests:
@@ -19,6 +20,25 @@ export type RegistryEventKind =
   | "PrismIdentityCreated"
   | "ExecutionIdentityBound"
   | "BindingRevoked";
+
+/** The ABI boundary is part of an event's identity. */
+export type RegistryAbiVersion = "v1" | "v2";
+
+export interface RegistryEventScopeInput {
+  readonly registryAddress: string;
+  readonly network: string;
+  /** Existing application terminology. */
+  readonly registryVersion?: RegistryAbiVersion;
+  /** Alias accepted at local boundaries that call this an ABI version. */
+  readonly abiVersion?: RegistryAbiVersion;
+}
+
+export interface RegistryEventScope {
+  readonly registryAddress: string;
+  readonly network: string;
+  readonly registryVersion: RegistryAbiVersion;
+  readonly abiVersion: RegistryAbiVersion;
+}
 
 export interface PrismIdentityCreatedPayload {
   prismId: string;
@@ -49,6 +69,12 @@ export interface RegistryCanonicalEvent {
   readonly blockNumber: number;
   readonly kind: RegistryEventKind;
   readonly payload: RegistryEventPayload;
+  /** Required at persistence boundaries; optional for legacy pure-domain callers. */
+  readonly registryAddress?: string;
+  readonly network?: string;
+  readonly registryVersion?: RegistryAbiVersion;
+  /** Alias accepted on input; normalized stores return registryVersion. */
+  readonly abiVersion?: RegistryAbiVersion;
   readonly schemaVersion?: number;
 }
 
@@ -72,26 +98,111 @@ export interface BindingProjection {
 export interface ProjectionState {
   readonly identities: ReadonlyMap<string, IdentityProjection>;
   readonly bindings: ReadonlyMap<string, BindingProjection>;
-  /** Set of seen (txHash:eventIndex) keys — idempotency ledger (LEDGER_INDEX). */
+  /** Set of seen scoped correlation keys — idempotency ledger (LEDGER_INDEX). */
   readonly seenKeys: ReadonlySet<string>;
   /** Last watermark for observability chain (served_state_version). */
   readonly watermark: number | null;
+  /** A projection is single-scope; null retains legacy unscoped pure-domain mode. */
+  readonly scope: RegistryEventScope | null;
 }
 
-export function eventKey(txHash: Hex, eventIndex: number): string {
-  return `${txHash.toLowerCase()}:${eventIndex}`;
+const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
+
+export function normalizeRegistryEventScope(input: RegistryEventScopeInput): RegistryEventScope {
+  if (!input || typeof input.registryAddress !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(input.registryAddress.trim())) {
+    throw new Error("event_scope_invalid_registry_address");
+  }
+  let address: string;
+  try {
+    const value = BigInt(input.registryAddress.trim());
+    if (value <= 0n || value >= CONTRACT_ADDRESS_LIMIT) throw new Error("invalid_address_range");
+    address = `0x${value.toString(16)}`;
+  } catch {
+    throw new Error("event_scope_invalid_registry_address");
+  }
+  if (typeof input.network !== "string" || input.network.trim().length === 0) {
+    throw new Error("event_scope_missing_network");
+  }
+  const registryVersion = input.registryVersion ?? input.abiVersion;
+  if (input.registryVersion !== undefined && input.abiVersion !== undefined && input.registryVersion !== input.abiVersion) {
+    throw new Error("event_scope_version_mismatch");
+  }
+  if (registryVersion !== "v1" && registryVersion !== "v2") {
+    throw new Error("event_scope_registry_version_required");
+  }
+  return {
+    registryAddress: address,
+    network: input.network.trim().toUpperCase(),
+    registryVersion,
+    abiVersion: registryVersion,
+  };
+}
+
+export function scopeKey(scope: RegistryEventScopeInput): string {
+  const normalized = normalizeRegistryEventScope(scope);
+  return `${normalized.registryAddress}|${normalized.network}|${normalized.registryVersion}`;
+}
+
+export function eventScope(event: RegistryCanonicalEvent): RegistryEventScope | null {
+  const fields = [event.registryAddress, event.network, event.registryVersion, event.abiVersion];
+  if (fields.every((value) => value === undefined)) return null;
+  if (event.registryAddress === undefined || event.network === undefined) {
+    throw new Error("event_scope_incomplete");
+  }
+  return normalizeRegistryEventScope({
+    registryAddress: event.registryAddress,
+    network: event.network,
+    registryVersion: event.registryVersion,
+    abiVersion: event.abiVersion,
+  });
+}
+
+export function scopeMatches(a: RegistryEventScopeInput, b: RegistryEventScopeInput): boolean {
+  const left = normalizeRegistryEventScope(a);
+  const right = normalizeRegistryEventScope(b);
+  return left.registryAddress === right.registryAddress && left.network === right.network && left.registryVersion === right.registryVersion;
+}
+
+export function withEventScope(event: RegistryCanonicalEvent, input: RegistryEventScopeInput): RegistryCanonicalEvent {
+  const scope = normalizeRegistryEventScope(input);
+  const existing = eventScope(event);
+  if (existing && !scopeMatches(existing, scope)) throw new Error("event_scope_mismatch");
+  return {
+    ...event,
+    registryAddress: scope.registryAddress,
+    network: scope.network,
+    registryVersion: scope.registryVersion,
+    abiVersion: scope.abiVersion,
+  };
+}
+
+export function eventKey(event: RegistryCanonicalEvent): string;
+export function eventKey(txHash: Hex, eventIndex: number, scope?: RegistryEventScopeInput): string;
+export function eventKey(
+  eventOrTxHash: RegistryCanonicalEvent | Hex,
+  eventIndex?: number,
+  inputScope?: RegistryEventScopeInput,
+): string {
+  const event = typeof eventOrTxHash === "object" ? eventOrTxHash : null;
+  const txHash = event ? event.txHash : (eventOrTxHash as Hex);
+  const index = event ? event.eventIndex : eventIndex;
+  if (index === undefined) throw new Error("event_key_missing_index");
+  const scope = event ? eventScope(event) : inputScope ? normalizeRegistryEventScope(inputScope) : null;
+  const prefix = scope ? `${scopeKey(scope)}:` : "";
+  return `${prefix}${txHash.toLowerCase()}:${index}`;
 }
 
 function bindingKey(prismId: string, venue: string, executionAccount: string): string {
   return `${prismId}|${venue}|${executionAccount.toLowerCase()}`;
 }
 
-export function emptyProjection(): ProjectionState {
+export function emptyProjection(scopeInput?: RegistryEventScopeInput): ProjectionState {
   return {
     identities: new Map(),
     bindings: new Map(),
     seenKeys: new Set(),
     watermark: null,
+    scope: scopeInput ? normalizeRegistryEventScope(scopeInput) : null,
   };
 }
 
@@ -112,7 +223,17 @@ export function applyEvent(
   state: ProjectionState,
   event: RegistryCanonicalEvent,
 ): ApplyResult {
-  const key = eventKey(event.txHash, event.eventIndex);
+  let incomingScope: RegistryEventScope | null;
+  try {
+    incomingScope = eventScope(event);
+  } catch (cause) {
+    return { state, isDuplicate: false, error: cause instanceof Error ? cause.message : "malformed_event_scope" };
+  }
+  if (state.scope && (!incomingScope || !scopeMatches(state.scope, incomingScope))) {
+    return { state, isDuplicate: false, error: "event_scope_mismatch" };
+  }
+  const nextScope = state.scope ?? incomingScope;
+  const key = eventKey(event);
   if (state.seenKeys.has(key)) {
     return { state, isDuplicate: true, duplicateKey: key };
   }
@@ -140,7 +261,7 @@ export function applyEvent(
     // Uniqueness: prism_id once ever — duplicate creation attempt is idempotent (first wins)
     if (state.identities.has(p.prismId)) {
       return {
-        state: { ...state, seenKeys: nextSeen, watermark },
+        state: { ...state, scope: nextScope, seenKeys: nextSeen, watermark },
         isDuplicate: false,
       };
     }
@@ -152,7 +273,7 @@ export function applyEvent(
       version: 0,
     });
     return {
-      state: { identities: nextIdentities, bindings: state.bindings, seenKeys: nextSeen, watermark },
+      state: { identities: nextIdentities, bindings: state.bindings, seenKeys: nextSeen, watermark, scope: nextScope },
       isDuplicate: false,
     };
   }
@@ -174,7 +295,7 @@ export function applyEvent(
     if (existing && existing.status === "ACTIVE") {
       // Duplicate ACTIVE bind — already active, treat as idempotent duplicate (no state change beyond seenKeys)
       return {
-        state: { ...state, seenKeys: nextSeen, watermark },
+        state: { ...state, scope: nextScope, seenKeys: nextSeen, watermark },
         isDuplicate: false,
       };
     }
@@ -188,7 +309,7 @@ export function applyEvent(
       proofDigest: p.proofDigest,
     });
     return {
-      state: { identities: state.identities, bindings: nextBindings, seenKeys: nextSeen, watermark },
+      state: { identities: state.identities, bindings: nextBindings, seenKeys: nextSeen, watermark, scope: nextScope },
       isDuplicate: false,
     };
   }
@@ -222,7 +343,7 @@ export function applyEvent(
       });
     }
     return {
-      state: { identities: state.identities, bindings: nextBindings, seenKeys: nextSeen, watermark },
+      state: { identities: state.identities, bindings: nextBindings, seenKeys: nextSeen, watermark, scope: nextScope },
       isDuplicate: false,
     };
   }
@@ -236,6 +357,10 @@ export function applyEvent(
  * reconstructs complete state.
  */
 export function reconstruct(events: readonly RegistryCanonicalEvent[]): ProjectionState {
+  const scopes = events.map((event) => eventScope(event)).filter((scope): scope is RegistryEventScope => scope !== null);
+  if (scopes.length > 1 && scopes.some((scope) => !scopeMatches(scope, scopes[0]))) {
+    throw new Error("event_scope_mismatch");
+  }
   const sorted = [...events].sort((a, b) => {
     if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
     if (a.txHash.toLowerCase() !== b.txHash.toLowerCase()) {
@@ -243,10 +368,11 @@ export function reconstruct(events: readonly RegistryCanonicalEvent[]): Projecti
     }
     return a.eventIndex - b.eventIndex;
   });
-  let state = emptyProjection();
+  let state = emptyProjection(scopes[0] ?? undefined);
   for (const ev of sorted) {
     const result = applyEvent(state, ev);
-    // Duplicate keys are benign; errors are treated as skipped (audit would log)
+    if (result.error === "event_scope_mismatch") throw new Error(result.error);
+    // Duplicate keys are benign; malformed payloads are treated as skipped (audit would log)
     if (!result.error) state = result.state;
   }
   return state;
