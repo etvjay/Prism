@@ -106,6 +106,9 @@ CREATE TABLE IF NOT EXISTS pause_decisions (
   expires_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_pause_decisions_pause_id ON pause_decisions(pause_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pause_decisions_approval_replay
+  ON pause_decisions(pause_id, kind, plan_hash)
+  WHERE kind IN ('RELEASE','APPROVE');
 `;
 
 export type PostgresPauseStoreErrorCode =
@@ -409,42 +412,110 @@ export class PostgresPauseStore implements PauseStore {
 
   async appendDecision(decision: PauseDecision): Promise<PauseDecision> {
     this.assertOpen();
-    // replay guard: SELECT existing same kind+planHash
+    let client: PoolClient;
     try {
-      const existing = await this.pool.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
-      if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
-      await this.pool.query(
-        `INSERT INTO pause_decisions (decision_id, pause_id, kind, actor, policy_version, plan_hash, approval_scope_hash, reason_codes_json, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [decision.decisionId, decision.pauseId, decision.kind, decision.actor, decision.policyVersion, decision.planHash, decision.approvalScopeHash ?? null, JSON.stringify(decision.reasonCodes), decision.createdAt, decision.expiresAt ?? null],
-      );
-      // also append to pause decisionIds_json atomically via update (caller will also update pause version)
-      // We do not bump version here; caller does via updatePause.
-      await this.pool.query(`UPDATE execution_pauses SET decision_ids_json = (SELECT jsonb_agg(elem) FROM (SELECT jsonb_array_elements_text(decision_ids_json::jsonb) AS elem UNION ALL SELECT $2) s)::text WHERE pause_id=$1`, [decision.pauseId, decision.decisionId]).catch(()=>undefined);
+      client = await this.pool.connect();
+    } catch (cause) {
+      throw new PostgresPauseStoreError("store_connect_failed", "appendDecision cannot acquire connection", cause);
+    }
+
+    try {
+      await client.query("BEGIN");
+      try {
+        const pause = await client.query(`SELECT pause_id FROM execution_pauses WHERE pause_id=$1 FOR UPDATE`, [decision.pauseId]);
+        if (!pause.rowCount) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, decision.pauseId);
+        const existing = await client.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
+        if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
+        await client.query(
+          `INSERT INTO pause_decisions (decision_id, pause_id, kind, actor, policy_version, plan_hash, approval_scope_hash, reason_codes_json, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [decision.decisionId, decision.pauseId, decision.kind, decision.actor, decision.policyVersion, decision.planHash, decision.approvalScopeHash ?? null, JSON.stringify(decision.reasonCodes), decision.createdAt, decision.expiresAt ?? null],
+        );
+        // Keep the row metadata mirror in the same transaction as the append.
+        // JSONB concatenation preserves the existing append order.
+        const metadata = await client.query(
+          `UPDATE execution_pauses SET decision_ids_json = (decision_ids_json::jsonb || jsonb_build_array($2::text))::text WHERE pause_id=$1`,
+          [decision.pauseId, decision.decisionId],
+        );
+        if (metadata.rowCount !== 1) throw new PostgresPauseStoreError("store_write_failed", "appendDecision metadata update affected no pause row");
+        await client.query("COMMIT");
+      } catch (inner) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (rollbackCause) {
+          throw new PostgresPauseStoreError("store_write_failed", "appendDecision rollback failed", rollbackCause);
+        }
+        throw inner;
+      }
       return decision;
     } catch (cause) {
       if (cause instanceof PauseError) throw cause;
       if (isUniqueViolation(cause)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
+      if (cause instanceof PostgresPauseStoreError) throw cause;
       throw new PostgresPauseStoreError("store_write_failed","appendDecision failed",cause);
-    }
+    } finally { client.release(); }
   }
 
   async getDecisions(pauseId: string): Promise<readonly PauseDecision[]> {
     this.assertOpen();
     try {
-      const r = await this.pool.query(`SELECT * FROM pause_decisions WHERE pause_id=$1 ORDER BY created_at ASC`,[pauseId]);
-      return r.rows.map((row)=> ({
-        decisionId: (row as Record<string, unknown>).decision_id as string,
-        pauseId: (row as Record<string, unknown>).pause_id as string,
-        kind: (row as Record<string, unknown>).kind as PauseDecision["kind"],
-        actor: (row as Record<string, unknown>).actor as string,
-        policyVersion: (row as Record<string, unknown>).policy_version as string,
-        planHash: (row as Record<string, unknown>).plan_hash as Hex,
-        approvalScopeHash: ((row as Record<string, unknown>).approval_scope_hash as Hex | null) ?? null,
-        reasonCodes: JSON.parse(((row as Record<string, unknown>).reason_codes_json as string) ?? "[]") as string[],
-        createdAt: Number((row as Record<string, unknown>).created_at),
-        expiresAt: (row as Record<string, unknown>).expires_at === null ? null : Number((row as Record<string, unknown>).expires_at),
-      }));
-    } catch (cause) { throw new PostgresPauseStoreError("store_read_failed","getDecisions failed",cause); }
+      const r = await this.pool.query(
+        `SELECT
+           p.pause_id AS metadata_pause_id,
+           jsonb_array_length(p.decision_ids_json::jsonb) AS metadata_count,
+           (SELECT COUNT(*) FROM pause_decisions all_decisions WHERE all_decisions.pause_id=p.pause_id) AS decision_count,
+           ids.decision_id AS metadata_decision_id,
+           ids.ordinality AS decision_ordinal,
+           d.decision_id,
+           d.pause_id,
+           d.kind,
+           d.actor,
+           d.policy_version,
+           d.plan_hash,
+           d.approval_scope_hash,
+           d.reason_codes_json,
+           d.created_at,
+           d.expires_at
+         FROM execution_pauses p
+         LEFT JOIN LATERAL jsonb_array_elements_text(p.decision_ids_json::jsonb) WITH ORDINALITY AS ids(decision_id, ordinality) ON TRUE
+         LEFT JOIN pause_decisions d ON d.pause_id=p.pause_id AND d.decision_id=ids.decision_id
+         WHERE p.pause_id=$1
+         ORDER BY ids.ordinality ASC`,
+        [pauseId],
+      );
+      if (!r.rowCount || r.rowCount === 0) return [];
+
+      const first = r.rows[0] as Record<string, unknown>;
+      const metadataCount = Number(first.metadata_count);
+      const decisionCount = Number(first.decision_count);
+      if (!Number.isInteger(metadataCount) || !Number.isInteger(decisionCount) || metadataCount !== decisionCount) {
+        throw new PostgresPauseStoreError("store_read_failed", "decision history metadata count mismatch");
+      }
+
+      const decisions: PauseDecision[] = [];
+      for (const raw of r.rows) {
+        const row = raw as Record<string, unknown>;
+        const metadataDecisionId = (row.metadata_decision_id as string | null) ?? null;
+        if (metadataDecisionId === null) continue;
+        if (row.decision_id !== metadataDecisionId) throw new PostgresPauseStoreError("store_read_failed", "decision history metadata row mismatch");
+        decisions.push({
+          decisionId: row.decision_id as string,
+          pauseId: row.pause_id as string,
+          kind: row.kind as PauseDecision["kind"],
+          actor: row.actor as string,
+          policyVersion: row.policy_version as string,
+          planHash: row.plan_hash as Hex,
+          approvalScopeHash: (row.approval_scope_hash as Hex | null) ?? null,
+          reasonCodes: JSON.parse((row.reason_codes_json as string) ?? "[]") as string[],
+          createdAt: Number(row.created_at),
+          expiresAt: row.expires_at === null ? null : Number(row.expires_at),
+        });
+      }
+      if (decisions.length !== decisionCount) throw new PostgresPauseStoreError("store_read_failed", "decision history metadata row count mismatch");
+      return decisions;
+    } catch (cause) {
+      if (cause instanceof PostgresPauseStoreError) throw cause;
+      throw new PostgresPauseStoreError("store_read_failed","getDecisions failed",cause);
+    }
   }
 
   async close(): Promise<void> { if (this.closed) return; this.closed=true; try{ await this.pool.end(); } catch{} }
