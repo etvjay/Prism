@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { StarknetSubmitAdapterV2 } from "../adapters/starknet-submit-v2";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 const ACCOUNT = "0x111";
 const REGISTRY = "0x67b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
+const EXECUTION_ACCOUNT = normalizeStarknetContractAddress("0xabc");
 
 function account(calls: Array<unknown[]>) {
   return {
@@ -30,7 +32,7 @@ describe("StarknetSubmitAdapterV2", () => {
     expect(calls[0]).toEqual([
       "0x1",
       "BASE",
-      "0xabc",
+      EXECUTION_ACCOUNT,
       "0x00000000000000000000000000000042",
       "0x1234567890abcdef1234567890abcdef",
     ]);
@@ -70,6 +72,18 @@ describe("StarknetSubmitAdapterV2", () => {
       registryAddress: REGISTRY,
     });
     await expect(adapter.submitBind({ operationId: "op", prismId: "prism:1", venue: "BASE", executionAccount: "0xabc", controllerAddress: ACCOUNT, proofDigest: `0x${"1".repeat(64)}` as never })).rejects.toMatchObject({ code: "ERR-007" });
+  });
+
+  it("marks an unclassified execute failure as ambiguous rather than retryable", async () => {
+    const adapter = new StarknetSubmitAdapterV2({
+      account: { address: ACCOUNT, execute: async () => { throw new Error("transport reset after broadcast"); } },
+      registryAddress: REGISTRY,
+    });
+    await expect(adapter.submitCreateIdentity({ operationId: "op-ambiguous", controllerAddress: ACCOUNT })).rejects.toMatchObject({
+      code: "ERR-021",
+      ambiguous: true,
+      terminal: false,
+    });
   });
 
   it("does not route V2 through the V1 felt-mask function", async () => {

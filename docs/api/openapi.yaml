@@ -88,7 +88,7 @@ components:
       type: object
       required: [controllerAddress]
       properties:
-        controllerAddress: { type: string, description: Starknet controller 0x hex }
+        controllerAddress: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$", example: "0x0000000000000000000000000000000000000000000000000000000000001234", description: "Nonzero Starknet ContractAddress; short/uppercase input is normalized at the boundary." }
         kind: { type: string, example: create_identity }
         session: { type: object }
         correlationId: { type: string, nullable: true }
@@ -99,9 +99,9 @@ components:
       required: [venue, executionAccount, proofDigest, controllerAddress]
       properties:
         venue: { type: string, enum: [BASE], example: BASE }
-        executionAccount: { type: string, example: "0x83a..." }
+        executionAccount: { type: string, pattern: "^0x[0-9a-fA-F]{40}$", example: "0x1111111111111111111111111111111111111111" }
         proofDigest: { type: string, pattern: "^0x[0-9a-fA-F]{64}$" }
-        controllerAddress: { type: string }
+        controllerAddress: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$", example: "0x0000000000000000000000000000000000000000000000000000000000001234" }
         session: { type: object }
         expectedVersion: { type: integer, nullable: true }
 
@@ -110,15 +110,15 @@ components:
       required: [venue, executionAccount, controllerAddress]
       properties:
         venue: { type: string, enum: [BASE] }
-        executionAccount: { type: string }
-        controllerAddress: { type: string }
+        executionAccount: { type: string, pattern: "^0x[0-9a-fA-F]{40}$", example: "0x1111111111111111111111111111111111111111" }
+        controllerAddress: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$", example: "0x0000000000000000000000000000000000000000000000000000000000001234" }
         session: { type: object }
 
     IntentRequest:
       type: object
       required: [prismId, purpose]
       properties:
-        prismId: { type: string, example: "prism:P7F21" }
+        prismId: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1", description: "Canonical decimal Prism ID; Starknet calldata maps it to a felt." }
         purpose: { type: string, enum: [payment, transfer, contract_call, private_action, other] }
         venue: { type: string, nullable: true }
         executionAccount: { type: string, nullable: true }
@@ -172,7 +172,7 @@ paths:
         - name: prismId
           in: path
           required: true
-          schema: { type: string }
+          schema: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1" }
         - $ref: '#/components/parameters/RequestId'
       responses:
         '200':
@@ -196,7 +196,7 @@ paths:
         - name: prismId
           in: path
           required: true
-          schema: { type: string }
+          schema: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1" }
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/CorrelationId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -218,7 +218,7 @@ paths:
         - name: prismId
           in: path
           required: true
-          schema: { type: string }
+          schema: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1" }
         - name: bindingId
           in: path
           required: true
@@ -242,7 +242,7 @@ paths:
         - name: identifier
           in: path
           required: true
-          schema: { type: string }
+          schema: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1" }
         - name: venue
           in: query
           required: true

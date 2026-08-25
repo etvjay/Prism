@@ -6,6 +6,7 @@
 // - Otherwise (dev/test without URL) → in-memory adapters for isolated tests only.
 
 import { fixedClock } from "../features/prism-identity/adapters/clock";
+import { normalizeStarknetContractAddress } from "../features/prism-identity/domain/starknet-boundary";
 import { InMemoryOwnershipProofStore } from "../features/prism-identity/adapters/memory-ownership-proof-store";
 import { PostgresOwnershipProofStore } from "../features/prism-identity/adapters/postgres-ownership-proof-store";
 import { viemChallengeCrypto } from "../features/prism-identity/adapters/viem-crypto";
@@ -218,8 +219,13 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string; 
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_read_config_incomplete");
   }
   if (!isStarknetRpcUrlValid(rpcUrl)) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_rpc_url");
-  if (!/^0x[0-9a-f]{1,64}$/i.test(registryAddress.trim())) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_address");
-  return { rpcUrl, registryAddress, network: getStarknetNetwork() };
+  let normalizedRegistryAddress: string;
+  try {
+    normalizedRegistryAddress = normalizeStarknetContractAddress(registryAddress, "registryAddress");
+  } catch {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_address");
+  }
+  return { rpcUrl, registryAddress: normalizedRegistryAddress, network: getStarknetNetwork() };
 }
 
 function getStarknetRegistryVersion(): StarknetRegistryVersion {
@@ -237,21 +243,15 @@ function assertSubmitPortAbiVersion(submitPort: StarknetSubmitPort | undefined, 
   }
 }
 
-const STARKNET_CONTRACT_ADDRESS_LIMIT = 1n << 251n;
-
 function normalizeRegistryAddress(value: unknown, missingMessage: string, invalidMessage: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, missingMessage);
   }
-  const normalized = value.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{1,64}$/.test(normalized)) {
+  try {
+    return normalizeStarknetContractAddress(value, "registryAddress");
+  } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, invalidMessage);
   }
-  const numeric = BigInt(normalized);
-  if (numeric === 0n || numeric >= STARKNET_CONTRACT_ADDRESS_LIMIT) {
-    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, invalidMessage);
-  }
-  return normalized;
 }
 
 function assertSubmitPortRegistryAddress(

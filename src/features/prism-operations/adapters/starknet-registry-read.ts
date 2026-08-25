@@ -11,6 +11,7 @@
 import type { Hex } from "../domain/operation";
 import type { RegistryReadPort } from "../../../application/ports";
 import { prismIdToRegistryFelt } from "../../prism-identity/domain/felt-digest";
+import { normalizeStarknetContractAddress, StarknetContractAddressError } from "../../prism-identity/domain/starknet-boundary";
 
 export interface StarknetCallReader {
   callContract(
@@ -35,31 +36,12 @@ export class StarknetRegistryReadError extends Error {
   }
 }
 
-const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
-
-function assertHexAddress(value: string, label: string): string {
-  const trimmed = value.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{1,64}$/.test(trimmed)) {
-    throw new StarknetRegistryReadError("ERR-002", `malformed_address:${label}:${value}`);
-  }
-  const numeric = BigInt(trimmed);
-  if (numeric === 0n || numeric >= CONTRACT_ADDRESS_LIMIT) {
-    throw new StarknetRegistryReadError("ERR-002", `address_out_of_range:${label}:${value}`);
-  }
-  return trimmed;
-}
-
-function normalizeController(raw: string): string {
-  // Starknet ContractAddress felt: normalize to 0x + 64 hex padded lower
-  const v = raw.trim().toLowerCase();
-  if (!v.startsWith("0x")) return raw;
+function assertContractAddress(value: unknown, label: string): string {
   try {
-    const n = BigInt(v);
-    if (n === 0n || n >= CONTRACT_ADDRESS_LIMIT) throw new StarknetRegistryReadError("ERR-002", `address_out_of_range:controller:${raw}`);
-    return `0x${n.toString(16).padStart(64, "0")}`;
+    return normalizeStarknetContractAddress(value, label);
   } catch (cause) {
-    if (cause instanceof StarknetRegistryReadError) throw cause;
-    throw new StarknetRegistryReadError("ERR-002", `malformed_controller:${raw}`);
+    const reason = cause instanceof StarknetContractAddressError ? cause.reason : "malformed";
+    throw new StarknetRegistryReadError("ERR-002", `${reason === "malformed" ? "malformed" : "address_out_of_range"}_address:${label}:${String(value)}`, cause);
   }
 }
 
@@ -71,7 +53,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     if (!options.reader || typeof options.reader.callContract !== "function") {
       throw new Error("invariant_violation: StarknetRegistryReadAdapter requires injected reader.callContract");
     }
-    this.registryAddress = assertHexAddress(options.registryAddress, "registryAddress");
+    this.registryAddress = assertContractAddress(options.registryAddress, "registryAddress");
     this.reader = options.reader;
   }
 
@@ -109,7 +91,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
       // Some Cairo versions encode Option as bare struct without tag when Some
       // (controller, created_at_block, version).
       if (result.length === 3) {
-        const controller = normalizeController(result[0]);
+        const controller = assertContractAddress(result[0], "controller");
         const createdAtBlock = Number(result[1]);
         const version = Number(result[2]);
         if (!Number.isFinite(createdAtBlock) || !Number.isFinite(version)) {
@@ -126,7 +108,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     if (result.length < 4) {
       throw new StarknetRegistryReadError("ERR-023", `malformed_get_identity_some_short:${JSON.stringify(result).slice(0, 200)}`);
     }
-    const controller = normalizeController(result[1]);
+    const controller = assertContractAddress(result[1], "controller");
     const createdAtBlock = Number(result[2]);
     const version = Number(result[3]);
     if (!Number.isFinite(createdAtBlock) || !Number.isFinite(version)) {
@@ -173,8 +155,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     }
     if (tag === "0x0" || tag === "0") {
       if (result.length < 2) throw new StarknetRegistryReadError("ERR-023", `malformed_resolve_active_short:${JSON.stringify(result).slice(0, 200)}`);
-      const acct = normalizeController(result[1]);
-      if (!/^0x[0-9a-f]{1,64}$/.test(acct)) throw new StarknetRegistryReadError("ERR-002", `malformed_execution_account:${acct}`);
+      const acct = assertContractAddress(result[1], "executionAccount");
       return { executionAccount: acct, watermark: 0 };
     }
     throw new StarknetRegistryReadError("ERR-023", `malformed_resolve_tag:${tag}`);
@@ -187,7 +168,7 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     // sentinel cannot distinguish this account being missing from being
     // REVOKED. Do not invent a storage read, selector, or serialization, and
     // do not turn that ambiguity into null or REVOKED.
-    assertHexAddress(executionAccount, "executionAccount");
+    assertContractAddress(executionAccount, "executionAccount");
     if (venue.toUpperCase() !== "BASE") {
       throw new StarknetRegistryReadError("ERR-001", `invalid_venue:${venue}`);
     }

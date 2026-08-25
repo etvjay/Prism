@@ -18,6 +18,7 @@
 import type { Hex } from "../prism-identity/domain/hex";
 import type { EvmAddress } from "../prism-identity/domain/identifiers";
 import { toFieldBoundedDigest, prismIdToRegistryFelt, FELT_PRIME, DIGEST_MASK_250 } from "../prism-identity/domain/felt-digest";
+import { normalizeStarknetContractAddress, sameStarknetContractAddress, StarknetContractAddressError } from "../prism-identity/domain/starknet-boundary";
 import { toU256Calldata } from "../prism-identity/domain/u256-digest";
 import type { Clock } from "../prism-identity/domain/ports";
 import { PrismChallengeService } from "../prism-identity/application/challenge-service";
@@ -127,18 +128,22 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
   if (exec === "0x0000000000000000000000000000000000000000") {
     throw new Error(`M3_CONFIG_BLOCKED: zero executionAccount`);
   }
-  const ctrl = input.controllerAddress.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{1,64}$/.test(ctrl)) {
-    throw new Error(`M3_CONFIG_BLOCKED: malformed controllerAddress ${input.controllerAddress}`);
+  let normalizedControllerAddress: string;
+  try {
+    normalizedControllerAddress = normalizeStarknetContractAddress(input.controllerAddress, "controllerAddress");
+  } catch (cause) {
+    const reason = cause instanceof StarknetContractAddressError ? cause.reason : "malformed";
+    throw new Error(`M3_CONFIG_BLOCKED: ${reason === "malformed" ? "malformed controllerAddress" : "controllerAddress outside ContractAddress range"} ${input.controllerAddress}`);
   }
-  if (BigInt(ctrl) === 0n || BigInt(ctrl) >= (1n << 251n)) {
-    throw new Error(`M3_CONFIG_BLOCKED: controllerAddress outside ContractAddress range`);
-  }
-  if (input.registryAddress) {
-    const reg = input.registryAddress.trim().toLowerCase();
-    if (!/^0x[0-9a-f]{1,64}$/.test(reg)) throw new Error(`M3_CONFIG_BLOCKED: malformed registryAddress ${input.registryAddress}`);
-    if (BigInt(reg) === 0n || BigInt(reg) >= (1n << 251n)) throw new Error(`M3_CONFIG_BLOCKED: registryAddress outside ContractAddress range`);
-    if (reg === ctrl) throw new Error(`M3_CONFIG_BLOCKED: controller must not equal registry`);
+  let normalizedRegistryAddress: string | undefined;
+  if (input.registryAddress !== undefined) {
+    try {
+      normalizedRegistryAddress = normalizeStarknetContractAddress(input.registryAddress, "registryAddress");
+    } catch (cause) {
+      const reason = cause instanceof StarknetContractAddressError ? cause.reason : "malformed";
+      throw new Error(`M3_CONFIG_BLOCKED: ${reason === "malformed" ? "malformed registryAddress" : "registryAddress outside ContractAddress range"} ${input.registryAddress}`);
+    }
+    if (sameStarknetContractAddress(normalizedRegistryAddress, normalizedControllerAddress)) throw new Error(`M3_CONFIG_BLOCKED: controller must not equal registry`);
   }
   const versionRaw = input.registryVersion ?? (input.liveRequested ? undefined : "v1");
   if (!versionRaw) throw new Error("M3_CONFIG_BLOCKED: registryVersion required for live");
@@ -150,7 +155,8 @@ export function validateM3PublicConfig(input: M3RunnerPublicConfig, manifestChai
     venue,
     normalizedDomain: domain,
     normalizedExecutionAccount: exec as EvmAddress,
-    normalizedControllerAddress: ctrl,
+    normalizedControllerAddress,
+    ...(normalizedRegistryAddress ? { registryAddress: normalizedRegistryAddress } : {}),
     registryFeltPrismId,
   };
 }

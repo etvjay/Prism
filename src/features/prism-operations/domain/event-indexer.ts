@@ -15,6 +15,7 @@
 // Ordering: (block_number, tx_hash, event_index) — chain order.
 
 import type { Hex } from "./operation";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 export type RegistryEventKind =
   | "PrismIdentityCreated"
@@ -106,17 +107,10 @@ export interface ProjectionState {
   readonly scope: RegistryEventScope | null;
 }
 
-const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
-
 export function normalizeRegistryEventScope(input: RegistryEventScopeInput): RegistryEventScope {
-  if (!input || typeof input.registryAddress !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(input.registryAddress.trim())) {
-    throw new Error("event_scope_invalid_registry_address");
-  }
   let address: string;
   try {
-    const value = BigInt(input.registryAddress.trim());
-    if (value <= 0n || value >= CONTRACT_ADDRESS_LIMIT) throw new Error("invalid_address_range");
-    address = `0x${value.toString(16)}`;
+    address = normalizeStarknetContractAddress(input?.registryAddress, "registryAddress");
   } catch {
     throw new Error("event_scope_invalid_registry_address");
   }

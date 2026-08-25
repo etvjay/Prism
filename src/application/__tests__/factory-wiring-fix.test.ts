@@ -13,6 +13,7 @@ import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapter
 import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory, assertChainTouchingConfiguredForFactory } from "../factory";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
+import { normalizeStarknetContractAddress } from "../../features/prism-identity/domain/starknet-boundary";
 
 const REGISTRY = "0x1111";
 const CONTROLLER = "0x2222";
@@ -425,7 +426,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       });
       expect(factory.submitPort).toBe(v2);
       expect(factory.submitPort.registryVersion).toBe("v2");
-      expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(REGISTRY);
+      expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(normalizeStarknetContractAddress(REGISTRY));
     });
   });
 

@@ -34,6 +34,7 @@ import type { Clock } from "../features/prism-identity/domain/ports";
 import { PrismChallengeService } from "../features/prism-identity/application/challenge-service";
 import { assertValidPrismId, assertSupportedVenue, assertValidExecutionAccount } from "../features/prism-identity/domain/identifiers";
 import { toFieldBoundedDigest } from "../features/prism-identity/domain/felt-digest";
+import { normalizeStarknetContractAddress, sameStarknetContractAddress, StarknetContractAddressError } from "../features/prism-identity/domain/starknet-boundary";
 import { OperationError } from "../features/prism-operations/domain/errors";
 import { PrismError } from "../features/prism-identity/domain/errors";
 
@@ -63,10 +64,12 @@ function fingerprintFor(payload: unknown): string {
 }
 
 function normalizeStarknetAddress(value: string): string {
-  // Minimal Starknet address normalization: 0x + hex, lowercase.
-  const trimmed = value.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{1,64}$/.test(trimmed)) throw new AppError(APP_ERROR_CODE.INVALID_EXECUTION_ACCOUNT, "malformed_starknet_address");
-  return trimmed;
+  try {
+    return normalizeStarknetContractAddress(value, "starknetAddress");
+  } catch (cause) {
+    const reason = cause instanceof StarknetContractAddressError ? cause.reason : "malformed";
+    throw new AppError(APP_ERROR_CODE.INVALID_EXECUTION_ACCOUNT, `${reason === "malformed" ? "malformed" : "invalid"}_starknet_address`);
+  }
 }
 
 type RetrySubmission =
@@ -276,7 +279,8 @@ export class PrismApplicationService {
       const identity = await this.deps.registry.getIdentity(prismId);
       if (!identity) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `identity_not_found:${prismId}`);
       // - controller must match (ERR-004) — never infer from session.
-      if (identity.controller !== controllerAddress) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch:expected_${identity.controller}_got_${controllerAddress}`);
+      const identityController = normalizeStarknetAddress(identity.controller);
+      if (!sameStarknetContractAddress(identityController, controllerAddress)) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch:expected_${identityController}_got_${controllerAddress}`);
       // Digest replay boundary is versioned with the registry ABI. V1 uses
       // the legacy felt mask; V2 preserves the full u256 digest and lets the
       // exact V2 registry enforce onchain single-use.
@@ -357,7 +361,8 @@ export class PrismApplicationService {
 
       const identity = await this.deps.registry.getIdentity(prismId);
       if (!identity) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `identity_not_found:${prismId}`);
-      if (identity.controller !== controllerAddress) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch`);
+      const identityController = normalizeStarknetAddress(identity.controller);
+      if (!sameStarknetContractAddress(identityController, controllerAddress)) throw new AppError(APP_ERROR_CODE.NOT_CONTROLLER, `controller_mismatch`);
       const binding = await this.deps.registry.getBinding(prismId, venue, executionAccount);
       if (binding.status === null) throw new AppError(APP_ERROR_CODE.BINDING_NOT_FOUND, `binding_not_found:${prismId}:${venue}:${executionAccount}`);
       if (binding.status === "REVOKED") {
@@ -422,8 +427,10 @@ export class PrismApplicationService {
         return err({ code: APP_ERROR_CODE.IDENTITY_NOT_FOUND_READ, name: "identity_not_found_read", category: "not_found", retryable: "no", userAction: "n_a", httpStatusHint: 404, detail: `identity_not_found:${prismId}` }, requestId);
       }
       const result = await this.deps.registry.resolve(prismId, venue);
+      if (result.executionAccount !== null) normalizeStarknetAddress(result.executionAccount);
+      const executionAccount = result.executionAccount;
       return ok<ResolveData>(
-        { prismId, venue, executionAccount: result.executionAccount, exists: result.executionAccount !== null, watermark: result.watermark },
+        { prismId, venue, executionAccount, exists: executionAccount !== null, watermark: result.watermark },
         undefined,
         requestId,
         result.watermark,

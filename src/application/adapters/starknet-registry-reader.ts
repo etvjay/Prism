@@ -13,6 +13,7 @@ import {
   StarknetRegistryReadError,
 } from "../../features/prism-operations/adapters/starknet-registry-read";
 import type { StarknetCallReader } from "../../features/prism-operations/adapters/starknet-registry-read";
+import { normalizeStarknetContractAddress, isValidStarknetContractAddress } from "../../features/prism-identity/domain/starknet-boundary";
 
 export interface StarknetRegistryReaderOptions {
   rpcUrl: string;
@@ -29,19 +30,14 @@ export interface StarknetRegistryReaderRpc {
 // Re-export canonical error as legacy name so callers catching StarknetRegistryReaderError catch the same codes.
 export { StarknetRegistryReadError as StarknetRegistryReaderError };
 
-const CONTRACT_ADDRESS_LIMIT = 1n << 251n;
-
-function isValidContractAddress(value: string): boolean {
-  if (!/^0x[0-9a-f]{1,64}$/i.test(value.trim())) return false;
-  const n = BigInt(value.trim());
-  return n > 0n && n < CONTRACT_ADDRESS_LIMIT;
-}
-
 export class StarknetRegistryReader implements RegistryReadPort {
   private readonly delegate: StarknetRegistryReadAdapter;
 
   constructor(options: StarknetRegistryReaderOptions) {
-    if (!options.registryAddress || !isValidContractAddress(options.registryAddress)) {
+    let registryAddress: string;
+    try {
+      registryAddress = normalizeStarknetContractAddress(options.registryAddress, "registryAddress");
+    } catch {
       throw new StarknetRegistryReadError("ERR-002", `invalid_registry_address:${options.registryAddress}`);
     }
     if (!options.rpcUrl || !/^https?:\/\//i.test(options.rpcUrl.trim())) {
@@ -67,7 +63,7 @@ export class StarknetRegistryReader implements RegistryReadPort {
     } else {
       callReader = new RpcProvider({ nodeUrl: options.rpcUrl.trim() }) as unknown as StarknetCallReader;
     }
-    this.delegate = new StarknetRegistryReadAdapter({ reader: callReader, registryAddress: options.registryAddress });
+    this.delegate = new StarknetRegistryReadAdapter({ reader: callReader, registryAddress });
   }
 
   async getIdentity(prismId: string): Promise<{ controller: string; createdAtBlock: number; version: number } | null> {
@@ -105,7 +101,7 @@ export function isStarknetReadConfigured(): boolean {
   const addr = getStarknetRegistryAddress();
   if (!rpc || !addr) return false;
   if (!/^https?:\/\//i.test(rpc)) return false;
-  if (!/^0x[0-9a-f]{1,64}$/i.test(addr.trim())) return false;
+  if (!isValidStarknetContractAddress(addr)) return false;
   return true;
 }
 

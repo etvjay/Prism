@@ -5,6 +5,7 @@
 // No chain liveness is simulated beyond txHash generation.
 
 import type { Hex } from "../../features/prism-operations/domain/operation";
+import { sameStarknetContractAddress } from "../../features/prism-identity/domain/starknet-boundary";
 import type { RegistryReadPort, StarknetSubmitPort } from "../ports";
 
 // Felt-bounded digest mapping for consumed_digests parity with Starknet registry.
@@ -114,7 +115,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
       (err as unknown as { code?: string }).code = "ERR-002";
       throw err;
     }
-    if (identity.controller !== input.controllerAddress.toLowerCase()) {
+    if (!sameStarknetContractAddress(identity.controller, input.controllerAddress)) {
       const err = new Error("not_controller");
       (err as unknown as { code?: string }).code = "ERR-004";
       throw err;
@@ -151,7 +152,7 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
       (err as unknown as { code?: string }).code = "ERR-002";
       throw err;
     }
-    if (identity.controller !== input.controllerAddress.toLowerCase()) {
+    if (!sameStarknetContractAddress(identity.controller, input.controllerAddress)) {
       const err = new Error("not_controller");
       (err as unknown as { code?: string }).code = "ERR-004";
       throw err;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryPrismEventsStore } from "../adapters/postgres-prism-events-store";
 import type { RegistryCanonicalEvent, RegistryEventScopeInput } from "../domain/event-indexer";
 import type { Hex } from "../domain/operation";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 const TX: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TX_B: Hex = `0x${"b".repeat(64)}`;
@@ -32,7 +33,7 @@ describe("PrismEventsStore scoped correlation", () => {
     expect(await store.count(SCOPE_B_V1)).toBe(1);
     expect((await store.get(TX, 0, SCOPE_A_V1))?.registryVersion).toBe("v1");
     expect((await store.get(TX, 0, SCOPE_A_V2))?.registryVersion).toBe("v2");
-    expect((await store.get(TX, 0, SCOPE_B_V1))?.registryAddress).toBe(REGISTRY_B);
+    expect((await store.get(TX, 0, SCOPE_B_V1))?.registryAddress).toBe(normalizeStarknetContractAddress(REGISTRY_B));
   });
 
   it("fails closed instead of exposing an unscoped historical projection", async () => {

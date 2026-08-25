@@ -26,9 +26,11 @@ import { LocalErc1271SemanticsChecker, makeEoaSigner, presentedFromIssued, wrapA
 import { PrismChallengeService } from "../../prism-identity/application/challenge-service";
 import { InMemoryOperationStore } from "../../prism-operations/adapters/memory-operation-store";
 import { InMemoryRegistry } from "../../../application/adapters/in-memory-registry";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 const CONTROLLER = "0x1111111111111111111111111111111111111111";
 const REGISTRY = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const EXEC_ACCOUNT_CANONICAL = normalizeStarknetContractAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 const TX_HASH: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 // ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ describe("M3 gate — felt digest/prismId exact calldata (Starknet boundary)", (
     expect(captured![0]).toBe("0x1");
     expect(captured![3]).toBe(masked.toLowerCase());
     // Combined exact positions
-    expect(captured).toEqual(["0x1", "BASE", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", masked.toLowerCase()]);
+    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT_CANONICAL, masked.toLowerCase()]);
   });
 
   it("submitted!=completed: adapter never returns completed, only txHash; app stores submitted", async () => {

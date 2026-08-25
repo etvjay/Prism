@@ -20,10 +20,13 @@ import { WatermarkedResolveService, StaleCacheError } from "../domain/resolve-se
 import { emptyProjection, applyEvent } from "../domain/event-indexer";
 import type { ChainTxObservation, IndexerObservation } from "../domain/ports";
 import type { RegistryReadPort } from "../../../application/ports";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 // Shared constants — X2, injected fakes only, no live RPC
 const REGISTRY = "0x1111111111111111111111111111111111111111";
 const ACCOUNT_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const REGISTRY_CANONICAL = normalizeStarknetContractAddress(REGISTRY);
+const ACCOUNT_ADDR_CANONICAL = normalizeStarknetContractAddress(ACCOUNT_ADDR);
 const TX_A: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TX_B: Hex = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TX_C: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -65,7 +68,7 @@ describe("Bundle 2R Live — env validation (T8, AUDIT G2, SC-06)", () => {
   it("valid env with injected account validates via validateStarknetSubmitConfig", () => {
     const cfg = parseStarknetSubmitEnv({ STARKNET_RPC_URL: "https://rpc.example", STARKNET_REGISTRY_ADDRESS: REGISTRY }, { account: fakeAccount() });
     expect(cfg.rpcUrl).toBe("https://rpc.example");
-    expect(cfg.registryAddress).toBe(REGISTRY.toLowerCase());
+    expect(cfg.registryAddress).toBe(REGISTRY_CANONICAL);
   });
 
   it("no secret file read — adapter never imports fs (X2)", () => {
@@ -74,7 +77,7 @@ describe("Bundle 2R Live — env validation (T8, AUDIT G2, SC-06)", () => {
     expect(adapter).toBeDefined();
     // Ensure validate function does not read process.env implicitly
     const cfg = validateStarknetSubmitConfig({ registryAddress: REGISTRY, account: fakeAccount(), rpcUrl: "https://rpc.example" });
-    expect(cfg.accountAddress).toBe(ACCOUNT_ADDR);
+    expect(cfg.accountAddress).toBe(ACCOUNT_ADDR_CANONICAL);
   });
 });
 

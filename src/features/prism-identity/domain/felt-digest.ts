@@ -118,6 +118,9 @@ export function feltMatchesDigest(felt: Hex, digest: Hex): boolean {
  * map to stable catalogue codes without inventing a new encoding.
  */
 export function prismIdToRegistryFelt(prismId: string): Hex {
+  if (typeof (prismId as unknown) !== "string") {
+    throw new Error(`ERR-002: malformed_prism_id: non-string id: ${String(prismId)}`);
+  }
   const trimmed = prismId.trim();
   const prefix = "prism:";
   if (!trimmed.startsWith(prefix)) {

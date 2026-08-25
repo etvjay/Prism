@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { Hex } from "../domain/operation";
 import { StarknetSubmitAdapter, type StarknetAccountLike } from "../adapters/starknet-submit";
+import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
 
 const REGISTRY = "0x1111111111111111111111111111111111111111";
 const CONTROLLER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const EXEC_ACCOUNT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const REGISTRY_CANONICAL = normalizeStarknetContractAddress(REGISTRY);
+const EXEC_ACCOUNT_CANONICAL = normalizeStarknetContractAddress(EXEC_ACCOUNT);
 const DIGEST: Hex = "0x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex;
 const TX_HASH: Hex = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
@@ -24,7 +27,7 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
       execute: async (calls) => {
         called = true;
         expect(calls[0].entrypoint).toBe("create_identity");
-        expect(calls[0].contractAddress.toLowerCase()).toBe(REGISTRY);
+        expect(calls[0].contractAddress).toBe(REGISTRY_CANONICAL);
         return { transaction_hash: TX_HASH };
       },
     };
@@ -53,7 +56,7 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
       controllerAddress: CONTROLLER,
     });
     // calldata[0] is felt hex, not raw prism: string
-    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT, DIGEST.toLowerCase()]);
+    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT_CANONICAL, DIGEST.toLowerCase()]);
   });
 
   it("submitRevoke maps to revoke_binding calldata", async () => {
@@ -75,7 +78,7 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
       controllerAddress: CONTROLLER,
     });
     expect(entrypoint).toBe("revoke_binding");
-    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT]);
+    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT_CANONICAL]);
   });
 
   it("preserves submitted != completed — adapter never marks completed, only returns txHash", async () => {
@@ -124,6 +127,7 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
     const adapter = new StarknetSubmitAdapter({ account, registryAddress: REGISTRY });
     await expect(adapter.submitCreateIdentity({ operationId: "op-dep", controllerAddress: CONTROLLER })).rejects.toMatchObject({
       code: "ERR-021",
+      ambiguous: true,
     });
   });
 
@@ -221,10 +225,10 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
     });
     expect(captured![0]).toBe("0x1");
     expect(captured![1]).toBe("BASE");
-    expect(captured![2]).toBe(EXEC_ACCOUNT);
+    expect(captured![2]).toBe(EXEC_ACCOUNT_CANONICAL);
     expect(captured![3]).toBe(DIGEST.toLowerCase());
     // Exact positions: felt at 0 and 3
-    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT, DIGEST.toLowerCase()]);
+    expect(captured).toEqual(["0x1", "BASE", EXEC_ACCOUNT_CANONICAL, DIGEST.toLowerCase()]);
   });
 
   it("M3-X2 prismId fix: large decimal maps to hex felt correctly", async () => {
@@ -266,7 +270,7 @@ describe("StarknetSubmitAdapter — injected Account, no secret file reads", () 
     });
     expect(captured![0]).toBe("0x7b");
     expect(captured![1]).toBe("BASE");
-    expect(captured![2]).toBe(EXEC_ACCOUNT);
+    expect(captured![2]).toBe(EXEC_ACCOUNT_CANONICAL);
   });
 
   it("M3-X2 prismId malformed / non-numeric / negative / leading zeros rejected with ERR-002, never hash-repaired", async () => {
