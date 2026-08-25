@@ -138,9 +138,9 @@ function mapDomainPauseToRest(domainPause: DomainPause, correlationId: string | 
   };
 }
 
-function passingSources(): VerificationSources {
+function passingSources(observedRecipient = "0xabc"): VerificationSources {
   return {
-    recipientBinding: { status: "BOUND", observedValue: "0xabc" },
+    recipientBinding: { status: "BOUND", observedValue: observedRecipient },
     firstUse: { isFirstUse: false },
     agentAuthorized: { authorized: true },
     routeAllowed: { chainAllowed: true, assetAllowed: true, contractAllowed: true, notRevoked: true },
@@ -333,7 +333,7 @@ export class InMemoryPauseService implements PauseService {
       sources = opts.sources as VerificationSources;
     } else {
       const triggerUnknown = intent.requestedRecipient.toLowerCase().includes("unknown") || intent.requestedAsset.toLowerCase().includes("unknown") || plan.asset.toLowerCase().includes("unknown");
-      sources = triggerUnknown ? unknownSources() : passingSources();
+      sources = triggerUnknown ? unknownSources() : passingSources(intent.requestedRecipient);
     }
 
     const policy: Policy = {

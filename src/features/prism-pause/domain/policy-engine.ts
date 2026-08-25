@@ -40,9 +40,41 @@ export interface VerificationSources {
   readonly additionalApproval?: { requiresApproval: boolean | null; unknown?: boolean };
 }
 
-function parseDecimal(v: string): number {
-  const n = Number.parseFloat(v);
-  return n;
+interface ParsedDecimal {
+  readonly whole: string;
+  readonly fraction: string;
+}
+
+/** Parse only unsigned decimal strings; never coerce prefixes or exponents. */
+function parseDecimal(v: string): ParsedDecimal | null {
+  if (typeof v !== "string" || v.trim() !== v || !/^\d+(?:\.\d+)?$/.test(v)) return null;
+  const [whole, fraction = ""] = v.split(".");
+  return {
+    whole: whole.replace(/^0+(?=\d)/, ""),
+    fraction: fraction.replace(/0+$/, ""),
+  };
+}
+
+/** Exact decimal comparison without Number rounding. */
+function compareDecimals(left: ParsedDecimal, right: ParsedDecimal): -1 | 0 | 1 {
+  if (left.whole.length !== right.whole.length) return left.whole.length < right.whole.length ? -1 : 1;
+  if (left.whole !== right.whole) return left.whole < right.whole ? -1 : 1;
+  const fractionLength = Math.max(left.fraction.length, right.fraction.length);
+  const leftFraction = left.fraction.padEnd(fractionLength, "0");
+  const rightFraction = right.fraction.padEnd(fractionLength, "0");
+  if (leftFraction === rightFraction) return 0;
+  return leftFraction < rightFraction ? -1 : 1;
+}
+
+function normalizeRecipient(v: string | null): string | null {
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim();
+  if (trimmed.length === 0) return null;
+  if (/^0x/i.test(trimmed)) {
+    if (!/^0x[0-9a-fA-F]+$/i.test(trimmed)) return null;
+    return `0x${trimmed.slice(2).toLowerCase()}`;
+  }
+  return trimmed.toLowerCase();
 }
 
 export function evaluatePolicy(input: {
@@ -55,6 +87,7 @@ export function evaluatePolicy(input: {
 }): CheckResult[] {
   const { intent, plan, pause, policy, sources, now } = input;
   const checks: CheckResult[] = [];
+  const parsedRequestedAmount = parseDecimal(intent.requestedAmount);
 
   // PAUSE-IDENTITY-001 initiating principal maps to expected Prism ID — here we check principal non-empty and initiator validity (simplified product source: registry)
   checks.push(
@@ -77,8 +110,11 @@ export function evaluatePolicy(input: {
     if (!rb || rb.status === "UNKNOWN") {
       checks.push(makeCheck(CHECK_ID.RECIPIENT_BINDING, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_RESOLVE_FAIL, "registry", now, rb?.observedValue ?? null, intent.requestedRecipient));
     } else if (rb.status === "BOUND") {
-      checks.push(makeCheck(CHECK_ID.RECIPIENT_BINDING, "PASS", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_RESOLVE_FAIL, "registry", now, rb.observedValue, intent.requestedRecipient));
-      checks.push(makeCheck(CHECK_ID.RECIPIENT_BOUND, "PASS", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_NOT_BOUND_OR_REVOKED, "registry", now, rb.observedValue, "BOUND"));
+      const requestedRecipient = normalizeRecipient(intent.requestedRecipient);
+      const observedRecipient = normalizeRecipient(rb.observedValue);
+      const recipientMatches = requestedRecipient !== null && requestedRecipient === observedRecipient;
+      checks.push(makeCheck(CHECK_ID.RECIPIENT_BINDING, recipientMatches ? "PASS" : "FAIL", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_RESOLVE_FAIL, "registry", now, rb.observedValue, intent.requestedRecipient));
+      checks.push(makeCheck(CHECK_ID.RECIPIENT_BOUND, recipientMatches ? "PASS" : "FAIL", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_NOT_BOUND_OR_REVOKED, "registry", now, rb.observedValue, "BOUND"));
     } else if (rb.status === "REVOKED" || rb.status === "UNBOUND") {
       checks.push(makeCheck(CHECK_ID.RECIPIENT_BINDING, "FAIL", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_NOT_BOUND_OR_REVOKED, "registry", now, rb.observedValue, "BOUND"));
       checks.push(makeCheck(CHECK_ID.RECIPIENT_BOUND, "FAIL", "BLOCKING", PAUSE_REASON_CODE.RECIPIENT_NOT_BOUND_OR_REVOKED, "registry", now, rb.observedValue, "BOUND"));
@@ -98,14 +134,15 @@ export function evaluatePolicy(input: {
   {
     if (policy.amountCeiling !== null) {
       const max = parseDecimal(policy.amountCeiling);
-      const amt = parseDecimal(intent.requestedAmount);
-      if (!Number.isFinite(max) || !Number.isFinite(amt)) {
+      if (max === null || parsedRequestedAmount === null) {
         checks.push(makeCheck(CHECK_ID.AMOUNT_CEILING, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AMOUNT_CEILING, "policy", now, intent.requestedAmount, policy.amountCeiling));
-      } else if (amt > max) {
+      } else if (compareDecimals(parsedRequestedAmount, max) > 0) {
         checks.push(makeCheck(CHECK_ID.AMOUNT_CEILING, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AMOUNT_CEILING, "policy", now, intent.requestedAmount, policy.amountCeiling));
       } else {
         checks.push(makeCheck(CHECK_ID.AMOUNT_CEILING, "PASS", "BLOCKING", PAUSE_REASON_CODE.AMOUNT_CEILING, "policy", now, intent.requestedAmount, policy.amountCeiling));
       }
+    } else if (parsedRequestedAmount === null) {
+      checks.push(makeCheck(CHECK_ID.AMOUNT_CEILING, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AMOUNT_CEILING, "policy", now, intent.requestedAmount, "no_ceiling"));
     } else {
       checks.push(makeCheck(CHECK_ID.AMOUNT_CEILING, "PASS", "INFO", PAUSE_REASON_CODE.AMOUNT_CEILING, "policy", now, intent.requestedAmount, "no_ceiling"));
     }
@@ -136,7 +173,10 @@ export function evaluatePolicy(input: {
           // simplified: scope matches if chain/asset allowed and amount under ceiling
           const chainOk = scope.allowedChains.includes("*") || scope.allowedChains.includes(plan.chainId.toLowerCase());
           const assetOk = scope.allowedAssets.includes("*") || scope.allowedAssets.includes(plan.asset.toLowerCase());
-          const amtOk = scope.amountCeiling === null || parseDecimal(intent.requestedAmount) <= parseDecimal(scope.amountCeiling);
+          const scopeAmountCeiling = scope.amountCeiling === null ? null : parseDecimal(scope.amountCeiling);
+          const amtOk =
+            parsedRequestedAmount !== null &&
+            (scope.amountCeiling === null || (scopeAmountCeiling !== null && compareDecimals(parsedRequestedAmount, scopeAmountCeiling) <= 0));
           if (!chainOk || !assetOk || !amtOk) {
             checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, `${plan.chainId}:${plan.asset}:${intent.requestedAmount}`, `scope:${scope.agentId}`));
           } else {

@@ -5,6 +5,7 @@ import { createIntent } from "../domain/intent";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { createPause } from "../domain/pause";
 import { canAutoRelease, deriveRiskLevel } from "../domain/checks";
+import { PAUSE_REASON_CODE } from "../domain/errors";
 
 function basePolicy(): Policy {
   return {
@@ -18,7 +19,7 @@ function basePolicy(): Policy {
   };
 }
 
-function baseIntent() {
+function baseIntent(overrides: Partial<Parameters<typeof createIntent>[0]> = {}) {
   return createIntent({
     intentId: "intent_1",
     principal: "prism:alice",
@@ -32,6 +33,7 @@ function baseIntent() {
     expiresAt: 10_000,
     clientIdempotencyKey: "idem_1",
     policyVersion: "v1",
+    ...overrides,
   });
 }
 
@@ -76,6 +78,26 @@ describe("P3 typed checks and policy engine (fail-closed UNKNOWN)", () => {
     expect(canAutoRelease(checks)).toBe(false);
   });
 
+  it("BOUND recipient blocks when the observed value does not match the requested recipient", () => {
+    const sources: VerificationSources = { ...passingSources, recipientBinding: { status: "BOUND", observedValue: "0xdef" } };
+    const checks = evaluatePolicy({ intent: baseIntent(), plan: basePlan(), pause: basePause(), policy: basePolicy(), sources, now: 1500 });
+    const binding = checks.find(c => c.checkId === "PAUSE-RECIPIENT-001");
+    const bound = checks.find(c => c.checkId === "PAUSE-RECIPIENT-002");
+
+    expect(binding).toMatchObject({ status: "FAIL", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.RECIPIENT_RESOLVE_FAIL });
+    expect(bound).toMatchObject({ status: "FAIL", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.RECIPIENT_NOT_BOUND_OR_REVOKED });
+    expect(canAutoRelease(checks)).toBe(false);
+  });
+
+  it("recipient comparison uses canonical case and outer-whitespace normalization", () => {
+    const intent = baseIntent({ requestedRecipient: " 0xAbC " });
+    const sources: VerificationSources = { ...passingSources, recipientBinding: { status: "BOUND", observedValue: " 0XABC " } };
+    const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy: basePolicy(), sources, now: 1500 });
+
+    expect(checks.find(c => c.checkId === "PAUSE-RECIPIENT-001")?.status).toBe("PASS");
+    expect(checks.find(c => c.checkId === "PAUSE-RECIPIENT-002")?.status).toBe("PASS");
+  });
+
   it("first recipient escalates when configured", () => {
     const sources: VerificationSources = { ...passingSources, firstUse: { isFirstUse: true } };
     const checks = evaluatePolicy({ intent: baseIntent(), plan: basePlan(), pause: basePause(), policy: basePolicy(), sources, now: 1500 });
@@ -87,6 +109,42 @@ describe("P3 typed checks and policy engine (fail-closed UNKNOWN)", () => {
     const intent = createIntent({ intentId: "intent_1", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "2000", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 10_000, clientIdempotencyKey: "idem_1", policyVersion: "v1" });
     const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy: basePolicy(), sources: passingSources, now: 1500 });
     expect(checks.find(c=>c.checkId==="PAUSE-RISK-001")?.status).toBe("FAIL");
+  });
+
+  it.each(["-1", "1e2", "100abc", "1.", ".5"])("amount string %s never passes the ceiling check", (requestedAmount) => {
+    const intent = baseIntent({ requestedAmount });
+    const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy: basePolicy(), sources: passingSources, now: 1500 });
+    const amountCheck = checks.find(c => c.checkId === "PAUSE-RISK-001");
+
+    expect(amountCheck).toMatchObject({ severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AMOUNT_CEILING });
+    expect(amountCheck?.status).not.toBe("PASS");
+    expect(canAutoRelease(checks)).toBe(false);
+  });
+
+  it("rejects a precision-sensitive amount instead of allowing Number rounding to bypass the ceiling", () => {
+    const intent = baseIntent({ requestedAmount: "9007199254740993" });
+    const policy = { ...basePolicy(), amountCeiling: "9007199254740992" };
+    const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy, sources: passingSources, now: 1500 });
+
+    expect(checks.find(c => c.checkId === "PAUSE-RISK-001")).toMatchObject({ status: "FAIL", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AMOUNT_CEILING });
+    expect(canAutoRelease(checks)).toBe(false);
+  });
+
+  it("validates the requested amount even when no ceiling is configured", () => {
+    const intent = baseIntent({ requestedAmount: "-1" });
+    const policy = { ...basePolicy(), amountCeiling: null };
+    const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy, sources: passingSources, now: 1500 });
+
+    expect(checks.find(c => c.checkId === "PAUSE-RISK-001")).toMatchObject({ status: "UNKNOWN", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AMOUNT_CEILING });
+    expect(canAutoRelease(checks)).toBe(false);
+  });
+
+  it("agent scope uses the same exact amount validation", () => {
+    const intent = baseIntent({ initiator: "agent", agentId: "agent_1", requestedAmount: "1e2" });
+    const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy: basePolicy(), sources: passingSources, now: 1500 });
+
+    expect(checks.find(c => c.checkId === "PAUSE-AUTH-002")).toMatchObject({ status: "FAIL", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AGENT_SCOPE });
+    expect(canAutoRelease(checks)).toBe(false);
   });
 
   it("agent outside scope blocks", () => {

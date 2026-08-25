@@ -95,9 +95,10 @@ export class InMemoryOperationStore implements OperationStore {
             reconciliationWatermark: input.reconciliationWatermark !== undefined ? input.reconciliationWatermark : current.reconciliationWatermark,
             reconciliationMetadata: input.reconciliationMetadata !== undefined ? input.reconciliationMetadata : current.reconciliationMetadata,
             updatedAt: input.now,
+            version: current.version + 1,
           };
-          // Version stays same for idempotent watermark bump? Mirror postgres: watermark update does not bump version beyond idempotent path with version check.
-          // Keep version unchanged to preserve idempotent semantics.
+          // Same-state reconciliation facts are durable writes: match Postgres by
+          // advancing the version so a stale writer cannot overwrite them.
           this.byId.set(id, clone(updated));
           return clone(updated);
         }

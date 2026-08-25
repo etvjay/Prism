@@ -57,7 +57,9 @@ export interface TransitionOperationInput {
  *   transition(id, expectedVersion=V) succeeds only when current version === V.
  *   On mismatch it throws OperationError ERR-023 with "stale_version" detail,
  *   never silently overwrites (SYSTEM_FOUNDRY §18). The store increments
- *   version by exactly 1 on success and never on idempotent same-state.
+ *   version by exactly 1 on every changed write, including same-state
+ *   reconciliation watermark/metadata updates; unchanged idempotent
+ *   same-state reapplications do not increment version.
  */
 export interface OperationStore {
   /** Idempotent create. See idempotency rule above. */
@@ -74,8 +76,9 @@ export interface OperationStore {
    * domain `transition` (INV-SYS-005, chain hash guards, failure-code guards)
    * and enforces expectedVersion CAS atomically in the store.
    * Returns the post-transition record. Idempotent same-state re-applications
-   * (where the domain permits them) return the unchanged record with the same
-   * version.
+   * with unchanged reconciliation facts return the unchanged record with the
+   * same version; changed reconciliation watermark/metadata are versioned
+   * writes and therefore return a new version.
    * Throws OperationError on illegal transition, stale version, malformed
    * txHash, missing errorCode, or unknown state.
    */
