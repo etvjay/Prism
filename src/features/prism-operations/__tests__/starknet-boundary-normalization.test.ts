@@ -233,6 +233,7 @@ describe("application, event projection, and M3 Starknet boundaries", () => {
       controllerAddress: CONTROLLER,
       registryAddress: REGISTRY,
       rpcUrl: "https://sepolia.test.rpc",
+      registryVersion: "v1",
       liveRequested: false,
     });
     expect(config.normalizedControllerAddress).toBe(CONTROLLER_CANONICAL);

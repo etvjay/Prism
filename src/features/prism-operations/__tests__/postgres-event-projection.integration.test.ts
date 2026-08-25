@@ -98,7 +98,7 @@ suite("durable event projection (LIVE PostgreSQL)", () => {
   });
 
   it("reconstructs past the first 1,000 Postgres events so a terminal revoke is not stale", async () => {
-    const registryAddress = `0x${"8".repeat(64)}`;
+    const registryAddress = "0x8888";
     const scope = { registryAddress, network: "SN_SEPOLIA", registryVersion: "v1" as const };
     const created: RegistryCanonicalEvent = {
       txHash: numericTxHash(1),
