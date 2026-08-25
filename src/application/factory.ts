@@ -37,12 +37,14 @@ import type { StarknetEventReader, StarknetRegistryVersion } from "../features/p
 import { WatermarkedResolveService } from "../features/prism-operations/domain/resolve-service";
 import { ReconciliationWorker } from "../features/prism-operations/domain/reconciliation-worker";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
+import { isConcreteStarknetSubmitAdapter } from "./ports";
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 import type { VerificationSourceProvider } from "../features/prism-pause/domain/policy-engine";
 import type { LedgerStatusPort, EventIndexerPort } from "../features/prism-operations/domain/ports";
 import { RpcProvider } from "starknet";
 
 export type SubmitPortMode = "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
+export type FactoryRuntimeMode = "test" | "development" | "production";
 
 /** Canonical Starknet projection scopes supported by the configured runtime. */
 export type StarknetNetwork = "SN_SEPOLIA" | "SN_MAIN";
@@ -106,6 +108,10 @@ export interface FactoryStarknetOverrides {
 }
 
 export interface AppFactory {
+  /** Runtime classification controls whether local doubles may serve commands. */
+  runtimeMode: FactoryRuntimeMode;
+  /** Stable guard used by all chain-touching API handlers. */
+  assertChainTouchingConfigured(): void;
   handlers: ReturnType<typeof createPrismApiHandlers>;
   app: PrismApplicationService;
   registry: InMemoryRegistry;
@@ -146,6 +152,23 @@ export function isStarknetSubmitConfiguredForFactory(factory: AppFactory): boole
   return factory.isStarknetSubmitConfigured;
 }
 
+/**
+ * Guard the effectful identity/binding/revoke surface. Test factories may use
+ * explicit doubles; development and production factories may not serve those
+ * routes until both a real read path and a concrete submit adapter exist.
+ */
+export function assertChainTouchingConfiguredForFactory(
+  factory: Pick<AppFactory, "runtimeMode" | "isStarknetConfigured" | "submitPortMode" | "isStarknetSubmitConfigured" | "submitPort">,
+): void {
+  if (factory.runtimeMode === "test") return;
+  if (!factory.isStarknetConfigured) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_read_unconfigured");
+  }
+  if (factory.submitPortMode !== "STARKNET_INJECTED" || !factory.isStarknetSubmitConfigured || !isConcreteStarknetSubmitAdapter(factory.submitPort)) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_unconfigured");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Environment gating
 // ---------------------------------------------------------------------------
@@ -162,6 +185,12 @@ export function isPostgresUrlValid(url: string): boolean {
 
 export function isProductionRuntime(): boolean {
   return process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production";
+}
+
+export function getRuntimeMode(): FactoryRuntimeMode {
+  if (isProductionRuntime()) return "production";
+  if (process.env.NODE_ENV === "test" || process.env.PRISM_RUNTIME_MODE === "test") return "test";
+  return "development";
 }
 
 export function shouldUsePostgres(): boolean {
@@ -302,7 +331,11 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
 // Factory creators
 // ---------------------------------------------------------------------------
 
-function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): AppFactory {
+function createMemoryFactory(
+  clock = fixedClock(Math.floor(Date.now() / 1000)),
+  overrides?: FactoryStarknetOverrides,
+  runtimeMode: FactoryRuntimeMode = getRuntimeMode(),
+): AppFactory {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
   }
@@ -334,26 +367,26 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const registryVersion = starknetPorts ? getStarknetRegistryVersion() : (overrides?.submitPortRegistryVersion ?? "v1");
   assertSubmitPortAbiVersion(overrides?.submitPort, registryVersion);
   registry.setDigestMode(registryVersion);
-  // Submit port semantics: explicit — default is TEST_DOUBLE_X2, live only via injected StarknetSubmitAdapter
+  // Submit port semantics are explicit: the default is a local-only double;
+  // live submission is possible only through an injected concrete adapter.
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
   const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
-  if (isStarknetConfigured && submitPortMode === "TEST_DOUBLE_X2") {
-    // Production with Starknet read config but test-double submit — expose as submit_unconfigured; callers must check mode.
-    // We do not secretly imply live submission; factory remains usable for read paths but submit is clearly test double.
-    void "submit_unconfigured: Starknet read configured but submitPort is TEST_DOUBLE_X2 — inject StarknetSubmitAdapter for live bind/revoke";
-  }
+  const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
+  if (runtimeMode === "production") assertChainTouchingConfigured();
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
     operationStore,
     registry: registryReadPort,
     submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
     registryVersion,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
-  const handlers = createPrismApiHandlers(app);
+  const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
   const pauseStore = new InMemoryPauseStore();
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = createFakeAdapterRegistry(operationStore);
@@ -402,6 +435,8 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
     ]);
   };
   return {
+    runtimeMode,
+    assertChainTouchingConfigured,
     handlers,
     app,
     registry,
@@ -429,7 +464,12 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   };
 }
 
-async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(Date.now() / 1000)), overrides?: FactoryStarknetOverrides): Promise<AppFactory> {
+async function createPostgresFactory(
+  url: string,
+  clock = fixedClock(Math.floor(Date.now() / 1000)),
+  overrides?: FactoryStarknetOverrides,
+  runtimeMode: FactoryRuntimeMode = getRuntimeMode(),
+): Promise<AppFactory> {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
   }
@@ -492,6 +532,15 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
   const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
+  const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
+  if (runtimeMode === "production") {
+    try {
+      assertChainTouchingConfigured();
+    } catch (cause) {
+      await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
+      throw cause;
+    }
+  }
 
   const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
@@ -507,11 +556,13 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     operationStore,
     registry: registryReadPort,
     submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
     registryVersion,
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
-  const handlers = createPrismApiHandlers(app);
+  const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = createFakeAdapterRegistry(operationStore);
   const pauseService = new InMemoryPauseService(clock, {
@@ -558,6 +609,8 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
     ]);
   };
   return {
+    runtimeMode,
+    assertChainTouchingConfigured,
     handlers,
     app,
     registry,
@@ -595,7 +648,7 @@ let singletonError: Error | null = null;
 
 async function createSingletonFactory(): Promise<AppFactory> {
   const url = getPostgresUrl();
-  const prod = isProductionRuntime();
+  const runtimeMode = getRuntimeMode();
 
   if (url !== null) {
     // URL present: must be valid format and reachable, otherwise fail-closed
@@ -603,20 +656,20 @@ async function createSingletonFactory(): Promise<AppFactory> {
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_postgres_url_format");
     }
     try {
-      return await createPostgresFactory(url);
+      return await createPostgresFactory(url, fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode);
     } catch (e) {
       if (e instanceof AppError) throw e;
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_init_failed:${(e as Error).message?.slice(0, 80) ?? "unknown"}`);
     }
   }
 
-  if (prod) {
+  if (runtimeMode === "production") {
     // Production without Postgres is fail-closed: never silently fall back to memory
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "postgres_url_missing_in_production");
   }
 
   // Dev/test without Postgres: in-memory isolated
-  return createMemoryFactory();
+  return createMemoryFactory(fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode);
 }
 
 export async function getAppFactory(): Promise<AppFactory> {
@@ -653,7 +706,7 @@ export function getAppFactorySync(): AppFactory {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "postgres_url_missing_in_production");
   }
   // Lazy memory singleton for sync path (dev only)
-  singleton = createMemoryFactory();
+  singleton = createMemoryFactory(fixedClock(Math.floor(Date.now() / 1000)), undefined, getRuntimeMode());
   return singleton;
 }
 
@@ -676,13 +729,13 @@ export function getAppFactoryLegacy(): AppFactory {
 // For tests: create isolated factory with deterministic clock (always memory, never postgres)
 export function createIsolatedFactory(start = 1_789_000_000, overrides?: FactoryStarknetOverrides): AppFactory {
   const clock = fixedClock(start);
-  return createMemoryFactory(clock, overrides);
+  return createMemoryFactory(clock, overrides, "test");
 }
 
 // Explicit factory with injected Starknet read provider and/or submit port (for wiring tests)
 export function createIsolatedFactoryWithStarknet(start = 1_789_000_000, overrides: FactoryStarknetOverrides): AppFactory {
   const clock = fixedClock(start);
-  return createMemoryFactory(clock, overrides);
+  return createMemoryFactory(clock, overrides, "test");
 }
 
 export function resetFactory() {

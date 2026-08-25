@@ -4,6 +4,8 @@
 // PrismApplicationService — the only effectful boundary is the injected service.
 
 import type { PrismApplicationService } from "./prism-application";
+import { err } from "./schemas";
+import { AppError, APP_ERROR_CODE } from "./errors";
 import type {
   AppCommandRequest,
   AppResponse,
@@ -34,8 +36,27 @@ export type QueryHandler<TQuery, TData> = (req: { payload: TQuery; headers?: { r
  * wire format into these typed envelopes and maps AppResponse.error.httpStatusHint
  * to status codes — never fabricates chain truth.
  */
+export interface PrismApiHandlersOptions {
+  /** Factory-level runtime guard for identity/binding/revoke submissions. */
+  readonly assertChainTouchingConfigured?: () => void;
+}
+
 export class PrismApiHandlers {
-  constructor(private readonly app: PrismApplicationService) {}
+  private readonly assertChainTouchingConfigured?: () => void;
+
+  constructor(private readonly app: PrismApplicationService, options?: PrismApiHandlersOptions) {
+    this.assertChainTouchingConfigured = options?.assertChainTouchingConfigured;
+  }
+
+  private async runChainTouching<T>(action: () => Promise<AppResponse<T>>): Promise<AppResponse<T>> {
+    try {
+      this.assertChainTouchingConfigured?.();
+      return await action();
+    } catch (cause) {
+      const appError = cause instanceof AppError ? cause : new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_unconfigured");
+      return err(appError.toExternalShape(), null);
+    }
+  }
 
   // --- Issue / Verify (CMD-B-01/B-02) ---
 
@@ -46,13 +67,13 @@ export class PrismApiHandlers {
   // --- Chain-touching commands: operation_id persisted BEFORE submission, submitted != completed ---
 
   /** POST /v1/identity — create Prism ID on Starknet (OP-7-01). */
-  createIdentity: Handler<CreateIdentityPayload, CreateIdentityData> = (req) => this.app.createIdentity(req);
+  createIdentity: Handler<CreateIdentityPayload, CreateIdentityData> = (req) => this.runChainTouching(() => this.app.createIdentity(req));
 
   /** POST /v1/identity/:prism_id/bindings — bind Base account (OP-8-01). */
-  bind: Handler<BindPayload, BindData> = (req) => this.app.bind(req);
+  bind: Handler<BindPayload, BindData> = (req) => this.runChainTouching(() => this.app.bind(req));
 
   /** POST /v1/identity/:prism_id/bindings/:id/revoke — revoke (OP-8-03). */
-  revoke: Handler<RevokePayload, RevokeData> = (req) => this.app.revoke(req);
+  revoke: Handler<RevokePayload, RevokeData> = (req) => this.runChainTouching(() => this.app.revoke(req));
 
   // --- Queries: never infer canonical state; watermarked resolve boundary honors staleness ---
 
@@ -66,15 +87,15 @@ export class PrismApiHandlers {
   getOperation: QueryHandler<{ operationId: string }, PersistedOperation | null> = (req) =>
     this.app.getOperation(req);
 
-  /** Retry helper for failed_retryable/requires_attention (T12). */
+  /** Retry only pre-submit failed_retryable operations with an actual adapter. */
   retryOperation(operationId: string, now: number): Promise<AppResponse<{ operationId: string; state: string }>> {
     return this.app.retryOperation(operationId, now) as Promise<AppResponse<{ operationId: string; state: string }>>;
   }
 }
 
 /** Factory helper: creates handlers from service — transport layer injects only this. */
-export function createPrismApiHandlers(app: PrismApplicationService): PrismApiHandlers {
-  return new PrismApiHandlers(app);
+export function createPrismApiHandlers(app: PrismApplicationService, options?: PrismApiHandlersOptions): PrismApiHandlers {
+  return new PrismApiHandlers(app, options);
 }
 
 /** API contract table for documentation/testing traceability (no runtime effect). */

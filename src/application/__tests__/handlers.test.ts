@@ -8,6 +8,7 @@ import { InMemoryOperationStore } from "../../features/prism-operations/adapters
 import { PrismApplicationService } from "../prism-application";
 import { InMemoryRegistry } from "../adapters/in-memory-registry";
 import { createPrismApiHandlers, API_CONTRACTS } from "../handlers";
+import { AppError, APP_ERROR_CODE } from "../errors";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import type { AppSession } from "../auth";
 
@@ -45,7 +46,7 @@ function buildHandlers(start = 1_789_000_000) {
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
   const handlers = createPrismApiHandlers(app);
-  return { handlers, operationStore, registry, clock };
+  return { app, handlers, operationStore, registry, clock };
 }
 
 describe("PrismApiHandlers — transport-neutral contracts", () => {
@@ -54,6 +55,25 @@ describe("PrismApiHandlers — transport-neutral contracts", () => {
       expect.arrayContaining(["issue", "verify", "createIdentity", "bind", "revoke", "getIdentity", "resolve", "getOperation"]),
     );
     expect(API_CONTRACTS).toHaveLength(8);
+  });
+
+  it("chain-touching handlers fail closed when the factory guard reports TEST_DOUBLE_X2", async () => {
+    const { app, operationStore, clock } = buildHandlers();
+    const guarded = createPrismApiHandlers(app, {
+      assertChainTouchingConfigured: () => {
+        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_unconfigured");
+      },
+    });
+    const result = await guarded.createIdentity({
+      headers: { requestId: "guarded-1", idempotencyKey: "idem-guarded-1" },
+      session: appSession(clock.now()),
+      payload: { controllerAddress: CONTROLLER },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("chain-touching handler must be blocked");
+    expect(result.error.code).toBe("ERR-021");
+    expect(result.error.detail).toBe("submit_unconfigured");
+    expect(await operationStore.listNonTerminal(10)).toHaveLength(0);
   });
 
   it("issue -> verify -> bind -> resolve -> revoke via handlers preserves stable errors and submitted!=completed", async () => {

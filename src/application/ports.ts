@@ -32,6 +32,8 @@ export interface RegistryReadPort {
  *  The port never marks submitted as completed; it returns the txHash and
  *  the operation lifecycle advances via reconciliation (INV-SYS-005). */
 export interface StarknetSubmitPort {
+  /** Explicit marker for local-only adapters. Production factories reject marked test doubles. */
+  readonly isTestDouble?: boolean;
   /** Concrete adapters declare their ABI; test doubles may omit this only when the factory receives explicit metadata. */
   readonly registryVersion?: "v1" | "v2";
   /** Concrete adapters declare the exact registry they invoke; test doubles may omit this only when the factory receives explicit metadata. */
@@ -42,6 +44,24 @@ export interface StarknetSubmitPort {
   submitBind(input: { operationId: string; prismId: string; venue: string; executionAccount: string; proofDigest: Hex; controllerAddress: string }): Promise<{ txHash: Hex }>;
   /** Submits revoke_binding; returns txHash. */
   submitRevoke(input: { operationId: string; prismId: string; venue: string; executionAccount: string; controllerAddress: string }): Promise<{ txHash: Hex }>;
+}
+
+/**
+ * Production retry/factory guard: only a concrete adapter with explicit
+ * registry metadata is allowed to be treated as a Starknet submitter. An
+ * injected object may still be used by tests, but it must remain explicit and
+ * cannot silently become a production chain boundary.
+ */
+export function isConcreteStarknetSubmitAdapter(port: StarknetSubmitPort | undefined | null): boolean {
+  if (!port || port.isTestDouble === true) return false;
+  return (
+    typeof port.registryAddress === "string" &&
+    port.registryAddress.trim().length > 0 &&
+    (port.registryVersion === "v1" || port.registryVersion === "v2") &&
+    typeof port.submitCreateIdentity === "function" &&
+    typeof port.submitBind === "function" &&
+    typeof port.submitRevoke === "function"
+  );
 }
 
 // ---------------------------------------------------------------------------

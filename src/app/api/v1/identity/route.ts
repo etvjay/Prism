@@ -23,6 +23,6 @@ export async function POST(req: Request): Promise<Response> {
     const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
-  const res = await factory.app.createIdentity({ headers, session, payload: { controllerAddress, kind } });
+  const res = await factory.handlers.createIdentity({ headers, session, payload: { controllerAddress, kind } });
   return toHttpResponse(res, parsed);
 }

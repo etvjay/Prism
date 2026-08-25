@@ -422,9 +422,9 @@ describe("App boundary — application command/query contract", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 9. Retry — failed_retryable can be retried to submitted
+  // 9. Retry — generic retry must fail closed without a configured submit adapter
   // -------------------------------------------------------------------------
-  it("retry: failed_retryable operation can be retried to submitted (poll-only, never inferred as completed)", async () => {
+  it("retry: TEST_DOUBLE_X2 failed_retryable operation stays retryable and never fabricates a tx hash", async () => {
     const h = buildHarness();
     const session = appSession(h.clock.now());
     // Force dependency failure first
@@ -440,17 +440,89 @@ describe("App boundary — application command/query contract", () => {
     const ops = await h.operationStore.listNonTerminal(10);
     const opId = ops[0].id;
     expect(ops[0].state).toBe("failed_retryable");
+    expect(ops[0].txHash).toBeNull();
 
-    // Retry via application helper
     const retried = await h.app.retryOperation(opId, h.clock.now() + 5);
-    expect(retried.ok).toBe(true);
-    if (!retried.ok) throw new Error("retry failed");
-    expect(retried.data.state).toBe("submitted");
-    // Still not completed
-    expect(retried.data.state).not.toBe("completed");
+    expect(retried.ok).toBe(false);
+    if (retried.ok) throw new Error("retry must fail without an actual submit adapter");
+    expect(retried.error.code).toBe("ERR-021");
+    expect(retried.error.detail).toContain("submit_unconfigured");
+
     const after = await h.operationStore.getById(opId);
+    expect(after?.state).toBe("failed_retryable");
+    expect(after?.txHash).toBeNull();
+  });
+
+  it("retry: explicit submit adapter is called and only its valid tx hash permits submitted", async () => {
+    const h = buildHarness();
+    const { StarknetSubmitAdapter } = await import("../../features/prism-operations/adapters/starknet-submit");
+    const adapter = new StarknetSubmitAdapter({
+      account: {
+        address: CONTROLLER,
+        async execute() {
+          return { transaction_hash: TX_HASH };
+        },
+      },
+      registryAddress: "0x3333",
+    });
+    let op = await h.operationStore.create({
+      id: "op-retry-adapter",
+      kind: "create_identity",
+      idempotencyKey: "idem-retry-adapter",
+      requestFingerprint: JSON.stringify({ kind: "create_identity", controllerAddress: CONTROLLER }),
+      now: h.clock.now(),
+    });
+    op = await h.operationStore.transition(op.id, { to: "awaiting_authorization", now: h.clock.now() + 1, expectedVersion: op.version });
+    op = await h.operationStore.transition(op.id, { to: "ready", now: h.clock.now() + 2, expectedVersion: op.version });
+    op = await h.operationStore.transition(op.id, {
+      to: "failed_retryable",
+      now: h.clock.now() + 3,
+      expectedVersion: op.version,
+      errorCode: "ERR-021",
+      errorDetail: "rpc_unavailable",
+    });
+
+    const retryApp = new PrismApplicationService({
+      challengeService: h.challengeService,
+      operationStore: h.operationStore,
+      registry: h.registry,
+      submitPort: adapter,
+      submitPortMode: "STARKNET_INJECTED",
+      isStarknetSubmitConfigured: true,
+      registryVersion: "v1",
+      clock: h.clock,
+      idGenerator: idGen(),
+    });
+    const retried = await retryApp.retryOperation(op.id, h.clock.now() + 5);
+    expect(retried.ok).toBe(true);
+    if (!retried.ok) throw new Error("explicit adapter retry failed");
+    expect(retried.data.state).toBe("submitted");
+    const after = await h.operationStore.getById(op.id);
     expect(after?.state).toBe("submitted");
-    expect(after?.txHash).toMatch(/^0x/);
+    expect(after?.txHash).toBe(TX_HASH);
+  });
+
+  it("retry: requires_attention with an existing tx hash is not resubmitted", async () => {
+    const h = buildHarness();
+    let op = await h.operationStore.create({
+      id: "op-retry-attention",
+      kind: "create_identity",
+      idempotencyKey: "idem-retry-attention",
+      requestFingerprint: JSON.stringify({ kind: "create_identity", controllerAddress: CONTROLLER }),
+      now: h.clock.now(),
+    });
+    op = await h.operationStore.transition(op.id, { to: "awaiting_authorization", now: h.clock.now() + 1, expectedVersion: op.version });
+    op = await h.operationStore.transition(op.id, { to: "ready", now: h.clock.now() + 2, expectedVersion: op.version });
+    op = await h.operationStore.transition(op.id, { to: "submitted", now: h.clock.now() + 3, expectedVersion: op.version, txHash: TX_HASH });
+    op = await h.operationStore.transition(op.id, { to: "requires_attention", now: h.clock.now() + 4, expectedVersion: op.version, errorCode: "ERR-022", errorDetail: "unknown_status" });
+
+    const retried = await h.app.retryOperation(op.id, h.clock.now() + 5);
+    expect(retried.ok).toBe(false);
+    if (retried.ok) throw new Error("requires_attention must remain poll/reconcile only");
+    expect(retried.error.code).toBe("ERR-023");
+    const after = await h.operationStore.getById(op.id);
+    expect(after?.state).toBe("requires_attention");
+    expect(after?.txHash).toBe(TX_HASH);
   });
 
   // -------------------------------------------------------------------------

@@ -37,7 +37,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ prismId: strin
     const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
-  const res = await factory.app.bind({
+  const res = await factory.handlers.bind({
     headers,
     session,
     payload: { prismId: decodedPrismId, venue, executionAccount, proofDigest: proofDigest as `0x${string}`, controllerAddress },

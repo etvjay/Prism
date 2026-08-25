@@ -29,6 +29,7 @@ function randomTxHash(seed: string): Hex {
 }
 
 export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
+  readonly isTestDouble = true;
   private readonly identities = new Map<string, { controller: string; createdAtBlock: number; version: number }>();
   private readonly bindings = new Map<string, { status: "ACTIVE" | "REVOKED" }>();
   private readonly consumedDigests = new Set<string>();

@@ -146,6 +146,7 @@ function assertAccountMatchesController(accountAddr: string, controllerAddr: str
  * No receipt is awaited; reconciliation owns completion (INV-SYS-005).
  */
 export class StarknetSubmitAdapter implements StarknetSubmitPort {
+  readonly isTestDouble = false;
   readonly registryVersion = "v1" as const;
   private readonly account: StarknetAccountLike;
   readonly registryAddress: string;

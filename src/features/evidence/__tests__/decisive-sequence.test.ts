@@ -220,14 +220,17 @@ describe("decisive-sequence harness — offline fixture (TEST DOUBLE)", () => {
     expect((failed as {ok:false; error:{code:string}}).error.code).toBe("ERR-021");
     const ops=await opStore.listNonTerminal(10);
     expect(ops[0].state).toBe("failed_retryable");
-    // Retry should move to submitted
+    // Retry must remain fail-closed while this application is wired to the explicit test double.
     const retried=await app.retryOperation(ops[0].id, clock.now()+5);
-    expect(retried.ok).toBe(true);
-    expect((retried as {ok:true; data:{state:string}}).data.state).toBe("submitted");
+    expect(retried.ok).toBe(false);
+    if (retried.ok) throw new Error("retry must not fabricate a submission");
+    expect((retried as {ok:false; error:{code:string; detail?:string}}).error.code).toBe("ERR-021");
+    expect((retried as {ok:false; error:{code:string; detail?:string}}).error.detail).toContain("submit_unconfigured");
+    expect((await opStore.getById(ops[0].id))?.state).toBe("failed_retryable");
     // Recovery sweep: submitted ops should advance via reconciliation tick (simulated)
     const { recoverNonTerminalOperations } = await import("../../prism-operations/domain/recovery");
     const { createOperation } = await import("../../prism-operations/domain/operation");
-    // Recovery is fail-closed; with no-op port it stays submitted
-    expect((await opStore.getById(ops[0].id))!.state).toBe("submitted");
+    // Recovery remains fail-closed and does not invent a submission.
+    expect((await opStore.getById(ops[0].id))!.state).toBe("failed_retryable");
   });
 });

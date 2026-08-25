@@ -10,7 +10,7 @@ import { StarknetRegistryReader, StarknetRegistryReaderError } from "../adapters
 import { StarknetEventIndexerAdapter, PRISM_EVENT_SELECTORS } from "../../features/prism-operations/adapters/starknet-event-indexer";
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapters/starknet-submit-v2";
-import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory } from "../factory";
+import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory, assertChainTouchingConfiguredForFactory } from "../factory";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 
@@ -295,6 +295,26 @@ describe("FACTORY_WIRING_FIX — defect 2: DUAL READERS canonicalized", () => {
 describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () => {
   beforeEach(() => resetFactory());
   afterEach(() => resetFactory());
+
+  it("production guard rejects absent Starknet read and TEST_DOUBLE_X2 submit, while isolated tests stay explicit", () => {
+    const f = createIsolatedFactory(1_789_000_000);
+    expect(f.runtimeMode).toBe("test");
+    expect(() => f.assertChainTouchingConfigured()).not.toThrow();
+    expect(() => assertChainTouchingConfiguredForFactory({
+      runtimeMode: "production",
+      isStarknetConfigured: false,
+      submitPortMode: "TEST_DOUBLE_X2",
+      isStarknetSubmitConfigured: false,
+      submitPort: f.submitPort,
+    })).toThrow(/starknet_read_unconfigured/);
+    expect(() => assertChainTouchingConfiguredForFactory({
+      runtimeMode: "production",
+      isStarknetConfigured: true,
+      submitPortMode: "TEST_DOUBLE_X2",
+      isStarknetSubmitConfigured: false,
+      submitPort: f.submitPort,
+    })).toThrow(/submit_unconfigured/);
+  });
 
   it("default factory is TEST_DOUBLE_X2, isStarknetSubmitConfigured false, never reads private keys", () => {
     const f = createIsolatedFactory(1_789_000_000);

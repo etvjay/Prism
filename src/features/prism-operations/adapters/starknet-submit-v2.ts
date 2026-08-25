@@ -42,6 +42,7 @@ function registryId(value: string): string {
 }
 
 export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
+  readonly isTestDouble = false;
   readonly registryVersion = "v2" as const;
   private readonly account: StarknetAccountLike;
   readonly registryAddress: string;

@@ -90,6 +90,24 @@ describe("Factory — Postgres environment gating", () => {
     });
   });
 
+  it("development singleton keeps local doubles query-only and blocks chain-touching handlers", async () => {
+    await withEnv({ NODE_ENV: "development", PRISM_RUNTIME_MODE: undefined, PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined, STARKNET_RPC_URL: undefined, STARKNET_REGISTRY_ADDRESS: undefined }, async () => {
+      resetFactory();
+      const f = await getAppFactory();
+      expect(f.runtimeMode).toBe("development");
+      expect(f.submitPortMode).toBe("TEST_DOUBLE_X2");
+      const result = await f.handlers.createIdentity({
+        headers: { requestId: "dev-guard", idempotencyKey: "idem-dev-guard" },
+        session: { sessionId: "sess_dev_guard", userId: "dev", issuedAt: 1_789_000_000 - 1, expiresAt: 1_789_000_000 + 600 },
+        payload: { controllerAddress: "0x1111" },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("development test double must not handle chain-touching work");
+      expect(result.error.code).toBe("ERR-021");
+      expect(result.error.detail).toBe("starknet_read_unconfigured");
+    });
+  });
+
   it("production without URL fails closed with 503 stable code, never silent memory fallback", async () => {
     await withEnv({ NODE_ENV: "production", PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined }, async () => {
       resetFactory();

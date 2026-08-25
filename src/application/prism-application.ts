@@ -27,7 +27,7 @@ import type {
   SubmitProofPayload,
 } from "./schemas";
 import { ok, err } from "./schemas";
-import type { IdGenerator, RegistryReadPort, StarknetSubmitPort } from "./ports";
+import { isConcreteStarknetSubmitAdapter, type IdGenerator, type RegistryReadPort, type StarknetSubmitPort } from "./ports";
 import type { OperationStore } from "../features/prism-operations/domain/operation-store";
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { Clock } from "../features/prism-identity/domain/ports";
@@ -42,6 +42,9 @@ export interface PrismApplicationDeps {
   readonly operationStore: OperationStore;
   readonly registry: RegistryReadPort;
   readonly submitPort: StarknetSubmitPort;
+  /** Factory wiring metadata; absent on legacy direct test harnesses and inferred from the port. */
+  readonly submitPortMode?: "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
+  readonly isStarknetSubmitConfigured?: boolean;
   /** Explicit registry ABI version; omission must never silently select V1. */
   readonly registryVersion: "v1" | "v2";
   readonly clock: Clock;
@@ -64,6 +67,61 @@ function normalizeStarknetAddress(value: string): string {
   const trimmed = value.trim().toLowerCase();
   if (!/^0x[0-9a-f]{1,64}$/.test(trimmed)) throw new AppError(APP_ERROR_CODE.INVALID_EXECUTION_ACCOUNT, "malformed_starknet_address");
   return trimmed;
+}
+
+type RetrySubmission =
+  | { kind: "create_identity"; controllerAddress: string }
+  | { kind: "bind_execution_identity"; prismId: string; venue: string; executionAccount: string; proofDigest: Hex; controllerAddress: string }
+  | { kind: "revoke_binding"; prismId: string; venue: string; executionAccount: string; controllerAddress: string };
+
+function parseRetrySubmission(operationKind: string, requestFingerprint: string): RetrySubmission {
+  try {
+    const value = JSON.parse(requestFingerprint) as Record<string, unknown>;
+    const kind = typeof value.kind === "string" ? value.kind : operationKind;
+    if (kind === "create_identity" && typeof value.controllerAddress === "string") {
+      return { kind, controllerAddress: normalizeStarknetAddress(value.controllerAddress) };
+    }
+    if (kind === "bind_execution_identity" && typeof value.prismId === "string" && typeof value.venue === "string" && typeof value.executionAccount === "string" && typeof value.proofDigest === "string" && typeof value.controllerAddress === "string") {
+      const proofDigest = value.proofDigest;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(proofDigest)) throw new Error("malformed_proof_digest");
+      return {
+        kind,
+        prismId: assertValidPrismId(value.prismId),
+        venue: assertSupportedVenue(value.venue),
+        executionAccount: assertValidExecutionAccount(value.executionAccount),
+        proofDigest: proofDigest as Hex,
+        controllerAddress: normalizeStarknetAddress(value.controllerAddress),
+      };
+    }
+    if (kind === "revoke_binding" && typeof value.prismId === "string" && typeof value.venue === "string" && typeof value.executionAccount === "string" && typeof value.controllerAddress === "string") {
+      return {
+        kind,
+        prismId: assertValidPrismId(value.prismId),
+        venue: assertSupportedVenue(value.venue),
+        executionAccount: assertValidExecutionAccount(value.executionAccount),
+        controllerAddress: normalizeStarknetAddress(value.controllerAddress),
+      };
+    }
+  } catch {
+    // Retry must never reconstruct a partially valid submission from a bad row.
+  }
+  throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "retry_operation_invalid");
+}
+
+function isValidTxHash(value: unknown): value is Hex {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
+function errorCodeFrom(cause: unknown): typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE] {
+  const maybeCode = (cause as { code?: string })?.code;
+  if (typeof maybeCode === "string" && Object.values(APP_ERROR_CODE).includes(maybeCode as never)) {
+    return maybeCode as typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE];
+  }
+  return APP_ERROR_CODE.RPC_UNAVAILABLE;
+}
+
+function errorDetailFrom(cause: unknown): string {
+  return (cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "submit_failed";
 }
 
 export class PrismApplicationService {
@@ -386,20 +444,75 @@ export class PrismApplicationService {
     }
   }
 
-  // Retry helper for failed_retryable operations — demonstrates retry semantics.
-  async retryOperation(operationId: string, _now: number): Promise<AppResponse<{ operationId: string; state: OperationState }>> {
+  // Retry only a durable, pre-submit failure with a concrete Starknet adapter.
+  // Generic retries must not synthesize a tx hash or replay an operation whose
+  // chain status is already unknown.
+  async retryOperation(operationId: string, requestedNow: number): Promise<AppResponse<{ operationId: string; state: OperationState }>> {
     const requestId = null;
     try {
-      const now = nowOrThrow(this.deps.clock);
+      const clockNow = nowOrThrow(this.deps.clock);
+      const now = Number.isFinite(requestedNow) ? Math.floor(requestedNow) : clockNow;
       const op = await this.deps.operationStore.getById(operationId);
       if (!op) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `unknown_operation:${operationId}`);
-      if (op.state !== "failed_retryable" && op.state !== "requires_attention") {
-        throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, `not_retryable_state:${op.state}`);
+      if (op.state !== "failed_retryable") {
+        throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, `retry_state_not_supported:${op.state}`);
       }
-      // Advance to ready, then resubmit based on kind
-      let next = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 1, expectedVersion: op.version });
-      // For test: re-attempt submit via stored kind (simplified to submitted via transition)
-      next = await this.deps.operationStore.transition(next.id, { to: "submitted", now: now + 2, expectedVersion: next.version, txHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as Hex });
+      // A retryable failure eligible for a fresh broadcast cannot already have a
+      // chain hash. A hash means submission happened and reconciliation owns it.
+      if (op.txHash !== null) {
+        throw new AppError(APP_ERROR_CODE.STALE_STATE_CONFLICT, "retry_tx_hash_present");
+      }
+      const mode = this.deps.submitPortMode;
+      if (mode === "TEST_DOUBLE_X2" || this.deps.isStarknetSubmitConfigured === false || !isConcreteStarknetSubmitAdapter(this.deps.submitPort)) {
+        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_unconfigured");
+      }
+      const submission = parseRetrySubmission(op.kind, op.requestFingerprint);
+
+      // The ready state is persisted before the adapter is called. If the
+      // adapter fails, the operation is moved back to failed_retryable; it is
+      // never promoted to submitted without its returned, validated hash.
+      const ready = await this.deps.operationStore.transition(op.id, { to: "ready", now: now + 1, expectedVersion: op.version });
+      let submittedResult: { txHash: Hex };
+      try {
+        switch (submission.kind) {
+          case "create_identity":
+            submittedResult = await this.deps.submitPort.submitCreateIdentity({ operationId: op.id, controllerAddress: submission.controllerAddress });
+            break;
+          case "bind_execution_identity":
+            submittedResult = await this.deps.submitPort.submitBind({ operationId: op.id, ...submission });
+            break;
+          case "revoke_binding":
+            submittedResult = await this.deps.submitPort.submitRevoke({ operationId: op.id, ...submission });
+            break;
+        }
+      } catch (cause) {
+        const code = errorCodeFrom(cause);
+        const detail = errorDetailFrom(cause);
+        try {
+          await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 2, expectedVersion: ready.version, errorCode: code, errorDetail: detail });
+        } catch {
+          // Preserve the original dependency failure; a concurrent worker can
+          // reconcile the row if the compensating CAS loses.
+        }
+        throw new AppError(code, `dependency_failure:op_${op.id}:${detail}`);
+      }
+
+      if (!isValidTxHash(submittedResult?.txHash)) {
+        const detail = "submit_invalid_tx_hash";
+        try {
+          await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 2, expectedVersion: ready.version, errorCode: APP_ERROR_CODE.RPC_UNAVAILABLE, errorDetail: detail });
+        } catch {
+          // Best effort only; do not fabricate a submitted state.
+        }
+        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, detail);
+      }
+
+      const next = await this.deps.operationStore.transition(op.id, {
+        to: "submitted",
+        now: now + 2,
+        expectedVersion: ready.version,
+        txHash: submittedResult.txHash,
+      });
       return ok({ operationId: next.id, state: next.state }, { operationId: next.id, state: next.state, version: next.version }, requestId);
     } catch (e) {
       return this.mapError(e, requestId);
