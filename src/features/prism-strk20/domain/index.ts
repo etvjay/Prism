@@ -1,6 +1,6 @@
 export * from "./errors";
-export { supportsStrk20, detectCapability, classifyWalletEnvironment, getExpectedWalletEnvironment } from "./wallet-capability";
-export type { WalletEnvironment, ExpectedWalletEnvironment, CapabilityDetectionInput, CapabilityResult } from "./wallet-capability";
+export { supportsStrk20, classifyStrk20Capability, detectCapability, classifyWalletEnvironment, getExpectedWalletEnvironment } from "./wallet-capability";
+export type { WalletEnvironment, ExpectedWalletEnvironment, CapabilityDetectionInput, CapabilityResult, Strk20CapabilityStatus } from "./wallet-capability";
 export * from "./privacy-guard";
 export * from "./fee-policy";
 export { buildShieldReceipt, buildPrivateTransferReceipt, assertNotSenderAttribution, assertReceiptPrivacyHonesty, normalizeHex as receiptNormalizeHex } from "./receipt";

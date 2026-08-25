@@ -21,6 +21,12 @@ describe("M4 Privacy Guard — X2", () => {
     expect(() => assertNoViewingKey({ token: "0xabc", amount: 100n }, "ok")).not.toThrow();
   });
 
+  it("handles cyclic provider metadata without recursing forever", () => {
+    const cyclic: Record<string, unknown> = { token: "0xabc" };
+    cyclic.self = cyclic;
+    expect(() => assertNoViewingKey(cyclic, "cyclic")).not.toThrow();
+  });
+
   it("rejects privacy overclaims", () => {
     expect(() => assertPrivacyCopy("completely invisible transaction")).toThrow(/privacy_overclaim/);
     expect(() => assertPrivacyCopy("private everywhere, zero metadata")).toThrow();

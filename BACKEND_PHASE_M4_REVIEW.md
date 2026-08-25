@@ -1,5 +1,7 @@
 # BACKEND_PHASE_M4_REVIEW — Prism STRK20 Consumer Wallet API Route (M4)
 
+> **Historical snapshot:** the current wallet/proof boundary, authoritative WalletAccountV6 call shapes, receipt-backed terminal guards, and current maturity ceiling are recorded in [`BACKEND_PHASE_M4_WALLET_PROOF_CLOSEOUT.md`](./BACKEND_PHASE_M4_WALLET_PROOF_CLOSEOUT.md).
+
 **Lane:** M4 · Muse Spark 1.2 free · /home/ubuntu/prism-work/phase-m4-strk20 @ 7a385d2
 **Date:** 2026-08-24 UTC
 **Scope:** backend/domain Wallet API route only — `src/features/prism-strk20/**`, injected wallet/provider adapters, tests, schemas, review docs. No frontend/Phase 8, no `WalletConnectionPanel` mutation (type-only compat not needed), no REST/SDK, no Pause internals, no contracts, no PrismChannel, no `strk20.json`, no Linear/Notion, no credentials, no GitHub push.

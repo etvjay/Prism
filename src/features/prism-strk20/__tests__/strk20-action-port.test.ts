@@ -6,7 +6,7 @@ import {
   type WalletStrk20ActionProvider,
 } from "../adapters/wallet-strk20-action-adapter";
 import type { Strk20Action } from "../domain/strk20-action-port";
-import { normalizeReceipt, transitionProving, createProvingTracker } from "../domain/strk20-action-port";
+import { normalizeReceipt, transitionProving, createProvingTracker, STRK20_POOL_ADDRESS } from "../domain/strk20-action-port";
 import { makeStubProof, makeEmptyProof, isEmptyProof } from "../domain/strk20-proof";
 import { supportsStrk20 } from "../domain/wallet-capability";
 import { transition, createFlow } from "../domain/strk20-state";
@@ -30,7 +30,7 @@ function makeProvider(overrides: Partial<WalletStrk20ActionProvider> = {}): Wall
     },
     strk20PrepareInvoke: async (actions: Strk20Action[], simulate?: boolean) => {
       calls.strk20PrepareInvoke = (calls.strk20PrepareInvoke ?? 0) + 1;
-      const call = { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "deposit", calldata: ["0x1"] };
+      const call = { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "deposit", calldata: ["0x1"] };
       if (simulate) return { call, proof: makeEmptyProof() };
       return { call, proof: makeStubProof() };
     },
@@ -153,6 +153,24 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     }
   });
 
+  it("unknown provider errors are typed without echoing key material", async () => {
+    const provider = makeProvider({
+      strk20InvokeTransaction: async () => {
+        throw new Error("opaque provider failure: viewing key secret-material-should-not-escape");
+      },
+    });
+    const adapter = new WalletStrk20ActionAdapter(provider);
+
+    try {
+      await adapter.execute(sampleActions);
+      throw new Error("expected provider failure");
+    } catch (e) {
+      expect((e as Strk20Error).code).toBe("STRK20-013");
+      expect((e as Error).message).not.toContain("secret-material-should-not-escape");
+      expect((e as Error).message).not.toContain("viewing key");
+    }
+  });
+
   // missing methods
   it("missing methods: provider without strk20PrepareInvoke fails closed UNSUPPORTED_WALLET_METHOD", async () => {
     const provider = makeProvider();
@@ -185,8 +203,8 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     const adapter = new WalletStrk20ActionAdapter(provider);
     const cap = await adapter.observeCapability();
     expect(cap.capable).toBe(true);
-    // but execute still fails closed
-    await expect(adapter.execute(sampleActions)).rejects.toThrow(/unsupported_wallet_method/);
+    // capability success does not imply every action method is present
+    await expect(adapter.prepare(sampleActions, { simulate: true })).rejects.toThrow(/unsupported_wallet_method/);
   });
 
   // simulation with empty proof
@@ -210,7 +228,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
 
   it("simulation empty proof invariant: provider returning non-empty on simulate throws dependency failure", async () => {
     const provider = makeProvider({
-      strk20PrepareInvoke: async () => ({ call: { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] }, proof: makeStubProof() }),
+      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] }, proof: makeStubProof() }),
     });
     const adapter = new WalletStrk20ActionAdapter(provider);
     await expect(adapter.simulate(sampleActions)).rejects.toThrow(/simulate_expected_empty_proof/);
@@ -218,7 +236,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
 
   it("simulation: prepare with simulate=false returning empty proof throws PROOF_REQUIRED", async () => {
     const provider = makeProvider({
-      strk20PrepareInvoke: async () => ({ call: { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] }, proof: makeEmptyProof() }),
+      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] }, proof: makeEmptyProof() }),
     });
     const adapter = new WalletStrk20ActionAdapter(provider);
     await expect(adapter.prepare(sampleActions, { simulate: false })).rejects.toThrow(/empty_proof|proof_required/);
@@ -233,7 +251,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
   it("proof-required submission boundary: executeWithProof with empty proof throws PROOF_REQUIRED", async () => {
     const provider = makeProvider();
     const adapter = new WalletStrk20ActionAdapter(provider);
-    const call = { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "deposit", calldata: ["0x1"] };
+    const call = { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "deposit", calldata: ["0x1"] };
     await expect(adapter.executeWithProof(call, makeEmptyProof())).rejects.toThrow(/empty_proof|proof_required/);
     try {
       await adapter.executeWithProof(call, makeEmptyProof());
@@ -247,7 +265,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
   it("proof-required submission boundary: valid proof allows submission", async () => {
     const provider = makeProvider();
     const adapter = new WalletStrk20ActionAdapter(provider);
-    const call = { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "deposit", calldata: ["0x1"] };
+    const call = { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "deposit", calldata: ["0x1"] };
     const res = await adapter.executeWithProof(call, makeStubProof());
     expect(res.transactionHash).toBe("0x0000000000000000000000000000000000000000000000000000000000000002");
   });
@@ -283,6 +301,18 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     const pending = normalizeReceipt({ transactionHash: "0x3", executionStatus: "PENDING", finalityStatus: "UNKNOWN", blockNumber: null, events: [] });
     expect(pending.executionStatus).toBe("PENDING");
     expect(pending.poolEventFound).toBe(false);
+  });
+
+  it("receipt parser does not count pool events from a reverted transaction", () => {
+    const reverted = normalizeReceipt({
+      transactionHash: "0x4",
+      executionStatus: "REVERTED",
+      finalityStatus: "ACCEPTED_ON_L2",
+      blockNumber: 11,
+      events: [{ address: STRK20_POOL_ADDRESS, keys: ["0xabc"] }],
+    });
+    expect(reverted.poolEventFound).toBe(false);
+    expect(reverted.attributedDepositor).toBeNull();
   });
 
   it("receipt states: relayer sender ignored, not attribution source", async () => {
@@ -338,7 +368,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
   it("no viewing-key leakage: executeWithProof with viewingKey in proof throws", async () => {
     const provider = makeProvider();
     const adapter = new WalletStrk20ActionAdapter(provider);
-    const call = { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] };
+    const call = { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] };
     const badProof = { data: "viewing key material", output: [], proof_facts: [] } as unknown as import("../domain/strk20-proof").Strk20Proof;
     await expect(adapter.executeWithProof(call, badProof)).rejects.toThrow(/viewing_key_forbidden|forbidden/);
   });
@@ -373,12 +403,13 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
   });
 
   // unsupported/unknown fail-closed
-  it("fail-closed unknown: empty apiVersions/specs not capable, ensureReady throws", async () => {
+  it("fail-closed unknown: empty apiVersions/specs are UNKNOWN, not unsupported", async () => {
     const provider = makeProvider({ supportedWalletApi: async () => [], supportedSpecs: async () => [] });
     const adapter = new WalletStrk20ActionAdapter(provider);
-    await expect(adapter.ensureReady()).rejects.toThrow(/unsupported_wallet/);
+    await expect(adapter.ensureReady()).rejects.toThrow(/capability_unknown/);
     const cap = await adapter.observeCapability();
     expect(cap.capable).toBe(false);
+    expect(cap.capabilityStatus).toBe("unknown");
   });
 
   it("fail-closed unsupported: adapter isSupported false when capability false", async () => {
@@ -410,7 +441,7 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     t = transitionProving(t, "preparing", now + 10);
     expect(t.state).toBe("preparing");
     // proving is long-running: may have empty proof
-    const simCall = { call: { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] }, proof: makeEmptyProof() };
+    const simCall = { call: { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] }, proof: makeEmptyProof() };
     t = transitionProving(t, "proving", now + 20, simCall);
     expect(t.state).toBe("proving");
     expect(t.elapsedMs).not.toBeNull();
@@ -433,8 +464,8 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
   it("long-running proof state: proving tracker ready with empty proof throws PROOF_REQUIRED", () => {
     let t = createProvingTracker(1000);
     t = transitionProving(t, "preparing", 1010);
-    t = transitionProving(t, "proving", 1020, { call: { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] }, proof: makeEmptyProof() });
-    expect(() => transitionProving(t, "ready", 1030, { call: { contractAddress: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entrypoint: "x", calldata: [] }, proof: makeEmptyProof() })).toThrow(/proof_required|empty_proof/);
+    t = transitionProving(t, "proving", 1020, { call: { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] }, proof: makeEmptyProof() });
+    expect(() => transitionProving(t, "ready", 1030, { call: { contract_address: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a" as `0x${string}`, entry_point: "x", calldata: [] }, proof: makeEmptyProof() })).toThrow(/proof_required|empty_proof/);
   });
 
   it("long-running proof state: state machine proving integrates with strk20-state", () => {
@@ -442,7 +473,14 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     f = transition(f, { to: "registration_required", now: 1001 }).flow;
     f = transition(f, { to: "approval_pending", now: 1002 }).flow;
     f = transition(f, { to: "shielding", now: 1003, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
-    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 100 }).flow;
+    const shieldReceipt = {
+      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`,
+      executionStatus: "SUCCEEDED" as const,
+      finalityStatus: "ACCEPTED_ON_L2" as const,
+      blockNumber: 100,
+      poolEventFound: true,
+    };
+    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 100, receipt: shieldReceipt }).flow;
     f = transition(f, { to: "maturing", now: 1005 }).flow;
     f = transition(f, { to: "privately_available", now: 1006, currentBlock: 110, balanceConsent: "granted" }).flow;
     expect(f.state).toBe("privately_available");
@@ -451,7 +489,14 @@ describe("M4 Wallet API Runtime — STRK20 Action Port X2", () => {
     expect(f.state).toBe("proving");
     f = transition(f, { to: "transfer_pending", now: 1008, transferTxHash: "0x0000000000000000000000000000000000000000000000000000000000000002" }).flow;
     expect(f.state).toBe("transfer_pending");
-    f = transition(f, { to: "transfer_confirmed", now: 1009 }).flow;
+    const transferReceipt = {
+      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`,
+      executionStatus: "SUCCEEDED" as const,
+      finalityStatus: "ACCEPTED_ON_L2" as const,
+      blockNumber: 120,
+      poolEventFound: true,
+    };
+    f = transition(f, { to: "transfer_confirmed", now: 1009, receipt: transferReceipt }).flow;
     expect(f.state).toBe("transfer_confirmed");
   });
 

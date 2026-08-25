@@ -4,13 +4,21 @@
 
 const STRK20_MINIMUM_API_VERSION = [0, 10, 3] as const;
 
-function parseVersion(value: string): number[] | null {
-  const match = value.match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+type ParsedVersion = {
+  parts: [number, number, number];
+  prerelease: boolean;
+};
+
+function parseVersion(value: unknown): ParsedVersion | null {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d+)\.(\d+)(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/);
   if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+  const parts: [number, number, number] = [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+  if (parts.some((part) => !Number.isSafeInteger(part) || part < 0)) return null;
+  return { parts, prerelease: value.includes("-") };
 }
 
-function compareVersions(left: number[], right: readonly number[]): number {
+function compareVersions(left: readonly number[], right: readonly number[]): number {
   for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
     const l = left[i] ?? 0;
     const r = right[i] ?? 0;
@@ -19,15 +27,36 @@ function compareVersions(left: number[], right: readonly number[]): number {
   return 0;
 }
 
+function isAtLeastMinimum(version: ParsedVersion): boolean {
+  const comparison = compareVersions(version.parts, STRK20_MINIMUM_API_VERSION);
+  // A release candidate is below the corresponding stable release.
+  return comparison > 0 || (comparison === 0 && !version.prerelease);
+}
+
+export type Strk20CapabilityStatus = "supported" | "unsupported" | "unknown";
+
 /**
- * Pure STRK20 capability check: true when any apiVersion or spec >= 0.10.3.
+ * Classify a provider capability response without treating missing or malformed
+ * answers as a definitive unsupported wallet. The wallet standard returns
+ * version arrays; an empty or malformed response is an observation failure.
+ */
+export function classifyStrk20Capability(
+  apiVersions: readonly unknown[],
+  specs: readonly unknown[],
+): Strk20CapabilityStatus {
+  const values = [...apiVersions, ...specs];
+  if (values.length === 0) return "unknown";
+  const parsed = values.map(parseVersion);
+  if (parsed.some((version) => version === null)) return "unknown";
+  return parsed.some((version) => isAtLeastMinimum(version!)) ? "supported" : "unsupported";
+}
+
+/**
+ * Pure STRK20 capability check: true when any valid apiVersion or spec is >=0.10.3.
  * Never touches balances, viewing keys, or private state.
  */
 export function supportsStrk20(apiVersions: readonly string[], specs: readonly string[]): boolean {
-  return [...apiVersions, ...specs].some((v) => {
-    const p = parseVersion(v);
-    return p ? compareVersions(p, STRK20_MINIMUM_API_VERSION) >= 0 : false;
-  });
+  return classifyStrk20Capability(apiVersions, specs) === "supported";
 }
 
 export type WalletEnvironment = "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";

@@ -4,19 +4,21 @@
 
 import { Strk20Error, STRK20_ERROR_CODE } from "../domain/errors";
 import { assertNoViewingKey } from "../domain/privacy-guard";
-import { supportsStrk20, classifyWalletEnvironment, getExpectedWalletEnvironment } from "../domain/wallet-capability";
+import { classifyStrk20Capability, classifyWalletEnvironment, getExpectedWalletEnvironment, type ExpectedWalletEnvironment } from "../domain/wallet-capability";
 import {
   normalizeReceipt,
+  normalizeHex,
   validateActions,
   ensureCapabilityOrThrow,
   ensureNetworkOrThrow,
   classifyProviderError,
   type Strk20Action,
+  type CapabilityResult,
   type Strk20CallAndProof,
   type NormalizedReceipt,
   STRK20_POOL_ADDRESS,
 } from "../domain/strk20-action-port";
-import { assertNotEmptyProofForSubmission, isEmptyProof, type Strk20Call } from "../domain/strk20-proof";
+import { assertCallAndProofShape, assertNotEmptyProofForSubmission, assertProofPresent, isEmptyProof, type Strk20Call } from "../domain/strk20-proof";
 
 export type Hex = `0x${string}`;
 
@@ -28,17 +30,18 @@ export interface WalletStrk20ActionProvider {
   supportedWalletApi(): Promise<string[]>;
   supportedSpecs(): Promise<string[]>;
   requestChainId(): Promise<string>;
-  // STRK20 methods – may be absent on unsupported wallets (fail-closed)
-  strk20PrepareInvoke?(actions: Strk20Action[], simulate?: boolean): Promise<Strk20CallAndProof>;
+  // STRK20 methods — raw provider responses are validated before use.
+  strk20PrepareInvoke?(actions: Strk20Action[], simulate?: boolean): Promise<unknown>;
   strk20InvokeTransaction?(actions: Strk20Action[]): Promise<{ transaction_hash: string } | { transactionHash: string }>;
   strk20Balances?(tokens: Hex[]): Promise<{ token: string; balance: string }[]>;
-  executeWithProof?(calls: Strk20Call[], proof: import("../domain/strk20-proof").Strk20Proof): Promise<{ transaction_hash: string }>;
-  // Optional receipt observer (falls back to provider if absent)
+  // WalletAccountV6.executeWithProof(calls, proof) submits a prepared call.
+  executeWithProof?(calls: readonly import("../domain/strk20-proof").Strk20Call[], proof: import("../domain/strk20-proof").Strk20Proof): Promise<{ transaction_hash: string }>;
+  // Optional receipt observer (falls back to provider if absent).
   getReceipt?(txHash: Hex): Promise<Record<string, unknown> | null>;
 }
 
 export interface Strk20ActionPort {
-  observeCapability(): Promise<{ capable: boolean; apiVersions: string[]; specs: string[]; environment: string; mismatch: boolean; expected: string }>;
+  observeCapability(): Promise<CapabilityResult>;
   ensureReady(): Promise<{ chainId: string; apiVersions: string[]; specs: string[] }>;
   prepare(actions: Strk20Action[], opts: { simulate: boolean }): Promise<Strk20CallAndProof>;
   simulate(actions: Strk20Action[]): Promise<Strk20CallAndProof>; // convenience: simulate=true, empty proof
@@ -57,14 +60,23 @@ function requireMethod<K extends keyof WalletStrk20ActionProvider>(provider: Wal
 }
 
 function toHex(hash: string | { transaction_hash: string } | { transactionHash: string }): Hex {
-  if (typeof hash === "string") return hash as Hex;
-  if (typeof (hash as { transaction_hash?: string }).transaction_hash === "string") return (hash as { transaction_hash: string }).transaction_hash as Hex;
-  if (typeof (hash as { transactionHash?: string }).transactionHash === "string") return (hash as { transactionHash: string }).transactionHash as Hex;
-  throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "missing_transaction_hash_in_provider_response");
+  const value = typeof hash === "string"
+    ? hash
+    : typeof (hash as { transaction_hash?: unknown }).transaction_hash === "string"
+      ? (hash as { transaction_hash: string }).transaction_hash
+      : (hash as { transactionHash?: string }).transactionHash;
+  if (typeof value !== "string") {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "missing_transaction_hash_in_provider_response");
+  }
+  try {
+    return normalizeHex(value) as Hex;
+  } catch {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "malformed_transaction_hash_in_provider_response");
+  }
 }
 
 export class WalletStrk20ActionAdapter implements Strk20ActionPort {
-  private readonly expectedChainId: string;
+  private readonly expectedChainId: ExpectedWalletEnvironment;
 
   constructor(
     private readonly provider: WalletStrk20ActionProvider,
@@ -76,25 +88,34 @@ export class WalletStrk20ActionAdapter implements Strk20ActionPort {
     this.expectedChainId = getExpectedWalletEnvironment(opts.expectedChainId ?? "SN_SEPOLIA");
   }
 
-  async observeCapability(): Promise<{ capable: boolean; apiVersions: string[]; specs: string[]; environment: string; mismatch: boolean; expected: string }> {
-    const [apiVersions, specs] = await Promise.all([this.provider.supportedWalletApi(), this.provider.supportedSpecs()]).catch((e) => {
-      // If capability query itself throws unknown error, treat as unknown (fail-closed)
-      throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, `capability_query_failed:${String((e as Error)?.message ?? e).slice(0, 60)}`);
-    });
-    assertNoViewingKey({ apiVersions, specs }, "observeCapability.result");
-    const capable = supportsStrk20(apiVersions, specs);
-    let chainId = "UNKNOWN";
+  async observeCapability(): Promise<CapabilityResult> {
+    let apiVersions: string[];
+    let specs: string[];
     try {
-      chainId = await this.provider.requestChainId();
+      const [rawApiVersions, rawSpecs] = await Promise.all([this.provider.supportedWalletApi(), this.provider.supportedSpecs()]);
+      if (!Array.isArray(rawApiVersions) || !Array.isArray(rawSpecs) || !rawApiVersions.every((v) => typeof v === "string") || !rawSpecs.every((v) => typeof v === "string")) {
+        throw new Error("malformed_capability_response");
+      }
+      apiVersions = rawApiVersions;
+      specs = rawSpecs;
+    } catch {
+      throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "capability_query_failed");
+    }
+    assertNoViewingKey({ apiVersions, specs }, "observeCapability.result");
+    const capabilityStatus = classifyStrk20Capability(apiVersions, specs);
+    let chainId: string;
+    try {
+      const rawChainId = await this.provider.requestChainId();
+      if (typeof rawChainId !== "string" || rawChainId.trim().length === 0) throw new Error("malformed_chain_id");
+      chainId = rawChainId;
     } catch (e) {
-      // Unknown network is fail-closed mismatch, not swallowed
       const msg = String((e as Error)?.message ?? e).toLowerCase();
-      if (msg.includes("refused") || msg.includes("rejected")) throw new Strk20Error(STRK20_ERROR_CODE.PROVIDER_REFUSED, "chainId_provider_refused");
-      throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, `chainId_query_failed:${msg.slice(0, 60)}`);
+      if (msg.includes("refused") || msg.includes("rejected")) throw new Strk20Error(STRK20_ERROR_CODE.PROVIDER_REFUSED, "chain_id_provider_refused");
+      throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "chain_id_query_failed");
     }
     const env = classifyWalletEnvironment(chainId, { mainnet: "SN_MAIN", sepolia: "SN_SEPOLIA" });
     const mismatch = env !== this.expectedChainId;
-    return { capable, apiVersions, specs, environment: env, mismatch, expected: this.expectedChainId };
+    return { capable: capabilityStatus === "supported", capabilityStatus, apiVersions, specs, chainId, environment: env, mismatch, expected: this.expectedChainId };
   }
 
   async isSupported(): Promise<boolean> {
@@ -108,21 +129,14 @@ export class WalletStrk20ActionAdapter implements Strk20ActionPort {
 
   async ensureReady(): Promise<{ chainId: string; apiVersions: string[]; specs: string[] }> {
     const cap = await this.observeCapability();
-    if (!cap.capable) {
-      throw new Strk20Error(STRK20_ERROR_CODE.UNSUPPORTED_WALLET, `wallet_api_below_0_10_3:api[${cap.apiVersions.join(",")}]_spec[${cap.specs.join(",")}]`);
-    }
+    ensureCapabilityOrThrow(cap.apiVersions, cap.specs);
     if (cap.environment === "UNKNOWN") {
-      throw new Strk20Error(STRK20_ERROR_CODE.NETWORK_MISMATCH, `unknown_network:${cap.environment}_expected_${cap.expected}`);
+      throw new Strk20Error(STRK20_ERROR_CODE.NETWORK_MISMATCH, "unknown_network");
     }
     if (cap.mismatch) {
       throw new Strk20Error(STRK20_ERROR_CODE.NETWORK_MISMATCH, `expected_${cap.expected}_got_${cap.environment}`);
     }
-    // Ensure STRK20 methods present (fail-closed missing methods)
-    if (typeof this.provider.strk20PrepareInvoke !== "function" || typeof this.provider.strk20InvokeTransaction !== "function") {
-      throw new Strk20Error(STRK20_ERROR_CODE.UNSUPPORTED_WALLET_METHOD, "wallet_missing_strk20_methods_requires_Ready_or_Xverse_with_api>=0.10.3");
-    }
-    const chainId = await this.provider.requestChainId();
-    return { chainId, apiVersions: cap.apiVersions, specs: cap.specs };
+    return { chainId: cap.chainId, apiVersions: cap.apiVersions, specs: cap.specs };
   }
 
   async prepare(actions: Strk20Action[], opts: { simulate: boolean }): Promise<Strk20CallAndProof> {
@@ -131,21 +145,18 @@ export class WalletStrk20ActionAdapter implements Strk20ActionPort {
     await this.ensureReady();
     const fn = requireMethod(this.provider, "strk20PrepareInvoke");
     try {
-      const res = await fn.call(this.provider, actions, opts.simulate);
-      assertNoViewingKey(res, "prepare.result");
-      // Guard: simulate=true must return empty proof; simulate=false must return non-empty proof
+      const raw = await fn.call(this.provider, actions, opts.simulate);
+      assertNoViewingKey(raw, "prepare.result");
+      assertCallAndProofShape(raw, "prepare.result");
+      // simulate=true must return an empty proof; a real prepare must return one.
       if (opts.simulate) {
-        if (!isEmptyProof(res.proof)) {
-          // Provider violated simulate contract – fail-closed (logically not error but we enforce)
+        if (!isEmptyProof(raw.proof)) {
           throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "simulate_expected_empty_proof_but_got_non_empty");
         }
       } else {
-        if (isEmptyProof(res.proof)) {
-          throw new Strk20Error(STRK20_ERROR_CODE.PROOF_REQUIRED, "non_simulate_prepare_returned_empty_proof");
-        }
+        assertProofPresent(raw.proof, "prepare.non_simulate");
       }
-      // Return normalized shape (pass through proof fields as-is; adapter never injects viewing key)
-      return { call: res.call, proof: res.proof };
+      return raw;
     } catch (e) {
       if (e instanceof Strk20Error) throw e;
       return classifyProviderError(e);
@@ -197,17 +208,11 @@ export class WalletStrk20ActionAdapter implements Strk20ActionPort {
     try {
       const raw = await this.provider.getReceipt(txHash);
       if (!raw) return null;
-      // Normalize to common shape
-      const normalized = normalizeReceipt(raw as Record<string, unknown> & { transactionHash?: string });
-      // Ensure requested hash matches if provider returns different key name
-      if (normalized.transactionHash && normalized.transactionHash !== txHash) {
-        // Normalize address comparison – keep as-is but assert no viewing key leak
-        return { ...normalized, transactionHash: txHash };
-      }
-      return normalized;
+      assertNoViewingKey(raw, "observeReceipt.raw");
+      return normalizeReceipt(raw, txHash);
     } catch (e) {
       if (e instanceof Strk20Error) throw e;
-      throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, `receipt_fetch_failed:${String((e as Error)?.message ?? e).slice(0, 60)}`);
+      throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "receipt_fetch_failed");
     }
   }
 }

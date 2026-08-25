@@ -55,7 +55,10 @@ function diffPresentedFields(
   if (presented.chainId !== stored.chainId) altered.push("chain_id");
   if (presented.domain !== stored.domain) altered.push("domain");
   if (presented.venue !== stored.venue) altered.push("venue");
-  if (presented.executionAccount.toLowerCase() !== stored.executionAccount) altered.push("execution_account");
+  if (
+    typeof presented.executionAccount !== "string" ||
+    presented.executionAccount.toLowerCase() !== stored.executionAccount
+  ) altered.push("execution_account");
   if (presented.prismId !== stored.prismId) altered.push("prism_id");
   if (presented.nonce !== stored.nonce) altered.push("nonce");
   if (presented.expiresAt !== stored.expiresAt) altered.push("expiry");

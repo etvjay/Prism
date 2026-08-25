@@ -75,7 +75,13 @@ describe("M4 Integration — X2 injected doubles cover required scenarios", () =
     f = transition(f, { to: "registration_required", now: 1001 }).flow;
     f = transition(f, { to: "approval_pending", now: 1002 }).flow;
     f = transition(f, { to: "shielding", now: 1003, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
-    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 10 }).flow;
+    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 10, receipt: {
+      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      executionStatus: "SUCCEEDED",
+      finalityStatus: "ACCEPTED_ON_L2",
+      blockNumber: 10,
+      poolEventFound: true,
+    } }).flow;
     f = transition(f, { to: "maturing", now: 1005 }).flow;
     expect(() => transition(f, { to: "privately_available", now: 1006, currentBlock: 20, balanceConsent: "denied" })).toThrow(/consent_denied/);
   });
@@ -100,7 +106,13 @@ describe("M4 Integration — X2 injected doubles cover required scenarios", () =
     f = transition(f, { to: "registration_required", now: 1001 }).flow;
     f = transition(f, { to: "approval_pending", now: 1002 }).flow;
     f = transition(f, { to: "shielding", now: 1003, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
-    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 200 }).flow;
+    f = transition(f, { to: "confirmed", now: 1004, confirmedBlock: 200, receipt: {
+      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      executionStatus: "SUCCEEDED",
+      finalityStatus: "ACCEPTED_ON_L2",
+      blockNumber: 200,
+      poolEventFound: true,
+    } }).flow;
     f = transition(f, { to: "maturing", now: 1005 }).flow;
     expect(f.maturityTargetBlock).toBe(200 + MATURITY_BLOCKS);
     expect(() => transition(f, { to: "privately_available", now: 1006, currentBlock: 205, balanceConsent: "granted" })).toThrow(/maturity_pending/);

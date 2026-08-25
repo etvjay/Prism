@@ -2,8 +2,22 @@ import { describe, it, expect } from "vitest";
 import { createFlow, transition, MATURITY_BLOCKS } from "../domain/strk20-state";
 
 // X2 — TEST DOUBLE: pure state machine, no RPC, no wallet
-describe("M4 STRK20 State Machine — 12 explicit states X2", () => {
+describe("M4 STRK20 State Machine — 13 explicit states X2", () => {
   const now = 1_000_000;
+  const shieldReceipt = {
+    transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`,
+    executionStatus: "SUCCEEDED" as const,
+    finalityStatus: "ACCEPTED_ON_L2" as const,
+    blockNumber: 100,
+    poolEventFound: true,
+  };
+  const transferReceipt = {
+    transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`,
+    executionStatus: "SUCCEEDED" as const,
+    finalityStatus: "ACCEPTED_ON_L2" as const,
+    blockNumber: 110,
+    poolEventFound: true,
+  };
 
   it("starts at capability_unknown", () => {
     const f = createFlow({ id: "f1", now });
@@ -25,14 +39,14 @@ describe("M4 STRK20 State Machine — 12 explicit states X2", () => {
     f = transition(f, { to: "approval_pending", now: now + 2 }).flow;
     f = transition(f, { to: "shielding", now: now + 3, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
     expect(f.state).toBe("shielding");
-    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 100 }).flow;
+    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 100, receipt: shieldReceipt }).flow;
     expect(f.maturityTargetBlock).toBe(100 + MATURITY_BLOCKS);
     f = transition(f, { to: "maturing", now: now + 5 }).flow;
     expect(f.state).toBe("maturing");
     f = transition(f, { to: "privately_available", now: now + 6, currentBlock: 110, balanceConsent: "granted" }).flow;
     expect(f.state).toBe("privately_available");
     f = transition(f, { to: "transfer_pending", now: now + 7, transferTxHash: "0x0000000000000000000000000000000000000000000000000000000000000002" }).flow;
-    f = transition(f, { to: "transfer_confirmed", now: now + 8 }).flow;
+    f = transition(f, { to: "transfer_confirmed", now: now + 8, receipt: transferReceipt }).flow;
     expect(f.state).toBe("transfer_confirmed");
   });
 
@@ -41,7 +55,7 @@ describe("M4 STRK20 State Machine — 12 explicit states X2", () => {
     f = transition(f, { to: "registration_required", now: now + 1 }).flow;
     f = transition(f, { to: "approval_pending", now: now + 2 }).flow;
     f = transition(f, { to: "shielding", now: now + 3, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
-    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 100 }).flow;
+    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 100, receipt: shieldReceipt }).flow;
     f = transition(f, { to: "maturing", now: now + 5 }).flow;
     expect(() => transition(f, { to: "privately_available", now: now + 6, currentBlock: 105, balanceConsent: "granted" })).toThrow(/maturity_pending/);
     expect(() => transition(f, { to: "privately_available", now: now + 6, currentBlock: 109, balanceConsent: "granted" })).toThrow();
@@ -54,7 +68,7 @@ describe("M4 STRK20 State Machine — 12 explicit states X2", () => {
     f = transition(f, { to: "registration_required", now: now + 1 }).flow;
     f = transition(f, { to: "approval_pending", now: now + 2 }).flow;
     f = transition(f, { to: "shielding", now: now + 3, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow;
-    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 50 }).flow;
+    f = transition(f, { to: "confirmed", now: now + 4, confirmedBlock: 50, receipt: { ...shieldReceipt, blockNumber: 50 } }).flow;
     f = transition(f, { to: "maturing", now: now + 5 }).flow;
     expect(() => transition(f, { to: "privately_available", now: now + 6, currentBlock: 60, balanceConsent: "denied" })).toThrow(/consent_denied|denied/);
     expect(() => transition(f, { to: "privately_available", now: now + 6, currentBlock: 60, balanceConsent: "required" })).toThrow(/consent_required/);

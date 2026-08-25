@@ -1,8 +1,8 @@
 // Explicit STRK20 consumer state machine for M4 Wallet API route.
-// Required 12 states: capability_unknown, mismatch, registration_required,
-// approval_pending, shielding, confirmed, maturing, privately_available,
-// transfer_pending, transfer_confirmed, rejected, dependency_failure
-// Authority: STRK20_CONTEXT note maturity ~10 blocks, two-tx shield, fees, relayers, screening.
+// Authority: STRK20_CONTEXT note maturity, two-step shield, fees, relayers,
+// and wallet-mediated proof/receipt semantics. A receipt is required before a
+// flow can enter a confirmed/terminal state; a submitted hash alone is not
+// completion evidence.
 
 import { Strk20Error, STRK20_ERROR_CODE } from "./errors";
 
@@ -23,11 +23,21 @@ export const STRK20_STATES = [
 ] as const;
 
 export type Strk20State = (typeof STRK20_STATES)[number];
-
 export const TERMINAL_STATES: readonly Strk20State[] = ["transfer_confirmed", "rejected"] as const;
 export const FAILED_STATES: readonly Strk20State[] = ["rejected", "dependency_failure", "mismatch"] as const;
-
 export const MATURITY_BLOCKS = 10;
+
+export type Strk20ReceiptExecutionStatus = "SUCCEEDED" | "REVERTED" | "RECEIVED" | "PENDING" | "UNKNOWN";
+export type Strk20ReceiptFinalityStatus = "ACCEPTED_ON_L2" | "ACCEPTED_ON_L1" | "RECEIVED" | "PENDING" | "UNKNOWN";
+
+/** Receipt facts retained by the workflow without retaining raw provider data. */
+export interface Strk20ReceiptObservation {
+  readonly transactionHash: `0x${string}`;
+  readonly executionStatus: Strk20ReceiptExecutionStatus;
+  readonly finalityStatus: Strk20ReceiptFinalityStatus;
+  readonly blockNumber: number | null;
+  readonly poolEventFound: boolean;
+}
 
 export interface Strk20Flow {
   readonly id: string;
@@ -46,6 +56,8 @@ export interface Strk20Flow {
   readonly transferTxHash: `0x${string}` | null;
   readonly confirmedBlock: number | null;
   readonly maturityTargetBlock: number | null;
+  readonly shieldReceipt: Strk20ReceiptObservation | null;
+  readonly transferReceipt: Strk20ReceiptObservation | null;
   // Screening
   readonly screening: "approved" | "rejected" | "unavailable" | null;
   readonly rejectionReason: string | null;
@@ -80,6 +92,8 @@ export function createFlow(input: CreateInput): Strk20Flow {
     transferTxHash: null,
     confirmedBlock: null,
     maturityTargetBlock: null,
+    shieldReceipt: null,
+    transferReceipt: null,
     screening: null,
     rejectionReason: null,
     balanceConsent: "unknown",
@@ -110,7 +124,6 @@ const ALLOWED: Record<Strk20State, ReadonlySet<Strk20State>> = {
 
 export function canTransition(from: Strk20State, to: Strk20State): boolean {
   if (from === to) {
-    // Only allow idempotent re-apply for pending/transient states; terminal not
     const idempotent = new Set<Strk20State>(["shielding", "maturing", "proving", "transfer_pending", "dependency_failure", "mismatch"]);
     return idempotent.has(from);
   }
@@ -129,6 +142,7 @@ export interface TransitionInput {
   shieldTxHash?: `0x${string}` | null;
   transferTxHash?: `0x${string}` | null;
   confirmedBlock?: number | null;
+  receipt?: Strk20ReceiptObservation | null;
   screening?: "approved" | "rejected" | "unavailable" | null;
   rejectionReason?: string | null;
   balanceConsent?: "granted" | "denied" | "required" | "unknown" | null;
@@ -146,6 +160,37 @@ function isKnownState(v: string): v is Strk20State {
   return (STRK20_STATES as readonly string[]).includes(v);
 }
 
+function canonicalHash(value: unknown): string {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value.trim())) {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "malformed_receipt_transaction_hash");
+  }
+  return `0x${value.trim().slice(2).toLowerCase().padStart(64, "0")}`;
+}
+
+function requireFinalReceipt(
+  receipt: Strk20ReceiptObservation | null | undefined,
+  expectedTxHash: `0x${string}` | null,
+  context: "shield" | "transfer",
+): Strk20ReceiptObservation {
+  if (!receipt) {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, `${context}_receipt_required_before_confirmation`);
+  }
+  if (!expectedTxHash || canonicalHash(receipt.transactionHash) !== canonicalHash(expectedTxHash)) {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, `${context}_receipt_transaction_hash_mismatch`);
+  }
+  if (
+    receipt.executionStatus !== "SUCCEEDED" ||
+    (receipt.finalityStatus !== "ACCEPTED_ON_L2" && receipt.finalityStatus !== "ACCEPTED_ON_L1") ||
+    receipt.blockNumber === null ||
+    !Number.isSafeInteger(receipt.blockNumber) ||
+    receipt.blockNumber < 0 ||
+    receipt.poolEventFound !== true
+  ) {
+    throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, `${context}_receipt_not_final`);
+  }
+  return receipt;
+}
+
 export function transition(flow: Strk20Flow, input: TransitionInput): TransitionResult {
   if (!flow || typeof flow.id !== "string") throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "unknown_flow");
   if (!isKnownState(flow.state)) throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, `unknown_from:${String(flow.state)}`);
@@ -155,44 +200,40 @@ export function transition(flow: Strk20Flow, input: TransitionInput): Transition
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, `stale_version:expected_${input.expectedVersion}_got_${flow.version}`);
   }
 
-  // Maturity guard: maturing → privately_available only after ~10 blocks
+  // A confirmed/terminal M4 state is a receipt-backed observation, not a
+  // synonym for a submitted hash. Unknown/pending/reverted receipts remain
+  // dependency failures and cannot advance the workflow.
+  let finalReceipt: Strk20ReceiptObservation | null = null;
+
+  // Maturity guard: maturing → privately_available only after ~10 blocks.
   if (flow.state === "maturing" && input.to === "privately_available") {
     if (flow.confirmedBlock === null || flow.maturityTargetBlock === null) {
       throw new Strk20Error(STRK20_ERROR_CODE.MATURITY_PENDING, "missing_maturity_target");
     }
     const cur = input.currentBlock ?? null;
     if (cur === null || cur < flow.maturityTargetBlock) {
-      throw new Strk20Error(
-        STRK20_ERROR_CODE.MATURITY_PENDING,
-        `maturity_pending:${String(flow.confirmedBlock)}_target_${String(flow.maturityTargetBlock)}_cur_${String(cur)}`,
-      );
+      throw new Strk20Error(STRK20_ERROR_CODE.MATURITY_PENDING, `maturity_pending:${String(flow.confirmedBlock)}_target_${String(flow.maturityTargetBlock)}_cur_${String(cur)}`);
     }
-    // Consent gate: private balance requires explicit consent
-    if (input.balanceConsent === "denied") {
-      throw new Strk20Error(STRK20_ERROR_CODE.CONSENT_DENIED, "balance_consent_denied");
-    }
-    if (input.balanceConsent !== "granted") {
-      throw new Strk20Error(STRK20_ERROR_CODE.CONSENT_REQUIRED, "balance_consent_required_for_private_available");
-    }
+    if (input.balanceConsent === "denied") throw new Strk20Error(STRK20_ERROR_CODE.CONSENT_DENIED, "balance_consent_denied");
+    if (input.balanceConsent !== "granted") throw new Strk20Error(STRK20_ERROR_CODE.CONSENT_REQUIRED, "balance_consent_required_for_private_available");
   }
 
-  // Fee change guard: shielding / transfer_pending compare quoted vs observed if both present
+  // Fee change guard: shielding / transfer_pending compare quoted vs observed if both present.
   if ((input.to === "shielding" || input.to === "transfer_pending") && input.quotedFee !== undefined && input.observedFee !== undefined) {
     if (input.quotedFee !== null && input.observedFee !== null && input.quotedFee !== input.observedFee) {
       throw new Strk20Error(STRK20_ERROR_CODE.FEE_CHANGED, `fee_changed_quoted_${String(input.quotedFee)}_observed_${String(input.observedFee)}`);
     }
   }
 
-  // Screening distinct states
   if (input.to === "rejected" && !input.rejectionReason && !input.errorCode) {
-    // Require a reason for rejected
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "rejection_reason_required");
   }
   if (input.to === "rejected" && input.screening === "rejected" && !input.rejectionReason) {
     throw new Strk20Error(STRK20_ERROR_CODE.SCREENING_REJECTED, "screening_rejected_without_reason");
   }
 
-  // Idempotent same-state
+  // Idempotent same-state. Receipt-backed states were validated above; other
+  // transient states retain their prior semantics.
   if (flow.state === input.to) {
     if (!canTransition(flow.state, input.to)) {
       throw new Strk20Error(STRK20_ERROR_CODE.ILLEGAL_TRANSITION, `same_state_not_idempotent:${flow.state}`);
@@ -200,39 +241,43 @@ export function transition(flow: Strk20Flow, input: TransitionInput): Transition
     return { flow, idempotent: true };
   }
 
-  // Standard allowed check
   const allowed = ALLOWED[flow.state];
   if (!allowed || !allowed.has(input.to)) {
     throw new Strk20Error(STRK20_ERROR_CODE.ILLEGAL_TRANSITION, `illegal:${flow.state}->${input.to}`);
   }
 
-  // Shielding requires txHash
+  if (input.to === "confirmed") {
+    if (flow.shieldTxHash && input.shieldTxHash && canonicalHash(flow.shieldTxHash) !== canonicalHash(input.shieldTxHash)) {
+      throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "shield_tx_hash_mismatch");
+    }
+    finalReceipt = requireFinalReceipt(input.receipt ?? flow.shieldReceipt, input.shieldTxHash ?? flow.shieldTxHash, "shield");
+    if (input.confirmedBlock !== undefined && input.confirmedBlock !== null && input.confirmedBlock !== finalReceipt.blockNumber) {
+      throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "shield_receipt_block_mismatch");
+    }
+  } else if (input.to === "transfer_confirmed") {
+    if (flow.transferTxHash && input.transferTxHash && canonicalHash(flow.transferTxHash) !== canonicalHash(input.transferTxHash)) {
+      throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "transfer_tx_hash_mismatch");
+    }
+    finalReceipt = requireFinalReceipt(input.receipt ?? flow.transferReceipt, input.transferTxHash ?? flow.transferTxHash, "transfer");
+  }
+
   if (input.to === "shielding" && !input.shieldTxHash && !flow.shieldTxHash) {
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "shield_tx_required_for_shielding");
-  }
-  if (input.to === "proving" && flow.state !== "proving" && !input.transferTxHash && !flow.transferTxHash) {
-    // proving is optional pre-transfer proof stage – allow without tx hash but track if provided
   }
   if (input.to === "transfer_pending" && !input.transferTxHash && !flow.transferTxHash) {
     throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "transfer_tx_required_for_transfer_pending");
   }
-  // confirmed requires block
-  if (input.to === "confirmed" && input.confirmedBlock === null && input.confirmedBlock !== undefined) {
-    throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "confirmed_block_required");
-  }
 
-  // Build next
   let nextConfirmed = flow.confirmedBlock;
   let nextMaturityTarget: number | null = flow.maturityTargetBlock;
-  if (input.to === "confirmed" && input.confirmedBlock !== undefined && input.confirmedBlock !== null) {
-    nextConfirmed = input.confirmedBlock;
-    nextMaturityTarget = input.confirmedBlock + MATURITY_BLOCKS;
+  if (input.to === "confirmed") {
+    const block = finalReceipt!.blockNumber;
+    if (block === null) throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "shield_receipt_block_missing");
+    nextConfirmed = block;
+    nextMaturityTarget = block + MATURITY_BLOCKS;
   }
-  if (flow.state === "confirmed" && input.to === "maturing") {
-    // maturityTarget already set at confirmed
-    if (nextConfirmed === null) {
-      throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "confirmed_block_missing_for_maturing");
-    }
+  if (flow.state === "confirmed" && input.to === "maturing" && nextConfirmed === null) {
+    throw new Strk20Error(STRK20_ERROR_CODE.STALE_STATE, "confirmed_block_missing_for_maturing");
   }
 
   const next: Strk20Flow = {
@@ -248,6 +293,8 @@ export function transition(flow: Strk20Flow, input: TransitionInput): Transition
     transferTxHash: input.transferTxHash !== undefined ? input.transferTxHash : flow.transferTxHash,
     confirmedBlock: nextConfirmed,
     maturityTargetBlock: nextMaturityTarget,
+    shieldReceipt: input.to === "confirmed" ? finalReceipt : flow.shieldReceipt,
+    transferReceipt: input.to === "transfer_confirmed" ? finalReceipt : flow.transferReceipt,
     screening: input.screening !== undefined ? input.screening : flow.screening,
     rejectionReason: input.rejectionReason !== undefined ? input.rejectionReason : flow.rejectionReason,
     balanceConsent: (input.balanceConsent as Strk20Flow["balanceConsent"]) ?? flow.balanceConsent,

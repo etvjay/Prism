@@ -41,6 +41,21 @@ describe("M4 Receipt — X2 relayer sender non-attribution", () => {
     expect(r.attributedDepositor).toBeNull();
   });
 
+  it("reverted receipts do not become successful pool evidence", () => {
+    const r = buildShieldReceipt(
+      {
+        transactionHash: txHash,
+        executionStatus: "REVERTED",
+        finalityStatus: "ACCEPTED_ON_L2",
+        senderAddress: relayer,
+        events: [{ address: poolAddr, keys: [depositor], data: [], blockNumber: 100, transactionHash: txHash }],
+      },
+      {},
+    );
+    expect(r.poolEventFound).toBe(false);
+    expect(r.attributedDepositor).toBeNull();
+  });
+
   it("private transfer receipt hides amount", () => {
     const r = buildPrivateTransferReceipt(
       {

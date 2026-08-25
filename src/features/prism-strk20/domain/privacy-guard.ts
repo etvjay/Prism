@@ -11,7 +11,7 @@ const FORBIDDEN_FIELDS = new Set(["viewingKey", "viewing_key", "privateKey", "pr
  * Guard: assert that no payload contains viewing/private key material.
  * Throws VIEWING_KEY_FORBIDDEN if violated. Never logs the value.
  */
-export function assertNoViewingKey(payload: unknown, context = "unknown"): void {
+function assertNoViewingKeyInternal(payload: unknown, context: string, seen: WeakSet<object>): void {
   if (payload === null || payload === undefined) return;
   if (typeof payload === "string") {
     for (const pat of FORBIDDEN_KEY_PATTERNS) {
@@ -22,6 +22,8 @@ export function assertNoViewingKey(payload: unknown, context = "unknown"): void 
     return;
   }
   if (typeof payload === "object") {
+    if (seen.has(payload)) return;
+    seen.add(payload);
     const obj = payload as Record<string, unknown>;
     for (const k of Object.keys(obj)) {
       if (FORBIDDEN_FIELDS.has(k)) {
@@ -38,10 +40,14 @@ export function assertNoViewingKey(payload: unknown, context = "unknown"): void 
         }
       }
       if (typeof v === "object" && v !== null) {
-        assertNoViewingKey(v, `${context}.${k}`);
+        assertNoViewingKeyInternal(v, `${context}.${k}`, seen);
       }
     }
   }
+}
+
+export function assertNoViewingKey(payload: unknown, context = "unknown"): void {
+  assertNoViewingKeyInternal(payload, context, new WeakSet<object>());
 }
 
 /**

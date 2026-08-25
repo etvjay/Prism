@@ -39,8 +39,11 @@ export interface Strk20Receipt {
   feePaid: bigint | null;
 }
 
-export function normalizeHex(a: string): string {
-  return `0x${a.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+export function normalizeHex(a: unknown): string {
+  if (typeof a !== "string") throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "malformed_receipt_address");
+  const value = a.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,64}$/.test(value)) throw new Strk20Error(STRK20_ERROR_CODE.DEPENDENCY_FAILURE, "malformed_receipt_address");
+  return `0x${value.slice(2).padStart(64, "0")}`;
 }
 
 /**
@@ -53,7 +56,9 @@ export function buildShieldReceipt(receipt: TxReceiptLike, opts: { feePaid?: big
     // We intentionally ignore it; guard that downstream does not use it as user identity
     // If any caller passes sender as attributedDepositor we'd throw via separate guard.
   }
-  const poolEvents = receipt.events.filter((e) => normalizeHex(e.address) === normalizeHex(STRK20_POOL_ADDRESS));
+  const poolEvents = receipt.executionStatus === "SUCCEEDED"
+    ? receipt.events.filter((e) => normalizeHex(e.address) === normalizeHex(STRK20_POOL_ADDRESS))
+    : [];
   const poolFound = poolEvents.length > 0;
   const depositor = poolFound && poolEvents[0].keys.length > 0 ? (poolEvents[0].keys[0] as Hex) : null;
   return {
@@ -72,7 +77,9 @@ export function buildShieldReceipt(receipt: TxReceiptLike, opts: { feePaid?: big
 }
 
 export function buildPrivateTransferReceipt(receipt: TxReceiptLike, opts: { feePaid?: bigint | null }): Strk20Receipt {
-  const poolEvents = receipt.events.filter((e) => normalizeHex(e.address) === normalizeHex(STRK20_POOL_ADDRESS));
+  const poolEvents = receipt.executionStatus === "SUCCEEDED"
+    ? receipt.events.filter((e) => normalizeHex(e.address) === normalizeHex(STRK20_POOL_ADDRESS))
+    : [];
   // For private transfer, pool events still exist (nullifier/proof etc.) but amount hidden
   const poolFound = poolEvents.length > 0;
   return {
