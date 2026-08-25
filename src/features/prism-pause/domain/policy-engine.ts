@@ -8,6 +8,11 @@ import type { CheckResult } from "./checks";
 import { CHECK_ID, makeCheck } from "./checks";
 import { PauseError, PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "./errors";
 import type { ExecutionPause } from "./pause";
+import {
+  ResolutionContinuityCheck,
+  normalizeResolutionContinuitySource,
+  type ResolutionContinuitySource,
+} from "./resolution-continuity";
 
 export interface Policy {
   readonly policyVersion: string;
@@ -40,6 +45,8 @@ export interface VerificationSources {
   readonly intentPlanMatch?: { matches?: boolean | null; unknown?: boolean };
   readonly simulation?: { success?: boolean | null; effectMatches?: boolean | null; freshnessOk?: boolean | null; unknown?: boolean };
   readonly additionalApproval?: { requiresApproval?: boolean | null; unknown?: boolean };
+  /** Server-side resolver assessment; request bodies cannot populate this seam. */
+  readonly resolutionContinuity?: ResolutionContinuitySource | null;
 }
 
 export interface VerificationSourceContext {
@@ -139,6 +146,10 @@ export function normalizeVerificationSources(value: unknown): VerificationSource
     if (!isRecord(additionalApproval)) invalidSource("invalid_verification_source:additionalApproval");
     validateOptionalBoolean(additionalApproval.requiresApproval, "additionalApproval.requiresApproval");
     validateOptionalBoolean(additionalApproval.unknown, "additionalApproval.unknown");
+  }
+
+  if (value.resolutionContinuity !== undefined) {
+    normalizeResolutionContinuitySource(value.resolutionContinuity);
   }
 
   return value as VerificationSources;
@@ -537,6 +548,11 @@ export function evaluatePolicy(input: {
       checks.push(makeCheck(CHECK_ID.SIM_UNKNOWN, sim.success === undefined || sim.success === null ? "UNKNOWN" : "PASS", sim.success === undefined || sim.success === null ? "BLOCKING" : "INFO", PAUSE_REASON_CODE.SIMULATION_UNKNOWN, "simulator", now, sim.success === undefined || sim.success === null ? null : "known", "known"));
     }
   }
+
+  // Resolution continuity is a separate, typed source. Missing or unknown
+  // resolver evidence is blocking; no address/chain/visibility fact is inferred
+  // from the intent or plan alone.
+  checks.push(ResolutionContinuityCheck({ source: sources.resolutionContinuity, now }));
 
   // Policy snapshots are part of the exact decision binding. A drifted
   // version is a blocking check even when all injected observations pass.

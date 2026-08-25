@@ -14,6 +14,8 @@ import type { CheckResult, RiskLevel } from "./checks";
 import { assertTypedResults, hasBlockingFailure, deriveRiskLevel } from "./checks";
 import { createHash } from "node:crypto";
 
+const NON_BYPASSABLE_RESOLUTION_RISK_CODES = new Set(["BINDING_REVOKED", "NO_ACTIVE_DESTINATION"]);
+
 export const PAUSE_STATE = {
   PAUSED: "PAUSED",
   VERIFYING: "VERIFYING",
@@ -259,6 +261,31 @@ export function approveEscalation(pause: ExecutionPause, input: ApproveInput): E
   if (pause.checks.some((check) => check.status === "UNKNOWN") || pause.reasonCodes.includes(PAUSE_REASON_CODE.UNKNOWN_BLOCKING)) {
     // Every UNKNOWN verification result remains blocking until D-P0-003 is decided.
     throw new PauseError(PAUSE_ERROR_CODE.CHECK_UNKNOWN_BLOCKING, "unknown_blocking_cannot_approve_to_release");
+  }
+  const hardResolutionBlock = pause.checks.some((check) =>
+    check.policyOutcome === "BLOCK" ||
+    check.riskCodes?.some((riskCode: string) => NON_BYPASSABLE_RESOLUTION_RISK_CODES.has(riskCode)) === true,
+  );
+  if (hardResolutionBlock) {
+    // A hard policy BLOCK is not a confirmation request. Do not let the
+    // generic known-FAIL approval path turn a revoked/absent resolution into
+    // RELEASE_READY; the caller must obtain a fresh valid resolution instead.
+    throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_DENIED, "resolution_continuity_block_cannot_be_approved");
+  }
+  const unresolvedPolicyOutcome = pause.checks.some((check) => check.policyOutcome === "REQUIRE_CONFIRMATION" || check.policyOutcome === "ESCALATE");
+  if (unresolvedPolicyOutcome) {
+    // Approval/confirmation is an auditable decision, not a mutation of the
+    // verification facts. Keep the pause ESCALATED until a fresh verification
+    // produces PASS/ALLOW; otherwise an unchanged blocking check would be
+    // converted into a misleading RELEASE_READY state.
+    return {
+      ...pause,
+      state: PAUSE_STATE.ESCALATED,
+      version: pause.version + 1,
+      requiredApprovalCount: Math.max(0, pause.requiredApprovalCount - 1),
+      lastVerifiedAt: input.now,
+      approvalScopeHash: expectedScope,
+    };
   }
   return {
     ...pause,

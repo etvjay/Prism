@@ -23,7 +23,7 @@ import { assertRiskLevel, assertTypedResults } from "../domain/checks";
 import type { PauseDecision, PauseStore, PauseStoreTransaction, CreatePauseRecordInput } from "../ports/pause-store";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 
-export const PAUSE_STORE_SCHEMA_VERSION = 1;
+export const PAUSE_STORE_SCHEMA_VERSION = 2;
 
 export const PAUSE_STORE_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS prism_store_meta (
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS pause_checks (
 CREATE TABLE IF NOT EXISTS pause_decisions (
   decision_id TEXT PRIMARY KEY,
   pause_id TEXT NOT NULL REFERENCES execution_pauses(pause_id),
-  kind TEXT NOT NULL CHECK (kind IN ('RELEASE','CANCEL','ESCALATE','EXPIRE','REVERIFY','APPROVE')),
+  kind TEXT NOT NULL CHECK (kind IN ('RELEASE','CANCEL','ESCALATE','EXPIRE','REVERIFY','APPROVE','CONFIRM')),
   actor TEXT NOT NULL,
   policy_version TEXT NOT NULL,
   plan_hash TEXT NOT NULL,
@@ -107,10 +107,13 @@ CREATE TABLE IF NOT EXISTS pause_decisions (
   created_at BIGINT NOT NULL,
   expires_at BIGINT
 );
+ALTER TABLE pause_decisions DROP CONSTRAINT IF EXISTS pause_decisions_kind_check;
+ALTER TABLE pause_decisions ADD CONSTRAINT pause_decisions_kind_check CHECK (kind IN ('RELEASE','CANCEL','ESCALATE','EXPIRE','REVERIFY','APPROVE','CONFIRM'));
 CREATE INDEX IF NOT EXISTS idx_pause_decisions_pause_id ON pause_decisions(pause_id);
+DROP INDEX IF EXISTS idx_pause_decisions_approval_replay;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pause_decisions_approval_replay
   ON pause_decisions(pause_id, kind, plan_hash)
-  WHERE kind IN ('RELEASE','APPROVE');
+  WHERE kind IN ('RELEASE','APPROVE','CONFIRM');
 `;
 
 export type PostgresPauseStoreErrorCode =
@@ -451,7 +454,7 @@ export class PostgresPauseStore implements PauseStore {
       if (pauseRow?.plan_hash !== undefined && pauseRow.plan_hash !== decision.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, "decision_plan_hash_mismatch");
       if (pauseRow?.policy_version !== undefined && pauseRow.policy_version !== decision.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, "decision_policy_version_mismatch");
       const existing = await client.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
-      if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
+      if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE"||decision.kind==="CONFIRM")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
       await client.query(
         `INSERT INTO pause_decisions (decision_id, pause_id, kind, actor, policy_version, plan_hash, approval_scope_hash, reason_codes_json, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [decision.decisionId, decision.pauseId, decision.kind, decision.actor, decision.policyVersion, decision.planHash, decision.approvalScopeHash ?? null, JSON.stringify(decision.reasonCodes), decision.createdAt, decision.expiresAt ?? null],

@@ -268,7 +268,7 @@ export class InMemoryPauseStore implements PauseStore {
     // approval replay: same pauseId + same kind + same planHash cannot repeat (except REVERIFY maybe)
     const existing = this.decisions.get(decision.pauseId) ?? [];
     if (existing.some((d) => d.decisionId === decision.decisionId)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
-    if (decision.kind === "APPROVE" || decision.kind === "RELEASE") {
+    if (decision.kind === "APPROVE" || decision.kind === "CONFIRM" || decision.kind === "RELEASE") {
       const replay = existing.some((d) => d.kind === decision.kind && d.planHash === decision.planHash);
       if (replay) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
     }
@@ -277,7 +277,7 @@ export class InMemoryPauseStore implements PauseStore {
     // re-check after yield
     const rere = this.decisions.get(decision.pauseId) ?? [];
     if (rere.some((d) => d.decisionId === decision.decisionId)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
-    if (decision.kind === "APPROVE" || decision.kind === "RELEASE") {
+    if (decision.kind === "APPROVE" || decision.kind === "CONFIRM" || decision.kind === "RELEASE") {
       const replay2 = rere.some((d) => d.kind === decision.kind && d.planHash === decision.planHash);
       if (replay2) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay`);
     }

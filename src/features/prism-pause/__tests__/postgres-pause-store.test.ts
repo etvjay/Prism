@@ -192,6 +192,7 @@ describe("PostgresPauseStore (unit/transaction contract)", () => {
     const { PAUSE_STORE_MIGRATION_SQL } = await loadStoreModule();
 
     expect(PAUSE_STORE_MIGRATION_SQL).toContain("CREATE UNIQUE INDEX IF NOT EXISTS idx_pause_decisions_approval_replay");
-    expect(PAUSE_STORE_MIGRATION_SQL).toContain("WHERE kind IN ('RELEASE','APPROVE')");
+    expect(PAUSE_STORE_MIGRATION_SQL).toContain("DROP INDEX IF EXISTS idx_pause_decisions_approval_replay");
+    expect(PAUSE_STORE_MIGRATION_SQL).toContain("WHERE kind IN ('RELEASE','APPROVE','CONFIRM')");
   });
 });

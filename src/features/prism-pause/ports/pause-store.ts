@@ -15,7 +15,7 @@ import type { CheckResult } from "../domain/checks";
 export interface PauseDecision {
   readonly decisionId: string;
   readonly pauseId: string;
-  readonly kind: "RELEASE" | "CANCEL" | "ESCALATE" | "EXPIRE" | "REVERIFY" | "APPROVE";
+  readonly kind: "RELEASE" | "CANCEL" | "ESCALATE" | "EXPIRE" | "REVERIFY" | "APPROVE" | "CONFIRM";
   readonly actor: string; // policy_engine | user | controller | authorized_agent | operator
   readonly policyVersion: string;
   readonly planHash: Hex;

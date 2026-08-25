@@ -6,9 +6,11 @@ import { PauseError, PAUSE_ERROR_CODE, PAUSE_REASON_CODE } from "./errors";
 
 export type CheckStatus = "PASS" | "FAIL" | "UNKNOWN" | "NOT_APPLICABLE";
 export type CheckSeverity = "INFO" | "WARNING" | "BLOCKING";
+export type PolicyOutcome = "ALLOW" | "REQUIRE_CONFIRMATION" | "BLOCK" | "ESCALATE";
 
 export const CHECK_STATUSES = ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"] as const satisfies readonly CheckStatus[];
 export const CHECK_SEVERITIES = ["INFO", "WARNING", "BLOCKING"] as const satisfies readonly CheckSeverity[];
+export const POLICY_OUTCOMES = ["ALLOW", "REQUIRE_CONFIRMATION", "BLOCK", "ESCALATE"] as const satisfies readonly PolicyOutcome[];
 
 export function isCheckStatus(value: unknown): value is CheckStatus {
   return typeof value === "string" && (CHECK_STATUSES as readonly string[]).includes(value);
@@ -18,12 +20,20 @@ export function isCheckSeverity(value: unknown): value is CheckSeverity {
   return typeof value === "string" && (CHECK_SEVERITIES as readonly string[]).includes(value);
 }
 
+export function isPolicyOutcome(value: unknown): value is PolicyOutcome {
+  return typeof value === "string" && (POLICY_OUTCOMES as readonly string[]).includes(value);
+}
+
 export function assertCheckStatus(value: unknown, field = "status"): asserts value is CheckStatus {
   if (!isCheckStatus(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_check_status:${field}`);
 }
 
 export function assertCheckSeverity(value: unknown, field = "severity"): asserts value is CheckSeverity {
   if (!isCheckSeverity(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_check_severity:${field}`);
+}
+
+export function assertPolicyOutcome(value: unknown, field = "policyOutcome"): asserts value is PolicyOutcome {
+  if (!isPolicyOutcome(value)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `invalid_policy_outcome:${field}`);
 }
 
 export interface CheckResult {
@@ -36,6 +46,10 @@ export interface CheckResult {
   readonly source: string; // registry | proof_verifier | policy | simulator | route_adapter
   readonly checkedAt: number;
   readonly detail?: string | null;
+  /** Optional explicit decision vocabulary for checks that carry policy outcomes. */
+  readonly policyOutcome?: PolicyOutcome;
+  /** Optional typed risk identifiers associated with the check. */
+  readonly riskCodes?: readonly string[];
 }
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
@@ -74,6 +88,7 @@ export const CHECK_ID = {
   SIM_FRESHNESS: "PAUSE-SIM-003",
   SIM_UNKNOWN: "PAUSE-SIM-004",
   POLICY_VERSION: "PAUSE-POLICY-001",
+  RESOLUTION_CONTINUITY: "PAUSE-RESOLUTION-001",
 } as const;
 
 export function makeCheck(
@@ -86,9 +101,15 @@ export function makeCheck(
   observedValue?: string | null,
   expectedValue?: string | null,
   detail?: string | null,
+  policyOutcome?: PolicyOutcome,
+  riskCodes?: readonly string[],
 ): CheckResult {
   assertCheckStatus(status);
   assertCheckSeverity(severity);
+  if (policyOutcome !== undefined) assertPolicyOutcome(policyOutcome);
+  if (riskCodes !== undefined && (!Array.isArray(riskCodes) || riskCodes.some((risk) => typeof risk !== "string" || risk.trim().length === 0))) {
+    throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_risk_codes_invalid");
+  }
   if (typeof checkId !== "string" || checkId.trim().length === 0) {
     throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "check_id_required");
   }
@@ -116,6 +137,8 @@ export function makeCheck(
     source,
     checkedAt,
     detail: detail ?? null,
+    ...(policyOutcome !== undefined ? { policyOutcome } : {}),
+    ...(riskCodes !== undefined ? { riskCodes: [...riskCodes] } : {}),
   };
 }
 
@@ -125,6 +148,7 @@ export function canAutoRelease(checks: readonly CheckResult[]): boolean {
   if (!Array.isArray(checks) || checks.length === 0) return false;
   assertTypedResults(checks);
   for (const c of checks) {
+    if (c.policyOutcome !== undefined && c.policyOutcome !== "ALLOW") return false;
     if (c.severity === "BLOCKING" && (c.status === "FAIL" || c.status === "UNKNOWN")) return false;
   }
   return true;
@@ -134,7 +158,10 @@ export function canAutoRelease(checks: readonly CheckResult[]): boolean {
 export function hasBlockingFailure(checks: readonly CheckResult[]): boolean {
   if (!Array.isArray(checks)) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "checks_must_be_array");
   assertTypedResults(checks);
-  return checks.some((c) => c.severity === "BLOCKING" && (c.status === "FAIL" || c.status === "UNKNOWN"));
+  return checks.some((c) =>
+    (c.policyOutcome !== undefined && c.policyOutcome !== "ALLOW") ||
+    (c.severity === "BLOCKING" && (c.status === "FAIL" || c.status === "UNKNOWN")),
+  );
 }
 
 // Compute risk level from check severities/statuses
@@ -160,6 +187,10 @@ export function assertTypedResults(checks: readonly CheckResult[]): void {
     }
     assertCheckStatus(candidate.status, `checks[${index}].status`);
     assertCheckSeverity(candidate.severity, `checks[${index}].severity`);
+    if (candidate.policyOutcome !== undefined) assertPolicyOutcome(candidate.policyOutcome, `checks[${index}].policyOutcome`);
+    if (candidate.riskCodes !== undefined && (!Array.isArray(candidate.riskCodes) || candidate.riskCodes.some((risk) => typeof risk !== "string" || risk.trim().length === 0))) {
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_risk_codes_invalid:${index}`);
+    }
     if (typeof candidate.reasonCode !== "string" || candidate.reasonCode.trim().length === 0) {
       throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `check_reason_code_required:${index}`);
     }

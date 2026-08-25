@@ -4,3 +4,4 @@ export * from "./execution-plan";
 export * from "./checks";
 export * from "./pause";
 export * from "./policy-engine";
+export * from "./resolution-continuity";

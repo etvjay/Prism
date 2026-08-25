@@ -455,7 +455,8 @@ export class PauseService {
     const intent = await this.store.getIntent(pause.intentId);
     if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
     const authority = await this.resolveAuthority({ action: "approve", subject: input.authoritySubject, claimedActor: input.authorityClaim, pause, intent, plan });
-    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: next.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
+    const decisionKind: PauseDecision["kind"] = pause.checks.some((check) => check.policyOutcome === "REQUIRE_CONFIRMATION") ? "CONFIRM" : "APPROVE";
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: decisionKind, actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: next.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
     const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_approved", { to: persisted.state }); } catch {}
     return persisted;
