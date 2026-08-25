@@ -48,6 +48,46 @@ export interface IdentityData {
   readonly watermark?: number | null;
 }
 
+export type BindingVisibility = "PUBLIC" | "PRIVATE";
+export type BindingStatus = "ACTIVE" | "REVOKED";
+
+export interface BindingEndpointData {
+  readonly id: string;
+  readonly chain: "STARKNET" | "BASE";
+  readonly chainId: string;
+  readonly kind: "ACCOUNT" | "STRK20_PRIVATE_CONTEXT" | "STRK20_SHADOW_ACCOUNT";
+  readonly address?: string;
+}
+
+export interface PublicBindingData {
+  readonly bindingId: string;
+  readonly prismId: string;
+  readonly visibility: "PUBLIC";
+  readonly status: "ACTIVE";
+  readonly version: number;
+  readonly endpoint: BindingEndpointData;
+  readonly historicalPublic: true;
+  readonly publiclyExposedAt: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/** Owner/private audience response. It is never returned by the public list. */
+export interface OwnerPrivateBindingData {
+  readonly bindingId: string;
+  readonly prismId: string;
+  readonly visibility: "PRIVATE";
+  readonly status: BindingStatus;
+  readonly version: number;
+  readonly endpoint: BindingEndpointData;
+  readonly historicalPublic: boolean;
+  readonly publiclyExposedAt: number | null;
+  readonly hiddenAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly historicalPublicWarning: { readonly code: string; readonly message: string } | null;
+}
+
 export interface ResolveData {
   readonly prismId: string;
   readonly venue: string;

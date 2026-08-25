@@ -25,6 +25,12 @@ export interface ExecutionEndpoint {
 export const BINDING_VISIBILITIES = ["PUBLIC", "SELECTIVE", "PRIVATE"] as const;
 export type BindingVisibility = (typeof BINDING_VISIBILITIES)[number];
 
+/** Durable v0 projection supported by the current binding store. */
+export const PERSISTED_V0_BINDING_VISIBILITIES = ["PUBLIC", "PRIVATE"] as const;
+export type PersistedV0BindingVisibility = (typeof PERSISTED_V0_BINDING_VISIBILITIES)[number];
+export const PERSISTED_V0_BINDING_LIFECYCLE = "PERSISTENT" as const;
+export type PersistedV0BindingLifecycle = typeof PERSISTED_V0_BINDING_LIFECYCLE;
+
 export const BINDING_LIFECYCLES = ["PERSISTENT", "SESSION", "EPHEMERAL"] as const;
 export type BindingLifecycle = (typeof BINDING_LIFECYCLES)[number];
 
@@ -59,6 +65,15 @@ export interface Binding {
   readonly revokedAt?: number;
   readonly publicExposure?: PublicExposure;
 }
+
+/**
+ * Type-level projection for the current durable store. A SELECTIVE/session or
+ * ephemeral binding is valid domain state but cannot satisfy this v0 type.
+ */
+export type V0PersistableBinding = Binding & {
+  readonly visibility: PersistedV0BindingVisibility;
+  readonly lifecycle: PersistedV0BindingLifecycle;
+};
 
 export interface CreateBindingInput {
   readonly id: string;

@@ -7,6 +7,7 @@
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { AppSession } from "./auth";
+import type { BindingView, PublicBindingView } from "../features/prism-identity/domain/binding-disclosure";
 
 // ---------------------------------------------------------------------------
 // Envelope primitives
@@ -128,6 +129,11 @@ export interface BindPayload {
   readonly venue: string;
   readonly executionAccount: string;
   readonly proofDigest: Hex;
+  /** Challenge record reference; legacy clients may omit it and are resolved by digest. */
+  readonly challengeId?: Hex;
+  /** Optional echoed challenge fields; when present they must match the stored record exactly. */
+  readonly chainId?: number;
+  readonly expiresAt?: number;
   /** Starknet controller address that signs the binding tx — must equal identity.controller (ERR-004). */
   readonly controllerAddress: string;
 }
@@ -173,6 +179,21 @@ export interface ResolveData {
   readonly exists: boolean;
   readonly watermark?: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Binding disclosure queries — audience is explicit at the route boundary.
+// ---------------------------------------------------------------------------
+
+export interface ListPublicBindingsQuery {
+  readonly prismId: string;
+}
+
+export interface ListOwnerPrivateBindingsPayload {
+  readonly prismId: string;
+}
+
+export type ListPublicBindingsData = readonly PublicBindingView[];
+export type ListOwnerPrivateBindingsData = readonly BindingView[];
 
 // ---------------------------------------------------------------------------
 // Operation query

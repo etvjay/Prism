@@ -15,6 +15,8 @@ import type {
   PauseData,
   AppSession,
   IntentPurpose,
+  PublicBindingData,
+  OwnerPrivateBindingData,
 } from "./types";
 
 export interface PrismClientConfig {
@@ -129,11 +131,34 @@ export class PrismClient {
   };
 
   bindings = {
+    listPublic: async (prismId: PrismId, opts?: { requestId?: string | null }): Promise<SdkResponse<readonly PublicBindingData[]>> => {
+      const headers = buildHeaders(undefined, { requestId: opts?.requestId ?? null, extra: this.defaultHeaders });
+      const res = await this.doFetch(this.url(`/v1/identity/${encodeURIComponent(prismId)}/bindings?audience=public`), {
+        method: "GET",
+        headers,
+      });
+      return parseSdkResponse(res);
+    },
+
+    listPrivate: async (prismId: PrismId, opts?: { requestId?: string | null; session?: AppSession }): Promise<SdkResponse<readonly OwnerPrivateBindingData[]>> => {
+      const session = opts?.session ?? this.defaultSession;
+      if (!session) return { ok: false, error: { code: "OWNER_AUTHORIZATION_REQUIRED", name: "owner_authorization_required", category: "authorization", retryable: "no", userAction: "authenticate_owner", httpStatusHint: 401, detail: "missing_app_session" } };
+      const headers = buildHeaders(session, { requestId: opts?.requestId ?? null, extra: this.defaultHeaders });
+      const res = await this.doFetch(this.url(`/v1/identity/${encodeURIComponent(prismId)}/bindings/private`), {
+        method: "GET",
+        headers,
+      });
+      return parseSdkResponse(res);
+    },
+
     create: async (input: {
       prismId: PrismId;
       venue?: Venue;
       executionAccount: string;
       proofDigest: Hex;
+      challengeId: Hex;
+      chainId: number;
+      expiresAt: number;
       controllerAddress: string;
       idempotencyKey?: string;
       correlationId?: string | null;
@@ -148,7 +173,17 @@ export class PrismClient {
       const res = await this.doFetch(this.url(`/v1/identity/${encodeURIComponent(input.prismId)}/bindings`), {
         method: "POST",
         headers,
-        body: JSON.stringify({ venue: input.venue ?? "BASE", executionAccount: input.executionAccount, proofDigest: input.proofDigest, controllerAddress: input.controllerAddress, session, correlationId: input.correlationId ?? null }),
+        body: JSON.stringify({
+          venue: input.venue ?? "BASE",
+          executionAccount: input.executionAccount,
+          proofDigest: input.proofDigest,
+          challengeId: input.challengeId,
+          chainId: input.chainId,
+          expiresAt: input.expiresAt,
+          controllerAddress: input.controllerAddress,
+          session,
+          correlationId: input.correlationId ?? null,
+        }),
       });
       return parseSdkResponse(res);
     },

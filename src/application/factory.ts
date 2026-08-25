@@ -10,6 +10,15 @@ import { fixedClock } from "../features/prism-identity/adapters/clock";
 import { normalizeStarknetContractAddress } from "../features/prism-identity/domain/starknet-boundary";
 import { InMemoryOwnershipProofStore } from "../features/prism-identity/adapters/memory-ownership-proof-store";
 import { PostgresOwnershipProofStore } from "../features/prism-identity/adapters/postgres-ownership-proof-store";
+import { InMemoryBindingDisclosureStore } from "../features/prism-identity/adapters/memory-binding-disclosure-store";
+import { PostgresBindingDisclosureStore } from "../features/prism-identity/adapters/postgres-binding-disclosure-store";
+import { UnconfiguredPrivateBindingProtection } from "../features/prism-identity/adapters/unconfigured-private-binding-protection";
+import { BindingDisclosureService } from "../features/prism-identity/application/binding-disclosure-service";
+import type {
+  BindingDisclosureStore,
+  BindingOwnerAuthorizationPort,
+  PrivateBindingProtectionPort,
+} from "../features/prism-identity/domain/binding-disclosure";
 import { viemChallengeCrypto } from "../features/prism-identity/adapters/viem-crypto";
 import { LocalErc1271SemanticsChecker } from "../features/prism-identity/testing/fixtures";
 import { PrismChallengeService } from "../features/prism-identity/application/challenge-service";
@@ -130,6 +139,12 @@ export interface FactoryStarknetOverrides {
   /** Test-only adapter constructor receives the factory-owned OperationStore. */
   testOnlyPauseSettlementAdapterFactory?: (operationStore: OperationStore) => Map<SettlementChain, PauseExecutionAdapter>;
   submitPort?: StarknetSubmitPort;
+  /** Explicit binding/disclosure store for isolated tests; production uses PostgreSQL. */
+  bindingDisclosureStore?: BindingDisclosureStore;
+  /** Owner authority is never inferred from a session; missing means fail closed. */
+  bindingOwnerAuthorization?: BindingOwnerAuthorizationPort | null;
+  /** Real provider only; the default is an explicit blocked adapter, never fake encryption. */
+  privateBindingProtection?: PrivateBindingProtectionPort | null;
 }
 
 export interface AppFactory {
@@ -154,6 +169,11 @@ export interface AppFactory {
   pauseStore: PauseStore;
   receiptService: ReceiptService;
   challengeService: PrismChallengeService;
+  /** Durable PUBLIC/PRIVATE disclosure store; v0 persistence never accepts SELECTIVE. */
+  bindingDisclosureStore: BindingDisclosureStore;
+  bindingDisclosureService: BindingDisclosureService;
+  bindingOwnerAuthorization?: BindingOwnerAuthorizationPort | null;
+  privateBindingProtection: PrivateBindingProtectionPort;
   prismEventsStore?: PostgresPrismEventsStore | null;
   /** Durable canonical-event projection; constructed only with Postgres + configured Starknet read. */
   eventProjectionCoordinator?: EventProjectionCoordinator | null;
@@ -463,6 +483,17 @@ function createMemoryFactory(
     policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: 84532 },
   });
   const operationStore = new InMemoryOperationStore();
+  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new InMemoryBindingDisclosureStore();
+  const privateBindingProtection = overrides?.privateBindingProtection ?? new UnconfiguredPrivateBindingProtection();
+  const bindingOwnerAuthorization = overrides?.bindingOwnerAuthorization;
+  let bindingN = 1;
+  const bindingDisclosureService = new BindingDisclosureService({
+    store: bindingDisclosureStore,
+    ownerAuthorization: bindingOwnerAuthorization,
+    privateBindingProtection,
+    clock,
+    idGenerator: { generateBindingId: () => `binding-${bindingN++}` },
+  });
   const registry = new InMemoryRegistry();
   // Attempt Starknet read wiring — fail-closed on invalid env, else fallback to memory for dev/test
   let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null = null;
@@ -501,7 +532,11 @@ function createMemoryFactory(
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
-  const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
+  const handlers = createPrismApiHandlers(app, {
+    assertChainTouchingConfigured,
+    bindingDisclosureService,
+    bindingDisclosureClock: clock,
+  });
   const pauseStore = new InMemoryPauseStore();
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = runtimeMode === "test"
@@ -549,6 +584,7 @@ function createMemoryFactory(
       (ownershipStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       (operationStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       (pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
+      bindingDisclosureStore.close?.().catch(() => undefined),
     ]);
   };
   return {
@@ -567,6 +603,10 @@ function createMemoryFactory(
     pauseStore,
     receiptService,
     challengeService,
+    bindingDisclosureStore,
+    bindingDisclosureService,
+    bindingOwnerAuthorization,
+    privateBindingProtection,
     prismEventsStore: null,
     eventProjectionCoordinator: null,
     projectionReadPort: null,
@@ -603,6 +643,9 @@ async function createPostgresFactory(
   const pauseStore = new PostgresPauseStore({ connectionString: url });
   const prismEventsStore = new PostgresPrismEventsStore({ connectionString: url });
   const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore({ connectionString: url });
+  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore({ connectionString: url });
+  const privateBindingProtection = overrides?.privateBindingProtection ?? new UnconfiguredPrivateBindingProtection();
+  const bindingOwnerAuthorization = overrides?.bindingOwnerAuthorization;
 
   try {
     await ownershipStore.migrate();
@@ -610,9 +653,10 @@ async function createPostgresFactory(
     await pauseStore.migrate();
     await prismEventsStore.migrate();
     await projectionCheckpointStore.migrate();
+    await bindingDisclosureStore.migrate?.();
   } catch (cause) {
     // Close any pools that were opened before rethrowing fail-closed
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
     if (cause instanceof AppError) throw cause;
     // Wrap driver error as stable 503 without leaking URL
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_connect_or_migrate_failed:${(cause as Error)?.message?.slice(0, 80) ?? "unknown"}`);
@@ -627,7 +671,7 @@ async function createPostgresFactory(
     starknetError = e as Error;
   }
   if (starknetError) {
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
     throw starknetError;
   }
   const registry = new InMemoryRegistry(); // Fallback registry for test helpers; real read path uses registryReadPort
@@ -660,7 +704,7 @@ async function createPostgresFactory(
     try {
       assertChainTouchingConfigured();
     } catch (cause) {
-      await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined)]);
+      await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
       throw cause;
     }
   }
@@ -672,6 +716,14 @@ async function createPostgresFactory(
     checker,
     store: ownershipStore,
     policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: 84532 },
+  });
+  let bindingN = 1;
+  const bindingDisclosureService = new BindingDisclosureService({
+    store: bindingDisclosureStore,
+    ownerAuthorization: bindingOwnerAuthorization,
+    privateBindingProtection,
+    clock,
+    idGenerator: { generateBindingId: () => `binding-${bindingN++}` },
   });
   let n = 1;
   const app = new PrismApplicationService({
@@ -685,7 +737,11 @@ async function createPostgresFactory(
     clock,
     idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
   });
-  const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
+  const handlers = createPrismApiHandlers(app, {
+    assertChainTouchingConfigured,
+    bindingDisclosureService,
+    bindingDisclosureClock: clock,
+  });
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = runtimeMode === "test"
     ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
@@ -732,6 +788,7 @@ async function createPostgresFactory(
       pauseStore.close?.().catch(() => undefined),
       prismEventsStore.close().catch(() => undefined),
       projectionCheckpointStore.close().catch(() => undefined),
+      bindingDisclosureStore.close?.().catch(() => undefined),
     ]);
   };
   return {
@@ -750,6 +807,10 @@ async function createPostgresFactory(
     pauseStore,
     receiptService,
     challengeService,
+    bindingDisclosureStore,
+    bindingDisclosureService,
+    bindingOwnerAuthorization,
+    privateBindingProtection,
     prismEventsStore,
     eventProjectionCoordinator,
     projectionReadPort,
@@ -876,6 +937,7 @@ export function resetFactory() {
       (s.pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.prismEventsStore?.close().catch(() => undefined),
       s.projectionCheckpointStore?.close().catch(() => undefined),
+      s.bindingDisclosureStore?.close?.().catch(() => undefined),
       s.reconciliationWorker?.stop(),
     ]);
     // also shutdown worker
@@ -901,6 +963,7 @@ export async function closeFactory(): Promise<void> {
       (s.pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.prismEventsStore?.close().catch(() => undefined),
       s.projectionCheckpointStore?.close().catch(() => undefined),
+      s.bindingDisclosureStore?.close?.().catch(() => undefined),
       s.shutdown?.().catch(() => undefined),
     ]);
   }

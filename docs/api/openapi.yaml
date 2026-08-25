@@ -96,14 +96,59 @@ components:
 
     BindRequest:
       type: object
-      required: [venue, executionAccount, proofDigest, controllerAddress]
+      required: [venue, executionAccount, proofDigest, challengeId, chainId, expiresAt, controllerAddress]
       properties:
         venue: { type: string, enum: [BASE], example: BASE }
         executionAccount: { type: string, pattern: "^0x[0-9a-fA-F]{40}$", example: "0x1111111111111111111111111111111111111111" }
-        proofDigest: { type: string, pattern: "^0x[0-9a-fA-F]{64}$" }
+        proofDigest: { type: string, pattern: "^0x[0-9a-fA-F]{64}$", description: "Must equal the digest in the referenced VERIFIED challenge record." }
+        challengeId: { type: string, pattern: "^0x[0-9a-fA-F]{64}$", description: "Server-issued challenge reference; challengeId equals the stored proof digest." }
+        chainId: { type: integer, minimum: 1, example: 84532, description: "Must equal the referenced challenge chain id." }
+        expiresAt: { type: integer, example: 1789000600, description: "Must equal the referenced challenge expiry." }
         controllerAddress: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$", example: "0x0000000000000000000000000000000000000000000000000000000000001234" }
         session: { type: object }
         expectedVersion: { type: integer, nullable: true }
+
+    BindingEndpoint:
+      type: object
+      required: [id, chain, chainId, kind]
+      properties:
+        id: { type: string }
+        chain: { type: string, enum: [STARKNET, BASE] }
+        chainId: { type: string }
+        kind: { type: string, enum: [ACCOUNT, STRK20_PRIVATE_CONTEXT, STRK20_SHADOW_ACCOUNT] }
+        address: { type: string, description: Present only in the audience authorized to receive the endpoint. }
+
+    PublicBinding:
+      type: object
+      required: [bindingId, prismId, visibility, status, version, endpoint, historicalPublic, publiclyExposedAt, createdAt, updatedAt]
+      properties:
+        bindingId: { type: string }
+        prismId: { type: string }
+        visibility: { type: string, enum: [PUBLIC] }
+        status: { type: string, enum: [ACTIVE] }
+        version: { type: integer }
+        endpoint: { $ref: '#/components/schemas/BindingEndpoint' }
+        historicalPublic: { type: boolean, enum: [true] }
+        publiclyExposedAt: { type: integer }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+
+    OwnerPrivateBinding:
+      type: object
+      required: [bindingId, prismId, visibility, status, version, endpoint, historicalPublic, publiclyExposedAt, hiddenAt, createdAt, updatedAt, historicalPublicWarning]
+      properties:
+        bindingId: { type: string }
+        prismId: { type: string }
+        visibility: { type: string, enum: [PRIVATE] }
+        status: { type: string, enum: [ACTIVE, REVOKED] }
+        version: { type: integer }
+        endpoint: { $ref: '#/components/schemas/BindingEndpoint' }
+        historicalPublic: { type: boolean }
+        publiclyExposedAt: { type: integer, nullable: true }
+        hiddenAt: { type: integer, nullable: true }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+        historicalPublicWarning: { type: object, nullable: true }
 
     RevokeRequest:
       type: object
@@ -190,6 +235,43 @@ paths:
         '404': { description: Identity not found (ERR-010)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
 
   /v1/identity/{prismId}/bindings:
+    get:
+      summary: List active public bindings (QRY-8-02, public audience only)
+      description: |
+        Returns only ACTIVE PUBLIC rows. PRIVATE rows and SELECTIVE domain
+        policies are never collapsed into this projection. SELECTIVE and
+        non-persistent lifecycle selectors are deferred with 501.
+      parameters:
+        - name: prismId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^prism:[1-9][0-9A-Za-z]*$", example: "prism:1" }
+        - name: audience
+          in: query
+          required: false
+          schema: { type: string, enum: [public], default: public }
+        - name: visibility
+          in: query
+          required: false
+          schema: { type: string, enum: [PUBLIC, SELECTIVE, PRIVATE] }
+        - name: lifecycle
+          in: query
+          required: false
+          schema: { type: string, enum: [PERSISTENT, SESSION, EPHEMERAL] }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Active public bindings; no private endpoint data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  data: { type: array, items: { $ref: '#/components/schemas/PublicBinding' } }
+        '501': { description: SELECTIVE or non-persistent lifecycle is deferred, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: Binding store unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
     post:
       summary: Bind execution identity (OP-8-01, controller-only, digest single-use)
       parameters:
@@ -210,6 +292,38 @@ paths:
         '200': { description: Submitted, content: { application/json: { schema: { type: object } } } }
         '403': { description: Not controller (ERR-004)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
         '409': { description: Digest already consumed (ERR-007) / binding already active (ERR-008) / idempotency conflict (ERR-023)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/identity/{prismId}/bindings/private:
+    get:
+      summary: List owner-authorized private bindings (QRY-8-03)
+      description: |
+        Requires an app session and an independent owner-authorization decision.
+        The private protection port must prove recovery before any private
+        endpoint is returned. There is no public fallback.
+      security:
+        - prismSession: []
+      parameters:
+        - name: prismId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^prism:[1-9][0-9A-Za-z]*$", example: "prism:1" }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/SessionUser'
+      responses:
+        '200':
+          description: Owner-authorized private bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  data: { type: array, items: { $ref: '#/components/schemas/OwnerPrivateBinding' } }
+        '401': { description: Missing owner/app authorization, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '403': { description: Owner authorization denied, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: Owner authorization or key-management proof unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
 
   /v1/identity/{prismId}/bindings/{bindingId}/revoke:
     post:

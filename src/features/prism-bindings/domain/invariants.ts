@@ -18,6 +18,7 @@ import {
   BINDING_VISIBILITIES,
   CHAIN_NAMESPACES,
   ENDPOINT_KINDS,
+  PERSISTED_V0_BINDING_LIFECYCLE,
   type Binding,
   type BindingLifecycle,
   type BindingStatus,
@@ -26,6 +27,7 @@ import {
   type CreateBindingInput,
   type ExecutionEndpoint,
   type PublicExposure,
+  type V0PersistableBinding,
 } from "./types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -117,6 +119,18 @@ export function assertBinding(value: unknown): asserts value is Binding {
     invariant(value.publicExposure !== undefined, "public_binding_requires_exposure_record");
     invariant(value.publicExposure.unpublishedAt === undefined, "active_public_binding_cannot_be_unpublished");
   }
+}
+
+/**
+ * Runtime guard for callers crossing into the durable v0 projection. The
+ * broader domain still accepts SELECTIVE and short-lived lifecycles; this
+ * guard makes their deferred persistence status explicit.
+ */
+export function assertV0PersistableBinding(value: unknown): asserts value is V0PersistableBinding {
+  assertBinding(value);
+  if (value.visibility === "SELECTIVE") throw new IdentityAuthorityDomainError("selective_persistence_deferred");
+  invariant(value.visibility === "PUBLIC" || value.visibility === "PRIVATE", "unsupported_v0_binding_visibility");
+  invariant(value.lifecycle === PERSISTED_V0_BINDING_LIFECYCLE, "non_persistent_lifecycle_deferred");
 }
 
 export function assertBindingUsesDisclosurePolicy(binding: Binding, policy: DisclosurePolicy): void {

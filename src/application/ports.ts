@@ -5,6 +5,14 @@
 
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { StoredOwnershipChallenge } from "../features/prism-identity/domain/ports";
+import type {
+  AppCommandRequest,
+  AppResponse,
+  IssueChallengeData,
+  IssueChallengePayload,
+  SubmitProofData,
+  SubmitProofPayload,
+} from "./schemas";
 import { StarknetSubmitAdapter } from "../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../features/prism-operations/adapters/starknet-submit-v2";
 
@@ -13,6 +21,32 @@ import { StarknetSubmitAdapterV2 } from "../features/prism-operations/adapters/s
 // ---------------------------------------------------------------------------
 export type { ChallengeCrypto, Clock, OwnershipProofStore, SmartWalletSignatureChecker } from "../features/prism-identity/domain/ports";
 export type { OperationStore } from "../features/prism-operations/domain/operation-store";
+export type {
+  BindingDisclosureStore,
+  BindingOwnerAuthorizationPort,
+  PrivateBindingProtectionPort,
+  BindingOwnerActor,
+  BindingView,
+  PublicBindingView,
+} from "../features/prism-identity/domain/binding-disclosure";
+export type {
+  BaseProofProviderPort,
+  BaseProofProviderResult,
+  BaseProofProviderFailure,
+} from "../features/wallet/session/base-proof-adapter";
+
+/**
+ * Challenge/proof application boundary used by user-controlled wallet
+ * sessions. The browser/provider adapter is injected at the other side of
+ * this port; it never reaches into the application service or a global wallet.
+ */
+export interface ChallengeProofApplicationPort {
+  issueChallenge(req: AppCommandRequest<IssueChallengePayload>): Promise<AppResponse<IssueChallengeData>>;
+  submitProof(req: AppCommandRequest<SubmitProofPayload>): Promise<AppResponse<SubmitProofData>>;
+}
+
+/** Descriptive alias for callers that name this the challenge/proof port. */
+export type ChallengeProofPort = ChallengeProofApplicationPort;
 
 // ---------------------------------------------------------------------------
 // Starknet registry / submission boundary
