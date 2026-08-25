@@ -41,18 +41,20 @@ V1 remains deployed and readable as historical/legacy evidence. It is not upgrad
 ```text
 V2 class hash:          0x4349a331b4339c1f20ccdb745e2d60a194f8da64cb789bb70bf60463f42dd8d
 V2 registry address:    0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d
-V2 declaration tx:      NOT_OBSERVED
-V2 deployment tx:       NOT_OBSERVED
+V2 declaration tx:      0x3c985643617838bec5297fb7082934b508704a9797df533384f9113ebe082d2
+V2 deployment tx:       0x35c59151290b94f751c09f73e1b9391c6a5d7dfe4f3f76ede35a31826c3a175
 V2 deployment block:    14015842
 V2 canonical identity:  prism:1 (fresh identity observed)
 V2 identity tx:         0x72c6651c52d1f8b90419da04d0dd27b6b5515e40d68b57504f00ef509696dc0
+M3 Base proof digest:   0xb2fea30342b815252bd594185077ccfed9b72074a10098b953e8fbfd1fe8b20e
+M3 digest low/high:    0xd9b72074a10098b953e8fbfd1fe8b20e / 0xb2fea30342b815252bd594185077ccfe
 M3 bind tx:             0x65f654fa67b080cbd3789cabe8779377a640d2f79d2818385636196157ba974
 M3 bind block:          14017479
 M3 revoke tx:           0x5068e6d21e6df05f0a6e1a9a170422bfcdbfc81b9bcb7c6a4939b8dfb0f2a42
 M3 revoke block:        14017549
 ```
 
-The public deployment block, V2 address/class hash, fresh `prism:1` transaction, and direct M3 bind/revoke transaction readbacks are recorded above. Declaration/deployment transaction hashes were not supplied here and remain `NOT_OBSERVED`. Durable indexer/projection observation remains open.
+These values were recorded only after user-authorized declaration/deployment, receipt verification, registry class-hash readback, fresh identity readback, controller-signed V2 bind, revoke, and two-path state readback. Canonical V2 runtime configuration is implemented; durable indexer/projection observation and repeated/restart evidence remain open.
 
 ## Fresh-instance policy
 
@@ -106,22 +108,22 @@ The V2 submit adapter must be selected explicitly. V1's felt-masked adapter must
 
 ```text
 [x] V2 class hash at V2 address matches declared artifact
-[x] deployment receipt succeeded (deployment block 14015842 observed)
-[x] fresh create_identity transaction succeeded (prism:1 tx recorded above)
-[x] PrismIdentityCreated event/readback observed
+[x] deployment receipt succeeded
+[x] fresh create_identity transaction succeeded
+[x] PrismIdentityCreated event matches V2 address and controller
 [x] get_identity readback matches creation event
-[x] independent readbacks match
+[x] independent second-RPC readback matches
 [x] V2 high/low u256 calldata is exact and ordered low then high
-[x] controller-signed bind succeeds (M3 bind tx recorded above)
-[x] ExecutionIdentityBound event/readback observed
+[x] controller-signed bind succeeds
+[x] ExecutionIdentityBound event contains exact u256 digest limbs
 [x] resolve returns ACTIVE destination
-[x] revoke succeeds (M3 revoke tx recorded above)
+[x] revoke succeeds
 [x] resolve returns NO_ACTIVE_DESTINATION
 [x] original identity remains readable after revoke
 [ ] durable indexer/projection reads V2 events from V2 deployment block
 ```
 
-No V2 maturity promotion is valid from source/build tests alone. The supplied testnet deployment/readback facts support the direct V2 identity/M3 claim; durable projection remains unobserved.
+No V2 maturity promotion is valid from source/build tests alone. The deployment, receipt, event, and independent-read envelope must be recorded separately.
 
 ## Signer and funding requirements
 
