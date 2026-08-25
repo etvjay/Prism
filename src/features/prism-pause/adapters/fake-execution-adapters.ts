@@ -41,12 +41,15 @@ abstract class FakeBaseAdapter implements PauseExecutionAdapter {
     } else if (cur.state === "awaiting_authorization") {
       cur = await this.operationStore.transition(opId, { to: "ready", now, expectedVersion: cur.version });
     }
-    if (cur.state !== "ready") {
+    if (cur.state !== "ready" && cur.state !== "requires_attention") {
       // already beyond ready — attempt submitted idempotently if already submitted
       if (["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(cur.state)) {
         return cur;
       }
       throw new Error(`operation_not_ready_for_submit:state=${cur.state}`);
+    }
+    if (cur.state === "requires_attention" && !cur.submissionAttempted) {
+      throw new Error("operation_requires_attention_without_submission_fence");
     }
     const submitted = await this.operationStore.transition(opId, {
       to: "submitted",

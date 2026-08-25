@@ -4,12 +4,13 @@ import { createIsolatedFactory } from "../../../application/factory";
 import { parseHeaders } from "../../../application/http-helpers";
 import { testPauseAuthorityResolver } from "./test-authority";
 import { testPauseVerificationSourceProvider } from "./test-verification-sources";
+import { createFakeAdapterRegistry } from "../adapters/fake-execution-adapters";
 
 function headersOf(obj: { headers: Headers }): string | null { return null; }
 
 describe("P6 transport/API convergence + SDK hash vocabulary", () => {
   it("REST Pause routes use rigorous PauseService and expose stable hash/CAS/error semantics", async () => {
-    const factory = createIsolatedFactory(1_800_000_000, { pauseAuthorityResolver: testPauseAuthorityResolver, verificationSourceProvider: testPauseVerificationSourceProvider, submitPortRegistryVersion: "v1" });
+    const factory = createIsolatedFactory(1_800_000_000, { pauseAuthorityResolver: testPauseAuthorityResolver, verificationSourceProvider: testPauseVerificationSourceProvider, testOnlyPauseSettlementAdapterFactory: (operationStore) => createFakeAdapterRegistry(operationStore), submitPortRegistryVersion: "v1" });
     // Create intent via service (simulates POST /v1/intents with Idempotency-Key + Correlation)
     const intent = await factory.pauseService.createIntent({
       prismId: "prism:alice",

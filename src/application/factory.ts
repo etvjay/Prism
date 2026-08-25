@@ -1,5 +1,6 @@
 // Singleton factory for route handlers — environment-aware but injectable for tests.
-// No live broadcast: ports are fakes unless env wiring is explicitly enabled.
+// No live settlement adapter is wired by default. Test doubles are accepted
+// only through explicit test-only factory overrides.
 // Postgres wiring is environment-gated via PRISM_POSTGRES_TEST_URL (or PRISM_POSTGRES_URL).
 // - If URL present and valid → Postgres adapters (challenge/operation/pause/event) with migrate fail-closed.
 // - If URL absent/invalid and NODE_ENV=production or PRISM_REQUIRE_POSTGRES=1 → fail-closed 503, never silent memory fallback.
@@ -23,12 +24,12 @@ import type { OperationStore } from "../features/prism-operations/domain/operati
 import type { PauseStore } from "../features/prism-pause/ports/pause-store";
 import { InMemoryPauseStore } from "../features/prism-pause/adapters/memory-pause-store";
 import { PostgresPauseStore } from "../features/prism-pause/adapters/postgres-pause-store";
+import type { PauseExecutionAdapter, SettlementChain } from "../features/prism-pause/ports/execution-adapter";
 import { InMemoryRegistry } from "./adapters/in-memory-registry";
 import { PrismApplicationService } from "./prism-application";
 import { createPrismApiHandlers } from "./handlers";
 import { InMemoryPauseService } from "./pause-port";
 import { InMemoryPauseMetrics } from "../features/prism-pause/ports/metrics";
-import { createFakeAdapterRegistry } from "../features/prism-pause/adapters/fake-execution-adapters";
 import { ReceiptService } from "./receipt-service";
 import { AppError, APP_ERROR_CODE } from "./errors";
 import { StarknetRegistryReader, getStarknetRpcUrl, getStarknetRegistryAddress, isStarknetReadConfigured, isStarknetRpcUrlValid } from "./adapters/starknet-registry-reader";
@@ -105,6 +106,10 @@ export interface FactoryStarknetOverrides {
   pauseAuthorityResolver?: PauseAuthorityResolver;
   /** Explicit isolated-test verification double; never accepted from REST/API input. */
   verificationSourceProvider?: VerificationSourceProvider;
+  /** Settlement doubles are opt-in and accepted only by runtimeMode=test factories. */
+  testOnlyPauseSettlementAdapters?: Map<SettlementChain, PauseExecutionAdapter>;
+  /** Test-only adapter constructor receives the factory-owned OperationStore. */
+  testOnlyPauseSettlementAdapterFactory?: (operationStore: OperationStore) => Map<SettlementChain, PauseExecutionAdapter>;
   submitPort?: StarknetSubmitPort;
 }
 
@@ -357,6 +362,9 @@ function createMemoryFactory(
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
   }
+  if (runtimeMode !== "test" && (overrides?.testOnlyPauseSettlementAdapters || overrides?.testOnlyPauseSettlementAdapterFactory)) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "pause_settlement_test_double_forbidden_in_runtime");
+  }
   const ownershipStore = new InMemoryOwnershipProofStore();
   const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
@@ -408,7 +416,9 @@ function createMemoryFactory(
   const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
   const pauseStore = new InMemoryPauseStore();
   const pauseMetrics = new InMemoryPauseMetrics();
-  const pauseAdapters = createFakeAdapterRegistry(operationStore);
+  const pauseAdapters = runtimeMode === "test"
+    ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
+    : undefined;
   const pauseService = new InMemoryPauseService(clock, {
     store: pauseStore,
     operationStore,
@@ -492,6 +502,9 @@ async function createPostgresFactory(
 ): Promise<AppFactory> {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
+  }
+  if (runtimeMode !== "test" && (overrides?.testOnlyPauseSettlementAdapters || overrides?.testOnlyPauseSettlementAdapterFactory)) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "pause_settlement_test_double_forbidden_in_runtime");
   }
   // Validate format synchronously before attempting network
   assertPostgresUrlOrThrow(url);
@@ -586,7 +599,9 @@ async function createPostgresFactory(
   });
   const handlers = createPrismApiHandlers(app, { assertChainTouchingConfigured });
   const pauseMetrics = new InMemoryPauseMetrics();
-  const pauseAdapters = createFakeAdapterRegistry(operationStore);
+  const pauseAdapters = runtimeMode === "test"
+    ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
+    : undefined;
   const pauseService = new InMemoryPauseService(clock, {
     store: pauseStore,
     operationStore,

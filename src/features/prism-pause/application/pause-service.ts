@@ -25,6 +25,7 @@ import { resolveChainFromPlan } from "../ports/execution-adapter";
 import type { PauseMetrics } from "../ports/metrics";
 import type { PauseAuthorityAction, PauseAuthorityActor, PauseAuthorityDecision, PauseAuthorityResolver } from "../ports/authority";
 import { TERMINAL_FAILURE_STATES, TERMINAL_STATES } from "../../prism-operations/domain/operation";
+import { invokeSettlementAdapter } from "./settlement-submission";
 
 export interface PauseServiceOptions {
   store: PauseStore;
@@ -367,36 +368,29 @@ export class PauseService {
 
     try { this.opts.metrics?.increment("pause_released", { state: persisted.state }); } catch {}
 
-    // Submit via injected adapter if available and op not yet terminal/completed.
-    // Never mark completed here; reconciliation owns that transition.
-    if (prepared && plan && this.opts.executionAdapters) {
+    // Submit through the durable fence. The adapter receives an operation that
+    // is already `requires_attention` with submissionAttempted=true. Any
+    // exception or non-durable return remains quarantined and cannot be
+    // automatically rebroadcast after this RELEASED pause.
+    if (prepared && this.opts.executionAdapters) {
       const chain = resolveChainFromPlan(plan);
       const adapter = this.opts.executionAdapters.get(chain);
       if (adapter) {
-        let op = prepared.operation;
-        if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled", "completed"].includes(op.state)) {
-          if (op.state === "created") {
-            op = await this.opts.operationStore!.transition(op.id, { to: "awaiting_authorization", now, expectedVersion: op.version });
-            op = await this.opts.operationStore!.transition(op.id, { to: "ready", now, expectedVersion: op.version });
-          } else if (op.state === "awaiting_authorization") {
-            op = await this.opts.operationStore!.transition(op.id, { to: "ready", now, expectedVersion: op.version });
-          }
-          if (op.state === "ready") {
-            try {
-              const submitted = await adapter.submit({ operation: op, pause: persisted, plan, correlationId: input.correlationId ?? null, operationId: input.settlementOperationId });
-              if (submitted.id !== op.id || submitted.id !== input.settlementOperationId) throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_operation_id_mismatch");
-              if (submitted.state === "completed") throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "adapter_must_not_mark_completed");
-              if (!["submitted", "processing", "confirming", "confirmed", "indexed", "reconciled"].includes(submitted.state)) {
-                throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, `adapter_submit_returned_invalid_state:${submitted.state}`);
-              }
-              try { this.opts.metrics?.increment("settlement_operation_submitted", { chain }); } catch {}
-            } catch (e) {
-              if (e instanceof PauseError) throw e;
-              // Adapter failure is retryable; the operation remains durable and
-              // the pause remains RELEASED without claiming settlement success.
-              try { this.opts.metrics?.increment("pause_release_blocked", { reason: "adapter_submit_failed" }); } catch {}
-            }
-          }
+        const outcome = await invokeSettlementAdapter({
+          operationStore: this.opts.operationStore!,
+          operation: prepared.operation,
+          pause: persisted,
+          plan,
+          adapter,
+          chain,
+          operationId: input.settlementOperationId,
+          correlationId: input.correlationId ?? null,
+          now,
+        });
+        if (outcome.quarantined) {
+          try { this.opts.metrics?.increment("pause_release_blocked", { reason: "settlement_submit_quarantined" }); } catch {}
+        } else if (outcome.adapterInvoked) {
+          try { this.opts.metrics?.increment("settlement_operation_submitted", { chain }); } catch {}
         }
       }
     }

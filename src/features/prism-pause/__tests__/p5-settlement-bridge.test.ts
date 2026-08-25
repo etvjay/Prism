@@ -125,7 +125,7 @@ describe("P5 settlement adapter boundary", () => {
           cur = await opStore.transition(cur!.id, { to: "awaiting_authorization", now: 1500, expectedVersion: cur!.version });
           cur = await opStore.transition(cur!.id, { to: "ready", now: 1500, expectedVersion: cur!.version });
           cur = await opStore.transition(cur!.id, { to: "submitted", now: 1500, expectedVersion: cur!.version, txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as any });
-        } else if (cur!.state === "ready") {
+        } else if (cur!.state === "requires_attention") {
           cur = await opStore.transition(cur!.id, { to: "submitted", now: 1500, expectedVersion: cur!.version, txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as any });
         }
         return cur!;

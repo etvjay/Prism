@@ -365,7 +365,7 @@ describe("M7 local runtime gap regressions", () => {
 
   it("rejects cancelled linked operations before a settlement bridge retry", async () => {
     const operationStore = new InMemoryOperationStore();
-    const { service, plan, verified } = await readyPause({ operationStore, authorityResolver: allowTestAuthority });
+    const { pauseStore, service, plan, verified } = await readyPause({ operationStore, authorityResolver: allowTestAuthority });
     const released = await service.release({
       pauseId: verified.pauseId,
       planHash: plan.planHash,
@@ -376,7 +376,7 @@ describe("M7 local runtime gap regressions", () => {
     expect(operation?.state).toBe("created");
     await operationStore.transition(operation!.id, { to: "cancelled", now: 1_450, expectedVersion: operation!.version });
     const bridge = new PauseSettlementBridge({
-      pauseStore: new InMemoryPauseStore(),
+      pauseStore,
       operationStore,
       adapters: createFakeAdapterRegistry(operationStore),
       now: () => 1_500,
@@ -400,15 +400,15 @@ describe("M7 local runtime gap regressions", () => {
       requestFingerprint: "unrelated-fingerprint",
       now: 1_000,
     });
-    const { service, plan, verified } = await readyPause({ authorityResolver: allowTestAuthority });
+    const { pauseStore, service, plan, verified } = await readyPause({ operationStore, authorityResolver: allowTestAuthority });
     const released = await service.release({
       pauseId: verified.pauseId,
       planHash: plan.planHash,
-      settlementOperationId: "op_bridge_collision",
+      settlementOperationId: "op_bridge_valid",
       now: 1_400,
     });
     const bridge = new PauseSettlementBridge({
-      pauseStore: new InMemoryPauseStore(),
+      pauseStore,
       operationStore,
       adapters: createFakeAdapterRegistry(operationStore),
       now: () => 1_500,
@@ -420,6 +420,6 @@ describe("M7 local runtime gap regressions", () => {
         plan,
         operationId: "op_bridge_collision",
       }),
-    ).rejects.toMatchObject({ code: "ERR-107" });
+    ).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.OPERATION_ALREADY_LINKED });
   });
 });

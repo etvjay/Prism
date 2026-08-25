@@ -168,17 +168,12 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
     expect(released.state).toBe("RELEASED");
     expect(released.settlementOperationId).toBe("op_adapter_fail");
     const op = await opStore.getById("op_adapter_fail");
-    // adapter failed once — op should not be completed, should be retryable (created or ready) and metrics recorded
+    // Adapter failure is ambiguous after the durable fence: the operation is
+    // quarantined for polling and may not be treated as a fresh retry.
     expect(op).toBeDefined();
-    expect(op!.state).not.toBe("completed");
-    expect(["created", "ready", "awaiting_authorization"]).toContain(op!.state);
-    expect(metrics.count("pause_release_blocked")).toBeGreaterThanOrEqual(0); // adapter_submit_failed counted
-    // retry via second submit would eventually succeed — simulate retry by calling adapter again
-    const retryAdapters = createFakeAdapterRegistry(opStore);
-    // manually submit retry path
-    const retryOp = await retryAdapters.get("base")!.submit({ operation: op!, pause: released, plan, correlationId: "corr-adapter", operationId: "op_adapter_fail" });
-    expect(retryOp.state).toBe("submitted");
-    expect(retryOp.state).not.toBe("completed");
+    expect(op!.state).toBe("requires_attention");
+    expect(op!.submissionAttempted).toBe(true);
+    expect(metrics.count("pause_release_blocked")).toBeGreaterThan(0);
   });
 
   it("8. operation completion conflation: submitted != completed, illegal skip to completed is rejected", async () => {
@@ -288,11 +283,11 @@ describe("P7 adversarial closeout — full vector suite M7_P0_P7_RUNTIME_READY_X
     const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "10" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
     const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
     await svc.verify({ pauseId: pause.pauseId, policy, sources: passingSources, now: 1300 });
-    await expect(svc.release({ pauseId: pause.pauseId, planHash: plan.planHash, settlementOperationId: "op_mal", now: 1400 })).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.INVALID_STATE });
+    await svc.release({ pauseId: pause.pauseId, planHash: plan.planHash, settlementOperationId: "op_mal", now: 1400 });
     const pauseAfter = await svc.getPause(pause.pauseId);
-    // pause was still RELEASED persisted before adapter check — but error is thrown after persist? Check: release persists then tries submit; if adapter returns completed, it throws. Pause remains RELEASED but not conflated with completed.
     expect(pauseAfter?.state).toBe("RELEASED");
     const op = await opStore.getById("op_mal");
-    expect(op!.state).not.toBe("completed");
+    expect(op!.state).toBe("requires_attention");
+    expect(op!.submissionAttempted).toBe(true);
   });
 });
