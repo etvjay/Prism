@@ -10,7 +10,7 @@ import { StarknetRegistryReader, StarknetRegistryReaderError } from "../adapters
 import { StarknetEventIndexerAdapter, PRISM_EVENT_SELECTORS } from "../../features/prism-operations/adapters/starknet-event-indexer";
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapters/starknet-submit-v2";
-import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, resetFactory, isStarknetSubmitConfiguredForFactory } from "../factory";
+import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory } from "../factory";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 
@@ -20,6 +20,13 @@ const ACCOUNT_ADDR = "0x3333";
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void> | void) {
   const effective = { ...overrides };
+  // Injected-provider tests must declare their scope explicitly; production code
+  // must never inherit this test-only SN_SEPOLIA fixture.
+  const hasNetworkOverride = "STARKNET_CHAIN_ID" in effective || "NEXT_PUBLIC_STARKNET_NETWORK" in effective;
+  if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && !hasNetworkOverride) {
+    effective.STARKNET_CHAIN_ID = "SN_SEPOLIA";
+    effective.NEXT_PUBLIC_STARKNET_NETWORK = "SN_SEPOLIA";
+  }
   if (effective.STARKNET_RPC_URL !== undefined && effective.STARKNET_REGISTRY_ADDRESS !== undefined && effective.STARKNET_REGISTRY_VERSION === undefined) {
     effective.STARKNET_REGISTRY_VERSION = "v1";
   }
@@ -136,6 +143,86 @@ describe("FACTORY_WIRING_FIX — defect 1: INDEXER shared provider (no dead shim
     };
     await withEnv({ STARKNET_RPC_URL: "https://fake.rpc", STARKNET_REGISTRY_ADDRESS: REGISTRY }, async () => {
       expect(() => createStarknetReadPorts({ starknetReadProvider: badProvider as never })).toThrow(/missing_callContract/);
+    });
+  });
+});
+
+describe("FACTORY_WIRING_FIX — network projection scope is explicit", () => {
+  const fakeProvider = {
+    async callContract() { return ["0x0"] as string[]; },
+    async getEvents() {
+      return {
+        events: [{
+          block_number: 7,
+          transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          event_index: 0,
+          keys: [PRISM_EVENT_SELECTORS.PrismIdentityCreated, "0x1"],
+          data: [CONTROLLER],
+        }],
+        continuation_token: null,
+      } as never;
+    },
+    async getBlockNumber() { return 7; },
+  };
+
+  it("derives SN_MAIN from explicit chain/network config and scopes indexed events", async () => {
+    await withEnv({
+      STARKNET_RPC_URL: "https://fake.rpc",
+      STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_CHAIN_ID: "SN_MAIN",
+      NEXT_PUBLIC_STARKNET_NETWORK: "SN_MAIN",
+    }, async () => {
+      expect(getStarknetNetwork()).toBe("SN_MAIN");
+      const ports = createStarknetReadPorts({ starknetReadProvider: fakeProvider as never });
+      const result = await ports!.indexer.fetchRegistryEvents({ fromBlock: 0 });
+      expect(result.events[0]?.network).toBe("SN_MAIN");
+    });
+  });
+
+  it("derives SN_SEPOLIA from explicit chain/network config and scopes indexed events", async () => {
+    await withEnv({
+      STARKNET_RPC_URL: "https://fake.rpc",
+      STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_CHAIN_ID: "SN_SEPOLIA",
+      NEXT_PUBLIC_STARKNET_NETWORK: "SN_SEPOLIA",
+    }, async () => {
+      expect(getStarknetNetwork()).toBe("SN_SEPOLIA");
+      const ports = createStarknetReadPorts({ starknetReadProvider: fakeProvider as never });
+      const result = await ports!.indexer.fetchRegistryEvents({ fromBlock: 0 });
+      expect(result.events[0]?.network).toBe("SN_SEPOLIA");
+    });
+  });
+
+  it("fails closed on inconsistent configured chain/network values", async () => {
+    await withEnv({
+      STARKNET_RPC_URL: "https://fake.rpc",
+      STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_CHAIN_ID: "SN_MAIN",
+      NEXT_PUBLIC_STARKNET_NETWORK: "SN_SEPOLIA",
+    }, async () => {
+      expect(() => createStarknetReadPorts({ starknetReadProvider: fakeProvider as never })).toThrow(/starknet_network_config_mismatch/);
+    });
+  });
+
+  it("fails closed on unknown configured network values", async () => {
+    await withEnv({
+      STARKNET_RPC_URL: "https://fake.rpc",
+      STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_CHAIN_ID: "SN_DEVNET",
+      NEXT_PUBLIC_STARKNET_NETWORK: undefined,
+    }, async () => {
+      expect(() => createStarknetReadPorts({ starknetReadProvider: fakeProvider as never })).toThrow(/unknown_starknet_network/);
+    });
+  });
+
+  it("fails closed when no explicit network source is configured", async () => {
+    await withEnv({
+      STARKNET_RPC_URL: "https://fake.rpc",
+      STARKNET_REGISTRY_ADDRESS: REGISTRY,
+      STARKNET_CHAIN_ID: undefined,
+      NEXT_PUBLIC_STARKNET_NETWORK: undefined,
+    }, async () => {
+      expect(() => createStarknetReadPorts({ starknetReadProvider: fakeProvider as never })).toThrow(/starknet_network_required/);
     });
   });
 });

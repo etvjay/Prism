@@ -63,9 +63,14 @@ Required env vars for a real testnet run (provide via shell / `.env` file exclud
 
 ```dotenv
 # testnet (default) — see .env.example + ops/target-network/manifest.yaml
+STARKNET_CHAIN_ID=SN_SEPOLIA
 STARKNET_RPC_URL=https://<sepolia-rpc-without-committing>/v0_7
 NEXT_PUBLIC_STARKNET_RPC_URL=https://<sepolia-rpc-public-or-restricted>/v0_7
 NEXT_PUBLIC_STARKNET_NETWORK=SN_SEPOLIA
+# The backend projection scope is derived from STARKNET_CHAIN_ID (or the
+# explicit public network value when the chain id is absent); if both are set,
+# they must be SN_SEPOLIA or SN_MAIN and must match. Missing/unknown/mismatched
+# values fail closed — there is no server-side network default.
 BASE_RPC_URL=https://<base-sepolia-rpc>
 BASE_CHAIN_ID=84532
 STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY=<never commit>

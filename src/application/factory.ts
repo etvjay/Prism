@@ -43,6 +43,41 @@ import { RpcProvider } from "starknet";
 
 export type SubmitPortMode = "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
 
+/** Canonical Starknet projection scopes supported by the configured runtime. */
+export type StarknetNetwork = "SN_SEPOLIA" | "SN_MAIN";
+
+function parseStarknetNetwork(raw: string | undefined, source: string): StarknetNetwork | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  const normalized = value.toUpperCase();
+  if (normalized === "SN_SEPOLIA" || normalized === "0X534E5F5345504F4C4941") return "SN_SEPOLIA";
+  if (normalized === "SN_MAIN" || normalized === "0X534E5F4D41494E") return "SN_MAIN";
+  throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `unknown_starknet_network:${source}`);
+}
+
+export type StarknetNetworkConfig = Partial<Record<"STARKNET_CHAIN_ID" | "NEXT_PUBLIC_STARKNET_NETWORK", string | undefined>>;
+
+/**
+ * Resolve the one network scope used by the read/indexer/projection path.
+ * STARKNET_CHAIN_ID is the server-side source; the browser network setting is
+ * accepted as an explicit fallback and, when present, must agree with it.
+ * There is deliberately no production default.
+ */
+export function getStarknetNetwork(env: StarknetNetworkConfig = {
+  STARKNET_CHAIN_ID: process.env.STARKNET_CHAIN_ID,
+  NEXT_PUBLIC_STARKNET_NETWORK: process.env.NEXT_PUBLIC_STARKNET_NETWORK,
+}): StarknetNetwork {
+  const chain = parseStarknetNetwork(env.STARKNET_CHAIN_ID, "STARKNET_CHAIN_ID");
+  const network = parseStarknetNetwork(env.NEXT_PUBLIC_STARKNET_NETWORK, "NEXT_PUBLIC_STARKNET_NETWORK");
+  if (chain && network && chain !== network) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_network_config_mismatch");
+  }
+  if (!chain && !network) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_network_required");
+  }
+  return chain ?? network!;
+}
+
 export interface FactorySubmitOptions {
   /** Injected submit port for controlled callers (e.g. tests with StarknetSubmitAdapter fake). If omitted, defaults to InMemoryRegistry TEST_DOUBLE. */
   submitPort?: StarknetSubmitPort;
@@ -143,7 +178,7 @@ function assertPostgresUrlOrThrow(url: string | null): string | null {
 // Starknet env helpers re-exported for tests
 export { getStarknetRpcUrl, getStarknetRegistryAddress, isStarknetReadConfigured, isStarknetRpcUrlValid };
 
-function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string } | null {
+function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string; network: StarknetNetwork } | null {
   const rpcUrl = getStarknetRpcUrl();
   const registryAddress = getStarknetRegistryAddress();
   if (rpcUrl === null && registryAddress === null) return null;
@@ -152,7 +187,7 @@ function assertStarknetEnvOrThrow(): { rpcUrl: string; registryAddress: string }
   }
   if (!isStarknetRpcUrlValid(rpcUrl)) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_rpc_url");
   if (!/^0x[0-9a-f]{1,64}$/i.test(registryAddress.trim())) throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_starknet_registry_address");
-  return { rpcUrl, registryAddress };
+  return { rpcUrl, registryAddress, network: getStarknetNetwork() };
 }
 
 function getStarknetRegistryVersion(): StarknetRegistryVersion {
@@ -229,7 +264,7 @@ function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["star
   return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
 }
 
-export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null {
+export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null {
   const cfg = assertStarknetEnvOrThrow();
   if (!cfg) return null;
   // Share one read-only provider across callContract and getEvents — no dead shim.
@@ -253,11 +288,11 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   assertSubmitPortRegistryAddress(overrides?.submitPort, cfg.registryAddress, overrides?.submitPortRegistryAddress);
   let indexer: StarknetEventIndexerAdapter;
   try {
-    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, network: "SN_SEPOLIA", registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100, maxPages: getProjectionMaxPages() });
+    indexer = new StarknetEventIndexerAdapter({ reader: provider as unknown as StarknetEventReader, registryAddress: cfg.registryAddress, network: cfg.network, registryVersion, requireEventOrigin: process.env.NODE_ENV === "production" || process.env.VITEST !== "true", chunkSize: 100, maxPages: getProjectionMaxPages() });
   } catch {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_indexer_init_failed");
   }
-  return { reader, ledger, indexer, provider };
+  return { reader, ledger, indexer, provider, network: cfg.network };
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +315,7 @@ function createMemoryFactory(clock = fixedClock(Math.floor(Date.now() / 1000)), 
   const operationStore = new InMemoryOperationStore();
   const registry = new InMemoryRegistry();
   // Attempt Starknet read wiring — fail-closed on invalid env, else fallback to memory for dev/test
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null = null;
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null = null;
   let starknetError: Error | null = null;
   try {
     starknetPorts = createStarknetReadPorts(overrides);
@@ -419,7 +454,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   }
 
   // Starknet read wiring — fail-closed on invalid config, otherwise real adapters sharing one provider
-  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"] } | null = null;
+  let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork } | null = null;
   let starknetError: Error | null = null;
   try {
     starknetPorts = createStarknetReadPorts(overrides);
@@ -442,7 +477,7 @@ async function createPostgresFactory(url: string, clock = fixedClock(Math.floor(
   const eventProjectionCoordinator = starknetPorts
     ? new EventProjectionCoordinator({
         registryAddress: getStarknetRegistryAddress()!,
-        network: "SN_SEPOLIA",
+        network: starknetPorts.network,
         registryVersion,
         initialFromBlock: getProjectionStartBlock(),
         checkpointStore: projectionCheckpointStore,
