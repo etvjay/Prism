@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryResult } from "pg";
 import type { PauseDecision } from "../ports/pause-store";
+import { createPause } from "../domain/pause";
 
 interface CapturedQuery {
   text: string;
@@ -91,6 +92,34 @@ function result(rowCount = 0, rows: unknown[] = []): QueuedQuery {
 }
 
 describe("PostgresPauseStore (unit/transaction contract)", () => {
+  it("commits a CAS state mutation and its correlated audit decision on one client", async () => {
+    const fake = installFakePool();
+    const { PostgresPauseStore } = await loadStoreModule();
+    const store = new PostgresPauseStore({});
+    const client = fake.client;
+    const pause = createPause({ pauseId: "pause-1", intentId: "intent-1", planHash: PLAN_HASH, policyVersion: "v1", createdAt: 1, expiresAt: 100 });
+    const next = { ...pause, state: "CANCELLED" as const, version: 1 };
+    client.queue.push(result(), result(1), result(1), result(), result(), result(1), result());
+
+    await expect(store.withTransaction!(async (transaction) => {
+      const persisted = await transaction.updatePause(next, 0);
+      await transaction.appendDecision(decision());
+      return persisted;
+    })).resolves.toMatchObject({ state: "CANCELLED", version: 1 });
+
+    expect(client.queries.map((query) => query.text)).toEqual([
+      "BEGIN",
+      expect.stringContaining("UPDATE execution_pauses"),
+      expect.stringContaining("SELECT pause_id, plan_hash, policy_version FROM execution_pauses"),
+      expect.stringContaining("SELECT decision_id FROM pause_decisions"),
+      expect.stringContaining("INSERT INTO pause_decisions"),
+      expect.stringContaining("UPDATE execution_pauses"),
+      "COMMIT",
+    ]);
+    expect(client.queries.map((query) => query.text)).not.toContain("ROLLBACK");
+    expect(client.released).toBe(true);
+  });
+
   it("appends the decision and metadata mirror in one client transaction", async () => {
     const fake = installFakePool();
     const { PostgresPauseStore } = await loadStoreModule();
@@ -103,7 +132,7 @@ describe("PostgresPauseStore (unit/transaction contract)", () => {
 
     expect(client.queries.map((query) => query.text)).toEqual([
       "BEGIN",
-      expect.stringContaining("SELECT pause_id FROM execution_pauses"),
+      expect.stringContaining("SELECT pause_id, plan_hash, policy_version FROM execution_pauses"),
       expect.stringContaining("SELECT decision_id FROM pause_decisions"),
       expect.stringContaining("INSERT INTO pause_decisions"),
       expect.stringContaining("UPDATE execution_pauses"),
@@ -132,7 +161,7 @@ describe("PostgresPauseStore (unit/transaction contract)", () => {
 
     expect(client.queries.map((query) => query.text)).toEqual([
       "BEGIN",
-      expect.stringContaining("SELECT pause_id FROM execution_pauses"),
+      expect.stringContaining("SELECT pause_id, plan_hash, policy_version FROM execution_pauses"),
       expect.stringContaining("SELECT decision_id FROM pause_decisions"),
       expect.stringContaining("INSERT INTO pause_decisions"),
       expect.stringContaining("UPDATE execution_pauses"),

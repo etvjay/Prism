@@ -8,6 +8,7 @@ import { PostgresPauseStore } from "../adapters/postgres-pause-store";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { createIntent } from "../domain/intent";
 import { createPause, toVerifying } from "../domain/pause";
+import { PauseService } from "../application/pause-service";
 import type { PauseDecision } from "../ports/pause-store";
 
 const TEST_URL = process.env.PRISM_POSTGRES_TEST_URL;
@@ -221,6 +222,52 @@ suite("PostgresPauseStore (LIVE integration, M7 decision durability)", () => {
     } finally {
       await Promise.all(contenders.map((candidate) => candidate.close()));
     }
+  });
+
+  it("service transition rolls back pause state when its audit metadata append fails", async () => {
+    const suffix = uniqueSuffix();
+    const { pause } = await createPauseFixture(suffix);
+    const service = new PauseService(store, { store });
+    const constraint = `pause_transition_atomicity_${suffix}`;
+    await adminPool.query(
+      `ALTER TABLE "${TEST_SCHEMA}"."execution_pauses" ADD CONSTRAINT "${constraint}" CHECK (pause_id <> '${pause.pauseId}' OR decision_ids_json::jsonb = '[]'::jsonb)`,
+    );
+    try {
+      await expect(
+        service.cancel({ pauseId: pause.pauseId, now: 1_789_000_020, expectedVersion: pause.version }),
+      ).rejects.toMatchObject({ code: "store_write_failed" });
+
+      const pauseRow = await adminPool.query(
+        `SELECT state, version, decision_ids_json FROM "${TEST_SCHEMA}"."execution_pauses" WHERE pause_id=$1`,
+        [pause.pauseId],
+      );
+      const decisionRows = await adminPool.query(
+        `SELECT decision_id FROM "${TEST_SCHEMA}"."pause_decisions" WHERE pause_id=$1`,
+        [pause.pauseId],
+      );
+      expect(pauseRow.rows[0]).toMatchObject({ state: "PAUSED", version: 0, decision_ids_json: "[]" });
+      expect(decisionRows.rowCount).toBe(0);
+      expect(await store.getDecisions(pause.pauseId)).toEqual([]);
+    } finally {
+      await adminPool.query(`ALTER TABLE "${TEST_SCHEMA}"."execution_pauses" DROP CONSTRAINT "${constraint}"`);
+    }
+  });
+
+  it("service CAS race commits one correlated cancellation and rejects the loser", async () => {
+    const { pause } = await createPauseFixture(uniqueSuffix());
+    const service = new PauseService(store, { store });
+    const results = await Promise.allSettled([
+      service.cancel({ pauseId: pause.pauseId, now: 1_789_000_030, expectedVersion: pause.version }),
+      service.cancel({ pauseId: pause.pauseId, now: 1_789_000_030, expectedVersion: pause.version }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const decisions = await store.getDecisions(pause.pauseId);
+    const persisted = await store.getPause(pause.pauseId);
+    expect(decisions).toHaveLength(1);
+    expect(persisted).toMatchObject({ state: "CANCELLED", version: 1, decisionIds: [decisions[0].decisionId] });
+    expect(decisions[0]).toMatchObject({ pauseId: pause.pauseId, kind: "CANCEL", actor: "user", planHash: pause.planHash, policyVersion: "v1" });
   });
 
   it("fails closed against an unreachable endpoint", async () => {

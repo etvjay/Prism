@@ -25,6 +25,19 @@ export interface PauseDecision {
   readonly expiresAt?: number | null;
 }
 
+/**
+ * Write surface exposed while a PauseStore transaction is open.
+ *
+ * PauseService must use this boundary for every state transition that emits
+ * an audit decision. Implementations must commit all calls or roll them back
+ * together; callers must not mix these methods with the parent store.
+ */
+export interface PauseStoreTransaction {
+  updatePause(pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause>;
+  putChecks(pauseId: string, checks: readonly CheckResult[]): Promise<void>;
+  appendDecision(decision: PauseDecision): Promise<PauseDecision>;
+}
+
 export interface CreatePauseRecordInput {
   intent: ExecutionIntent;
   plan: ExecutionPlan;
@@ -58,6 +71,13 @@ export interface PauseStore {
   // Decisions (append-only)
   appendDecision(decision: PauseDecision): Promise<PauseDecision>;
   getDecisions(pauseId: string): Promise<readonly PauseDecision[]>;
+
+  /**
+   * Execute related pause writes atomically. Stores that cannot provide this
+   * guarantee must omit the capability; PauseService then fails closed before
+   * mutating state rather than falling back to update-then-append.
+   */
+  withTransaction?<T>(callback: (transaction: PauseStoreTransaction) => Promise<T>): Promise<T>;
 
   // Lifecycle
   close?(): Promise<void>;

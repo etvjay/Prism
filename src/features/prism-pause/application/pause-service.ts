@@ -8,7 +8,7 @@
 // - plan_hash and approval_scope binding for release/cancel/escalate/reverify/expire
 // - RELEASED creates future Operation link only, never completed.
 
-import type { PauseStore, PauseDecision } from "../ports/pause-store";
+import type { PauseStore, PauseStoreTransaction, PauseDecision } from "../ports/pause-store";
 import { createIntent, isIntentExpired } from "../domain/intent";
 import type { ExecutionIntent } from "../domain/intent";
 import { createExecutionPlan, verifyPlanHash } from "../domain/execution-plan";
@@ -100,6 +100,56 @@ export class PauseService {
       throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNAVAILABLE, "pause_authority_result_invalid");
     }
     return { ...decision, actor: decision.actor };
+  }
+
+  private async inPauseTransaction<T>(callback: (transaction: PauseStoreTransaction) => Promise<T>): Promise<T> {
+    const withTransaction = this.store.withTransaction;
+    if (typeof withTransaction !== "function") {
+      // Never fall back to updatePause() followed by appendDecision(). That
+      // sequence can expose a state transition without its audit record.
+      throw new PauseError(PAUSE_ERROR_CODE.INVALID_STATE, "pause_transition_atomicity_unavailable");
+    }
+    return withTransaction.call(this.store, callback) as Promise<T>;
+  }
+
+  private async persistTransition(input: {
+    next: ExecutionPause;
+    expectedVersion: number;
+    decision: PauseDecision;
+  }): Promise<ExecutionPause> {
+    return this.inPauseTransaction(async (transaction) => {
+      const persisted = await transaction.updatePause(input.next, input.expectedVersion);
+      await transaction.appendDecision(input.decision);
+      return {
+        ...persisted,
+        decisionIds: [...persisted.decisionIds, input.decision.decisionId],
+      };
+    });
+  }
+
+  private async persistVerification(input: {
+    pause: ExecutionPause;
+    verifying: ExecutionPause;
+    completed: ExecutionPause;
+    checks: readonly import("../domain/checks").CheckResult[];
+    decision?: PauseDecision;
+  }): Promise<ExecutionPause> {
+    return this.inPauseTransaction(async (transaction) => {
+      let persisted = input.pause;
+      if (input.verifying !== input.pause) {
+        persisted = await transaction.updatePause(input.verifying, input.pause.version);
+      }
+      await transaction.putChecks(input.pause.pauseId, input.checks);
+      persisted = await transaction.updatePause(input.completed, persisted.version);
+      if (input.decision) {
+        await transaction.appendDecision(input.decision);
+        persisted = {
+          ...persisted,
+          decisionIds: [...persisted.decisionIds, input.decision.decisionId],
+        };
+      }
+      return persisted;
+    });
   }
 
   private async prepareSettlementOperation(input: {
@@ -224,9 +274,8 @@ export class PauseService {
     if (now >= pause.expiresAt) {
       // auto-expire path
       const expired = domainExpire(pause, now, pause.version);
-      const next = await this.store.updatePause(expired, pause.version);
-      await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: null, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now });
-      return next;
+      const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: null, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now };
+      return this.persistTransition({ next: expired, expectedVersion: pause.version, decision });
     }
     if (
       pause.policyVersion !== input.policy.policyVersion ||
@@ -247,18 +296,14 @@ export class PauseService {
       if (pause.state === "VERIFYING") verifying = pause;
       else throw e;
     }
-    if (verifying !== pause) {
-      await this.store.updatePause(verifying, pause.version);
-    }
     const current = verifying !== pause ? verifying : pause;
     const checks = evaluatePolicy({ intent, plan, pause: current, policy: input.policy, sources, now });
     const completed = completeVerification(current, { checks, now, expectedVersion: current.version });
-    await this.store.putChecks(pause.pauseId, checks);
-    const next = await this.store.updatePause(completed, current.version);
+    const decision = completed.state === "ESCALATED"
+      ? { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE" as const, actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: completed.approvalScopeHash, reasonCodes: [...completed.reasonCodes], createdAt: now }
+      : undefined;
+    const next = await this.persistVerification({ pause, verifying, completed, checks, decision });
     try { this.opts.metrics?.increment(completed.state === "RELEASE_READY" ? "pause_verified" : "pause_verify_blocked_unknown", { state: completed.state, risk: completed.riskLevel }); } catch {}
-    if (completed.state === "ESCALATED") {
-      await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: completed.approvalScopeHash, reasonCodes: [...completed.reasonCodes], createdAt: now });
-    }
     return next;
   }
 
@@ -289,8 +334,9 @@ export class PauseService {
     }
 
     let persisted: ExecutionPause;
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...next.reasonCodes], createdAt: now };
     try {
-      persisted = await this.store.updatePause(next, expectedVersion);
+      persisted = await this.persistTransition({ next, expectedVersion, decision });
     } catch (cause) {
       if (prepared) {
         await this.abandonPreparedSettlementOperation({
@@ -303,7 +349,6 @@ export class PauseService {
       throw cause;
     }
 
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "RELEASE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion), reasonCodes: [...persisted.reasonCodes], createdAt: now });
     try { this.opts.metrics?.increment("pause_released", { state: persisted.state }); } catch {}
 
     // Submit via injected adapter if available and op not yet terminal/completed.
@@ -348,8 +393,8 @@ export class PauseService {
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainCancel(pause, { now, expectedVersion, reason: input.reason });
-    const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "CANCEL", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "CANCEL", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
+    const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_cancelled"); } catch {}
     return persisted;
   }
@@ -360,8 +405,8 @@ export class PauseService {
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainEscalate(pause, { reasonCodes: input.reasonCodes, requiredApprovalCount: input.requiredApprovalCount, now, expectedVersion });
-    const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...input.reasonCodes], createdAt: now });
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "ESCALATE", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: next.approvalScopeHash, reasonCodes: [...input.reasonCodes], createdAt: now };
+    const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_escalated"); } catch {}
     return persisted;
   }
@@ -377,8 +422,8 @@ export class PauseService {
     const intent = await this.store.getIntent(pause.intentId);
     if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
     const authority = await this.resolveAuthority({ action: "approve", subject: input.authoritySubject, claimedActor: input.authorityClaim, pause, intent, plan });
-    const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: persisted.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "APPROVE", actor: authority.actor, policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: next.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
+    const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_approved", { to: persisted.state }); } catch {}
     return persisted;
   }
@@ -389,8 +434,8 @@ export class PauseService {
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainReverify(pause, { now, expectedVersion });
-    const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "REVERIFY", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...persisted.reasonCodes], createdAt: now });
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "REVERIFY", actor: "policy_engine", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
+    const persisted = await this.persistTransition({ next, expectedVersion, decision });
     return persisted;
   }
 
@@ -400,8 +445,8 @@ export class PauseService {
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const next = domainExpire(pause, now, input.expectedVersion);
     const expectedVersion = input.expectedVersion ?? pause.version;
-    const persisted = await this.store.updatePause(next, expectedVersion);
-    await this.store.appendDecision({ decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now });
+    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "EXPIRE", actor: "system", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: ["PAUSE_EXPIRED"], createdAt: now };
+    const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_expired"); } catch {}
     return persisted;
   }

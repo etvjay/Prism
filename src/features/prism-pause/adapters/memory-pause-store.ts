@@ -10,7 +10,7 @@ import type { ExecutionPause, PauseState } from "../domain/pause";
 import { assertPauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
 import { assertRiskLevel, assertTypedResults } from "../domain/checks";
-import type { PauseDecision, PauseStore, CreatePauseRecordInput } from "../ports/pause-store";
+import type { PauseDecision, PauseStore, PauseStoreTransaction, CreatePauseRecordInput } from "../ports/pause-store";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 
 function clone<T>(v: T): T {
@@ -39,6 +39,8 @@ export class InMemoryPauseStore implements PauseStore {
   private readonly checks = new Map<string, CheckResult[]>(); // pauseId -> checks
   private readonly decisions = new Map<string, PauseDecision[]>(); // pauseId -> decisions
   private closed = false;
+  private mutationRevision = 0;
+  private transactionTail: Promise<void> = Promise.resolve();
 
   constructor(snapshot?: InMemoryPauseStoreSnapshot) {
     if (!snapshot) return;
@@ -89,6 +91,7 @@ export class InMemoryPauseStore implements PauseStore {
     if (this.intents.has(intent.intentId)) throw new PauseError(PAUSE_ERROR_CODE.IDEMPOTENCY_CONFLICT, `duplicate_intent_id:${intent.intentId}`);
     this.intents.set(intent.intentId, clone(intent));
     this.intentsByKey.set(intent.clientIdempotencyKey, intent.intentId);
+    this.mutationRevision += 1;
     return clone(intent);
   }
 
@@ -121,6 +124,7 @@ export class InMemoryPauseStore implements PauseStore {
     if (this.plans.has(plan.planHash)) return clone(this.plans.get(plan.planHash)!);
     this.plans.set(plan.planHash, clone(plan));
     this.plansByIntent.set(plan.intentId, plan.planHash);
+    this.mutationRevision += 1;
     return clone(plan);
   }
 
@@ -166,6 +170,7 @@ export class InMemoryPauseStore implements PauseStore {
     }
     this.pauses.set(input.pause.pauseId, clone(input.pause));
     this.pausesByIntent.set(input.intent.intentId, input.pause.pauseId);
+    this.mutationRevision += 1;
     return clone(input.pause);
   }
 
@@ -203,6 +208,7 @@ export class InMemoryPauseStore implements PauseStore {
     const re = this.pauses.get(pause.pauseId);
     if (!re || re.version !== expectedVersion) throw new PauseError(PAUSE_ERROR_CODE.STALE_VERSION, `stale_version_race:expected_${expectedVersion}_got_${re?.version ?? "missing"}`);
     this.pauses.set(pause.pauseId, clone(pause));
+    this.mutationRevision += 1;
     return clone(pause);
   }
 
@@ -237,6 +243,7 @@ export class InMemoryPauseStore implements PauseStore {
     await yieldToEventLoop();
     if (!this.pauses.has(pauseId)) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, pauseId);
     this.checks.set(pauseId, checks.map(clone));
+    this.mutationRevision += 1;
   }
 
   async getChecks(pauseId: string): Promise<readonly CheckResult[]> {
@@ -255,6 +262,7 @@ export class InMemoryPauseStore implements PauseStore {
     if (!this.pauses.has(decision.pauseId)) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, decision.pauseId);
     // approval replay: same pauseId + same kind + same planHash cannot repeat (except REVERIFY maybe)
     const existing = this.decisions.get(decision.pauseId) ?? [];
+    if (existing.some((d) => d.decisionId === decision.decisionId)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
     if (decision.kind === "APPROVE" || decision.kind === "RELEASE") {
       const replay = existing.some((d) => d.kind === decision.kind && d.planHash === decision.planHash);
       if (replay) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
@@ -263,17 +271,23 @@ export class InMemoryPauseStore implements PauseStore {
     await yieldToEventLoop();
     // re-check after yield
     const rere = this.decisions.get(decision.pauseId) ?? [];
+    if (rere.some((d) => d.decisionId === decision.decisionId)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
     if (decision.kind === "APPROVE" || decision.kind === "RELEASE") {
       const replay2 = rere.some((d) => d.kind === decision.kind && d.planHash === decision.planHash);
       if (replay2) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay`);
     }
+    const pause = this.pauses.get(decision.pauseId);
+    if (pause) {
+      if (decision.planHash !== pause.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, "decision_plan_hash_mismatch");
+      if (decision.policyVersion !== pause.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, "decision_policy_version_mismatch");
+    }
     const next = [...rere, clone(decision)];
     this.decisions.set(decision.pauseId, next);
     // also append to pause decisionIds via in-place mutation (version already bumped by caller)
-    const pause = this.pauses.get(decision.pauseId);
     if (pause) {
       this.pauses.set(decision.pauseId, clone({ ...pause, decisionIds: [...pause.decisionIds, decision.decisionId] }));
     }
+    this.mutationRevision += 1;
     return clone(decision);
   }
 
@@ -281,6 +295,67 @@ export class InMemoryPauseStore implements PauseStore {
     this.assertOpen();
     const rec = this.decisions.get(pauseId);
     return rec ? rec.map(clone) : [];
+  }
+
+  private restore(snapshot: InMemoryPauseStoreSnapshot): void {
+    this.intents.clear();
+    this.intentsByKey.clear();
+    this.plans.clear();
+    this.plansByIntent.clear();
+    this.pauses.clear();
+    this.pausesByIntent.clear();
+    this.checks.clear();
+    this.decisions.clear();
+
+    for (const intent of snapshot.intents) {
+      const copy = clone(intent);
+      this.intents.set(copy.intentId, copy);
+      this.intentsByKey.set(copy.clientIdempotencyKey, copy.intentId);
+    }
+    for (const plan of snapshot.plans) {
+      const copy = clone(plan);
+      this.plans.set(copy.planHash, copy);
+      this.plansByIntent.set(copy.intentId, copy.planHash);
+    }
+    for (const pause of snapshot.pauses) {
+      const copy = clone(pause);
+      this.pauses.set(copy.pauseId, copy);
+      this.pausesByIntent.set(copy.intentId, copy.pauseId);
+    }
+    for (const entry of snapshot.checks) this.checks.set(entry.pauseId, clone([...entry.checks]));
+    for (const entry of snapshot.decisions) this.decisions.set(entry.pauseId, clone([...entry.decisions]));
+  }
+
+  /**
+   * Memory equivalent of a database transaction. The callback writes against
+   * the live in-memory state while the store serializes transaction callbacks;
+   * any failure restores the complete pre-transaction snapshot. Calling the
+   * concrete store methods through the transaction object intentionally keeps
+   * failure-injection subclasses honest in rollback tests.
+   */
+  async withTransaction<T>(callback: (transaction: PauseStoreTransaction) => Promise<T>): Promise<T> {
+    this.assertOpen();
+    const predecessor = this.transactionTail;
+    let release!: () => void;
+    this.transactionTail = new Promise<void>((resolve) => { release = resolve; });
+    await predecessor;
+
+    const snapshot = this.snapshot();
+    const revision = this.mutationRevision;
+    try {
+      const transaction: PauseStoreTransaction = {
+        updatePause: (pause, expectedVersion) => this.updatePause(pause, expectedVersion),
+        putChecks: (pauseId, checks) => this.putChecks(pauseId, checks),
+        appendDecision: (decision) => this.appendDecision(decision),
+      };
+      return await callback(transaction);
+    } catch (cause) {
+      this.restore(snapshot);
+      this.mutationRevision = revision;
+      throw cause;
+    } finally {
+      release();
+    }
   }
 
   // test/ops helpers

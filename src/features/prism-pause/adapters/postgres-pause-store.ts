@@ -20,7 +20,7 @@ import type { ExecutionPause, PauseState } from "../domain/pause";
 import { assertPauseState } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
 import { assertRiskLevel, assertTypedResults } from "../domain/checks";
-import type { PauseDecision, PauseStore, CreatePauseRecordInput } from "../ports/pause-store";
+import type { PauseDecision, PauseStore, PauseStoreTransaction, CreatePauseRecordInput } from "../ports/pause-store";
 import { PauseError, PAUSE_ERROR_CODE } from "../domain/errors";
 
 export const PAUSE_STORE_SCHEMA_VERSION = 1;
@@ -370,23 +370,21 @@ export class PostgresPauseStore implements PauseStore {
     } catch (cause) { throw new PostgresPauseStoreError("store_read_failed","getPauseByIntent failed",cause); }
   }
 
-  async updatePause(pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause> {
-    this.assertOpen();
+  private async updatePauseOn(client: Pool | PoolClient, pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause> {
     assertPauseState(pause.state);
     assertRiskLevel(pause.riskLevel);
     assertTypedResults(pause.checks);
     if (!Number.isInteger(expectedVersion) || expectedVersion<0) throw new PostgresPauseStoreError("invalid_record","expectedVersion invalid");
     if (pause.version !== expectedVersion+1) throw new PauseError(PAUSE_ERROR_CODE.ILLEGAL_TRANSITION,"version_must_increment_by_1");
     try {
-      const res = await this.pool.query(
+      const res = await client.query(
         `UPDATE execution_pauses SET state=$2, version=$3, reason_codes_json=$4, risk_level=$5, last_verified_at=$6, required_approval_count=$7, approval_scope_hash=$8, settlement_operation_id=$9, decision_ids_json=$10, expires_at=$11, policy_version=$12
          WHERE pause_id=$1 AND version=$13 AND plan_hash=$14`,
         [pause.pauseId, pause.state, pause.version, JSON.stringify(pause.reasonCodes), pause.riskLevel, pause.lastVerifiedAt, pause.requiredApprovalCount, pause.approvalScopeHash, pause.settlementOperationId, JSON.stringify(pause.decisionIds), pause.expiresAt, pause.policyVersion, expectedVersion, pause.planHash],
       );
       if (res.rowCount !==1) throw new PauseError(PAUSE_ERROR_CODE.STALE_VERSION, `stale_version:expected_${expectedVersion}_got_${res.rowCount===0 ? "stale" : "unknown"}`);
-      // also persist checks if present (caller should have called putChecks separately if needed; we upsert here if checks non-empty and differ)
       if (pause.checks.length>0) {
-        await this.pool.query(`INSERT INTO pause_checks (pause_id, checks_json, updated_at) VALUES ($1,$2,$3) ON CONFLICT (pause_id) DO UPDATE SET checks_json=$2, updated_at=$3`,[pause.pauseId, JSON.stringify(pause.checks), Date.now()]);
+        await client.query(`INSERT INTO pause_checks (pause_id, checks_json, updated_at) VALUES ($1,$2,$3) ON CONFLICT (pause_id) DO UPDATE SET checks_json=$2, updated_at=$3`,[pause.pauseId, JSON.stringify(pause.checks), Date.now()]);
       }
       return pause;
     } catch (cause) {
@@ -394,6 +392,11 @@ export class PostgresPauseStore implements PauseStore {
       if (isCheckViolation(cause)) throw new PostgresPauseStoreError("invalid_record","updatePause rejected",cause);
       throw new PostgresPauseStoreError("store_write_failed","updatePause failed",cause);
     }
+  }
+
+  async updatePause(pause: ExecutionPause, expectedVersion: number): Promise<ExecutionPause> {
+    this.assertOpen();
+    return this.updatePauseOn(this.pool, pause, expectedVersion);
   }
 
   async listPausesByState(state: PauseState, limit=100): Promise<readonly ExecutionPause[]> {
@@ -415,11 +418,15 @@ export class PostgresPauseStore implements PauseStore {
     catch (cause) { throw new PostgresPauseStoreError("store_read_failed","listExpired failed",cause); }
   }
 
+  private async putChecksOn(client: Pool | PoolClient, pauseId: string, checks: readonly CheckResult[]): Promise<void> {
+    assertTypedResults(checks);
+    try { await client.query(`INSERT INTO pause_checks (pause_id, checks_json, updated_at) VALUES ($1,$2,$3) ON CONFLICT (pause_id) DO UPDATE SET checks_json=$2, updated_at=$3`,[pauseId, JSON.stringify(checks), Date.now()]); }
+    catch (cause) { throw new PostgresPauseStoreError("store_write_failed","putChecks failed",cause); }
+  }
+
   async putChecks(pauseId: string, checks: readonly CheckResult[]): Promise<void> {
     this.assertOpen();
-    assertTypedResults(checks);
-    try { await this.pool.query(`INSERT INTO pause_checks (pause_id, checks_json, updated_at) VALUES ($1,$2,$3) ON CONFLICT (pause_id) DO UPDATE SET checks_json=$2, updated_at=$3`,[pauseId, JSON.stringify(checks), Date.now()]); }
-    catch (cause) { throw new PostgresPauseStoreError("store_write_failed","putChecks failed",cause); }
+    return this.putChecksOn(this.pool, pauseId, checks);
   }
 
   async getChecks(pauseId: string): Promise<readonly CheckResult[]> {
@@ -436,6 +443,35 @@ export class PostgresPauseStore implements PauseStore {
     }
   }
 
+  private async appendDecisionOn(client: PoolClient, decision: PauseDecision): Promise<PauseDecision> {
+    try {
+      const pause = await client.query(`SELECT pause_id, plan_hash, policy_version FROM execution_pauses WHERE pause_id=$1 FOR UPDATE`, [decision.pauseId]);
+      if (!pause.rowCount) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, decision.pauseId);
+      const pauseRow = pause.rows[0] as Record<string, unknown> | undefined;
+      if (pauseRow?.plan_hash !== undefined && pauseRow.plan_hash !== decision.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, "decision_plan_hash_mismatch");
+      if (pauseRow?.policy_version !== undefined && pauseRow.policy_version !== decision.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, "decision_policy_version_mismatch");
+      const existing = await client.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
+      if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
+      await client.query(
+        `INSERT INTO pause_decisions (decision_id, pause_id, kind, actor, policy_version, plan_hash, approval_scope_hash, reason_codes_json, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [decision.decisionId, decision.pauseId, decision.kind, decision.actor, decision.policyVersion, decision.planHash, decision.approvalScopeHash ?? null, JSON.stringify(decision.reasonCodes), decision.createdAt, decision.expiresAt ?? null],
+      );
+      // Keep the row metadata mirror in the same transaction as the append.
+      // JSONB concatenation preserves the existing append order.
+      const metadata = await client.query(
+        `UPDATE execution_pauses SET decision_ids_json = (decision_ids_json::jsonb || jsonb_build_array($2::text))::text WHERE pause_id=$1`,
+        [decision.pauseId, decision.decisionId],
+      );
+      if (metadata.rowCount !== 1) throw new PostgresPauseStoreError("store_write_failed", "appendDecision metadata update affected no pause row");
+      return decision;
+    } catch (cause) {
+      if (cause instanceof PauseError) throw cause;
+      if (isUniqueViolation(cause)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
+      if (cause instanceof PostgresPauseStoreError) throw cause;
+      throw new PostgresPauseStoreError("store_write_failed","appendDecision failed",cause);
+    }
+  }
+
   async appendDecision(decision: PauseDecision): Promise<PauseDecision> {
     this.assertOpen();
     let client: PoolClient;
@@ -448,22 +484,9 @@ export class PostgresPauseStore implements PauseStore {
     try {
       await client.query("BEGIN");
       try {
-        const pause = await client.query(`SELECT pause_id FROM execution_pauses WHERE pause_id=$1 FOR UPDATE`, [decision.pauseId]);
-        if (!pause.rowCount) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, decision.pauseId);
-        const existing = await client.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
-        if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
-        await client.query(
-          `INSERT INTO pause_decisions (decision_id, pause_id, kind, actor, policy_version, plan_hash, approval_scope_hash, reason_codes_json, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [decision.decisionId, decision.pauseId, decision.kind, decision.actor, decision.policyVersion, decision.planHash, decision.approvalScopeHash ?? null, JSON.stringify(decision.reasonCodes), decision.createdAt, decision.expiresAt ?? null],
-        );
-        // Keep the row metadata mirror in the same transaction as the append.
-        // JSONB concatenation preserves the existing append order.
-        const metadata = await client.query(
-          `UPDATE execution_pauses SET decision_ids_json = (decision_ids_json::jsonb || jsonb_build_array($2::text))::text WHERE pause_id=$1`,
-          [decision.pauseId, decision.decisionId],
-        );
-        if (metadata.rowCount !== 1) throw new PostgresPauseStoreError("store_write_failed", "appendDecision metadata update affected no pause row");
+        const result = await this.appendDecisionOn(client, decision);
         await client.query("COMMIT");
+        return result;
       } catch (inner) {
         try {
           await client.query("ROLLBACK");
@@ -472,13 +495,48 @@ export class PostgresPauseStore implements PauseStore {
         }
         throw inner;
       }
-      return decision;
     } catch (cause) {
       if (cause instanceof PauseError) throw cause;
-      if (isUniqueViolation(cause)) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `duplicate_decision_id:${decision.decisionId}`);
       if (cause instanceof PostgresPauseStoreError) throw cause;
       throw new PostgresPauseStoreError("store_write_failed","appendDecision failed",cause);
     } finally { client.release(); }
+  }
+
+  async withTransaction<T>(callback: (transaction: PauseStoreTransaction) => Promise<T>): Promise<T> {
+    this.assertOpen();
+    let client: PoolClient;
+    try {
+      client = await this.pool.connect();
+    } catch (cause) {
+      throw new PostgresPauseStoreError("store_connect_failed", "pause transaction cannot acquire connection", cause);
+    }
+
+    try {
+      await client.query("BEGIN");
+      try {
+        const transaction: PauseStoreTransaction = {
+          updatePause: (pause, expectedVersion) => this.updatePauseOn(client, pause, expectedVersion),
+          putChecks: (pauseId, checks) => this.putChecksOn(client, pauseId, checks),
+          appendDecision: (decision) => this.appendDecisionOn(client, decision),
+        };
+        const result = await callback(transaction);
+        await client.query("COMMIT");
+        return result;
+      } catch (inner) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (rollbackCause) {
+          throw new PostgresPauseStoreError("store_write_failed", "pause transaction rollback failed", rollbackCause);
+        }
+        throw inner;
+      }
+    } catch (cause) {
+      if (cause instanceof PauseError) throw cause;
+      if (cause instanceof PostgresPauseStoreError) throw cause;
+      throw new PostgresPauseStoreError("store_write_failed", "pause transaction failed", cause);
+    } finally {
+      client.release();
+    }
   }
 
   async getDecisions(pauseId: string): Promise<readonly PauseDecision[]> {
