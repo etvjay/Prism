@@ -5,6 +5,8 @@
 
 import type { Hex, OperationState } from "../features/prism-operations/domain/operation";
 import type { StoredOwnershipChallenge } from "../features/prism-identity/domain/ports";
+import { StarknetSubmitAdapter } from "../features/prism-operations/adapters/starknet-submit";
+import { StarknetSubmitAdapterV2 } from "../features/prism-operations/adapters/starknet-submit-v2";
 
 // ---------------------------------------------------------------------------
 // Challenge ports re-exported for wiring
@@ -59,6 +61,13 @@ export interface StarknetSubmitPort {
  */
 export function isConcreteStarknetSubmitAdapter(port: StarknetSubmitPort | undefined | null): boolean {
   if (!port || port.isTestDouble === true) return false;
+  // Do not infer production authority from an object merely satisfying the
+  // TypeScript port shape. Only the constructors that validate an injected
+  // Account and registry address are admissible at the live boundary.
+  const concreteClass =
+    (port instanceof StarknetSubmitAdapter && port.constructor === StarknetSubmitAdapter) ||
+    (port instanceof StarknetSubmitAdapterV2 && port.constructor === StarknetSubmitAdapterV2);
+  if (!concreteClass) return false;
   return (
     typeof port.registryAddress === "string" &&
     port.registryAddress.trim().length > 0 &&

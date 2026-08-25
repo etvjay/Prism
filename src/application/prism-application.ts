@@ -115,16 +115,54 @@ function isValidTxHash(value: unknown): value is Hex {
   return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
-function errorCodeFrom(cause: unknown): typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE] {
+type AppCode = typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE];
+type SubmitFailureState = "failed_retryable" | "failed_terminal" | "requires_attention";
+type SubmitFailure = { code: AppCode; detail: string; state: SubmitFailureState };
+
+// These codes describe a deterministic contract/input fact. They must never
+// return to failed_retryable after an adapter has been called: a retry could
+// replay an already-rejected or already-consumed operation.
+const TERMINAL_SUBMIT_CODES = new Set<string>([
+  APP_ERROR_CODE.INVALID_VENUE,
+  APP_ERROR_CODE.IDENTITY_NOT_FOUND,
+  APP_ERROR_CODE.INVALID_SIGNER,
+  APP_ERROR_CODE.NOT_CONTROLLER,
+  APP_ERROR_CODE.INVALID_EXECUTION_ACCOUNT,
+  APP_ERROR_CODE.NONCE_ALREADY_USED,
+  APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED,
+  APP_ERROR_CODE.BINDING_ALREADY_ACTIVE,
+  APP_ERROR_CODE.BINDING_NOT_FOUND,
+  APP_ERROR_CODE.IDENTITY_NOT_FOUND_READ,
+  APP_ERROR_CODE.BINDING_ALREADY_REVOKED,
+  APP_ERROR_CODE.ALTERED_MESSAGE,
+  APP_ERROR_CODE.PROOF_EXPIRED,
+  APP_ERROR_CODE.UNSUPPORTED_SIGNATURE_CLASS,
+  APP_ERROR_CODE.STALE_STATE_CONFLICT,
+]);
+
+function stableAppCode(cause: unknown): AppCode {
   const maybeCode = (cause as { code?: string })?.code;
   if (typeof maybeCode === "string" && Object.values(APP_ERROR_CODE).includes(maybeCode as never)) {
-    return maybeCode as typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE];
+    return maybeCode as AppCode;
   }
   return APP_ERROR_CODE.RPC_UNAVAILABLE;
 }
 
-function errorDetailFrom(cause: unknown): string {
-  return (cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "submit_failed";
+function submitFailure(cause: unknown): SubmitFailure {
+  const code = stableAppCode(cause);
+  const detail = (cause as { detail?: string })?.detail ?? (cause as Error)?.message ?? "submit_failed";
+  const ambiguous = (cause as { ambiguous?: unknown })?.ambiguous === true || code === APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS;
+  if (ambiguous) {
+    return { code: APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS, detail, state: "requires_attention" };
+  }
+  const terminal = (cause as { terminal?: unknown })?.terminal === true || TERMINAL_SUBMIT_CODES.has(code);
+  return { code, detail, state: terminal ? "failed_terminal" : "failed_retryable" };
+}
+
+function failureResponseDetail(operationId: string, failure: SubmitFailure): string {
+  if (failure.state === "failed_retryable") return `dependency_failure:op_${operationId}:${failure.detail}`;
+  if (failure.state === "requires_attention") return `submission_status_unknown:op_${operationId}:${failure.detail}`;
+  return `terminal_submission_failure:op_${operationId}:${failure.detail}`;
 }
 
 export class PrismApplicationService {
@@ -239,13 +277,17 @@ export class PrismApplicationService {
         op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
         return ok<CreateIdentityData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
       } catch (cause) {
-        // Map submit failure to dependency error without inventing completion.
-        const detail = (cause as { code?: string })?.code ?? (cause as Error)?.message ?? "submit_failed";
-        // Transition to failed_retryable (requires errorCode)
+        const failure = submitFailure(cause);
         try {
-          op = await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 3, expectedVersion: op.version, errorCode: APP_ERROR_CODE.RPC_UNAVAILABLE, errorDetail: detail });
+          op = await this.deps.operationStore.transition(op.id, {
+            to: failure.state,
+            now: now + 3,
+            expectedVersion: op.version,
+            errorCode: failure.code,
+            errorDetail: failure.detail,
+          });
         } catch {}
-        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `dependency_failure:op_${op.id}:${detail}`);
+        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
       }
     } catch (e) {
       if (e instanceof AppError && e.code === APP_ERROR_CODE.RPC_UNAVAILABLE) {
@@ -327,19 +369,17 @@ export class PrismApplicationService {
         op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
         return ok<BindData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
       } catch (cause) {
-        const maybeCode = (cause as { code?: string })?.code;
-        if (maybeCode && [APP_ERROR_CODE.NOT_CONTROLLER, APP_ERROR_CODE.PROOF_DIGEST_ALREADY_CONSUMED, APP_ERROR_CODE.BINDING_ALREADY_ACTIVE, APP_ERROR_CODE.IDENTITY_NOT_FOUND].includes(maybeCode as never)) {
-          // Map registry revert codes to stable catalogue.
-          try {
-            await this.deps.operationStore.transition(op.id, { to: "failed_terminal", now: now + 3, expectedVersion: op.version, errorCode: maybeCode, errorDetail: String((cause as Error).message) });
-          } catch {}
-          throw new AppError(maybeCode as typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE], String((cause as Error).message));
-        }
-        const detail = maybeCode ?? (cause as Error)?.message ?? "submit_failed";
+        const failure = submitFailure(cause);
         try {
-          op = await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 3, expectedVersion: op.version, errorCode: APP_ERROR_CODE.RPC_UNAVAILABLE, errorDetail: detail });
+          op = await this.deps.operationStore.transition(op.id, {
+            to: failure.state,
+            now: now + 3,
+            expectedVersion: op.version,
+            errorCode: failure.code,
+            errorDetail: failure.detail,
+          });
         } catch {}
-        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `dependency_failure:op_${op.id}:${detail}`);
+        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
       }
     } catch (e) {
       return this.mapError(e, requestId);
@@ -384,14 +424,17 @@ export class PrismApplicationService {
         op = await this.deps.operationStore.transition(op.id, { to: "submitted", now: now + 3, expectedVersion: op.version, txHash });
         return ok<RevokeData>({ operationId: op.id, state: op.state }, { operationId: op.id, state: op.state, version: op.version }, requestId);
       } catch (cause) {
-        const maybeCode = (cause as { code?: string })?.code;
-        if (maybeCode && [APP_ERROR_CODE.NOT_CONTROLLER].includes(maybeCode as never)) {
-          try { await this.deps.operationStore.transition(op.id, { to: "failed_terminal", now: now + 3, expectedVersion: op.version, errorCode: maybeCode, errorDetail: String((cause as Error).message) }); } catch {}
-          throw new AppError(maybeCode as typeof APP_ERROR_CODE[keyof typeof APP_ERROR_CODE], String((cause as Error).message));
-        }
-        const detail = maybeCode ?? (cause as Error)?.message ?? "submit_failed";
-        try { op = await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 3, expectedVersion: op.version, errorCode: APP_ERROR_CODE.RPC_UNAVAILABLE, errorDetail: detail }); } catch {}
-        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `dependency_failure:op_${op.id}:${detail}`);
+        const failure = submitFailure(cause);
+        try {
+          op = await this.deps.operationStore.transition(op.id, {
+            to: failure.state,
+            now: now + 3,
+            expectedVersion: op.version,
+            errorCode: failure.code,
+            errorDetail: failure.detail,
+          });
+        } catch {}
+        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
       }
     } catch (e) {
       return this.mapError(e, requestId);
@@ -493,25 +536,40 @@ export class PrismApplicationService {
             break;
         }
       } catch (cause) {
-        const code = errorCodeFrom(cause);
-        const detail = errorDetailFrom(cause);
+        const failure = submitFailure(cause);
         try {
-          await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 2, expectedVersion: ready.version, errorCode: code, errorDetail: detail });
+          await this.deps.operationStore.transition(op.id, {
+            to: failure.state,
+            now: now + 2,
+            expectedVersion: ready.version,
+            errorCode: failure.code,
+            errorDetail: failure.detail,
+          });
         } catch {
           // Preserve the original dependency failure; a concurrent worker can
           // reconcile the row if the compensating CAS loses.
         }
-        throw new AppError(code, `dependency_failure:op_${op.id}:${detail}`);
+        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
       }
 
       if (!isValidTxHash(submittedResult?.txHash)) {
-        const detail = "submit_invalid_tx_hash";
+        const failure: SubmitFailure = {
+          code: APP_ERROR_CODE.TIMEOUT_UNKNOWN_STATUS,
+          detail: "submit_invalid_tx_hash",
+          state: "requires_attention",
+        };
         try {
-          await this.deps.operationStore.transition(op.id, { to: "failed_retryable", now: now + 2, expectedVersion: ready.version, errorCode: APP_ERROR_CODE.RPC_UNAVAILABLE, errorDetail: detail });
+          await this.deps.operationStore.transition(op.id, {
+            to: failure.state,
+            now: now + 2,
+            expectedVersion: ready.version,
+            errorCode: failure.code,
+            errorDetail: failure.detail,
+          });
         } catch {
-          // Best effort only; do not fabricate a submitted state.
+          // Best effort only; do not fabricate a submitted state or retry.
         }
-        throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, detail);
+        throw new AppError(failure.code, failureResponseDetail(op.id, failure));
       }
 
       const next = await this.deps.operationStore.transition(op.id, {

@@ -191,7 +191,7 @@ function s(...states: OperationState[]): TransitionSet {
 const ALLOWED: Record<OperationState, TransitionSet> = {
   created: s("awaiting_authorization", "failed_retryable", "failed_terminal", "expired", "cancelled"),
   awaiting_authorization: s("ready", "failed_retryable", "failed_terminal", "expired", "cancelled"),
-  ready: s("submitted", "failed_retryable", "failed_terminal", "expired", "cancelled"),
+  ready: s("submitted", "failed_retryable", "failed_terminal", "requires_attention", "expired", "cancelled"),
   submitted: s("processing", "reverted", "failed_retryable", "failed_terminal", "requires_attention"),
   processing: s("confirming", "reverted", "failed_retryable", "failed_terminal", "requires_attention"),
   confirming: s("confirmed", "reverted", "failed_retryable", "failed_terminal", "requires_attention"),

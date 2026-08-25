@@ -11,6 +11,7 @@ import { StarknetEventIndexerAdapter, PRISM_EVENT_SELECTORS } from "../../featur
 import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../../features/prism-operations/adapters/starknet-submit-v2";
 import { createIsolatedFactory, createIsolatedFactoryWithStarknet, createStarknetReadPorts, getStarknetNetwork, resetFactory, isStarknetSubmitConfiguredForFactory, assertChainTouchingConfiguredForFactory } from "../factory";
+import { isConcreteStarknetSubmitAdapter } from "../ports";
 import type { Hex } from "../../features/prism-operations/domain/operation";
 import { FELT_PRIME } from "../../features/prism-identity/domain/felt-digest";
 import { normalizeStarknetContractAddress } from "../../features/prism-identity/domain/starknet-boundary";
@@ -317,6 +318,31 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
     })).toThrow(/submit_unconfigured/);
   });
 
+  it("production submit detection rejects structural submit fakes even when metadata and methods look concrete", () => {
+    const structuralFake = {
+      isTestDouble: false,
+      registryVersion: "v1" as const,
+      registryAddress: REGISTRY,
+      async submitCreateIdentity() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex }; },
+      async submitBind() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex }; },
+      async submitRevoke() { return { txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex }; },
+    };
+    expect(isConcreteStarknetSubmitAdapter(structuralFake)).toBe(false);
+    expect(() => assertChainTouchingConfiguredForFactory({
+      runtimeMode: "production",
+      isStarknetConfigured: true,
+      submitPortMode: "STARKNET_INJECTED",
+      isStarknetSubmitConfigured: true,
+      submitPort: structuralFake,
+    })).toThrow(/submit_unconfigured/);
+
+    const concrete = new StarknetSubmitAdapter({
+      account: { address: ACCOUNT_ADDR, async execute() { return { transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }; } },
+      registryAddress: REGISTRY,
+    });
+    expect(isConcreteStarknetSubmitAdapter(concrete)).toBe(true);
+  });
+
   it("default factory is TEST_DOUBLE_X2, isStarknetSubmitConfigured false, never reads private keys", () => {
     const f = createIsolatedFactory(1_789_000_000);
     expect(f.submitPortMode).toBe("TEST_DOUBLE_X2");
@@ -369,7 +395,8 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       expect(() => createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v1" })).toThrow(/submit_port_registry_version_mismatch/);
       const factory = createIsolatedFactoryWithStarknet(1_789_000_000, { starknetReadProvider: fakeProvider as never, submitPort: submitPort as never, submitPortRegistryVersion: "v2", submitPortRegistryAddress: REGISTRY });
       expect(factory.submitPort).toBe(submitPort);
-      expect(factory.isStarknetSubmitConfigured).toBe(true);
+      expect(factory.submitPortMode).toBe("TEST_DOUBLE_X2");
+      expect(factory.isStarknetSubmitConfigured).toBe(false);
     });
   });
 
@@ -427,6 +454,7 @@ describe("FACTORY_WIRING_FIX — defect 3: SUBMIT PORT explicit semantics", () =
       expect(factory.submitPort).toBe(v2);
       expect(factory.submitPort.registryVersion).toBe("v2");
       expect((factory.submitPort as { registryAddress?: string }).registryAddress).toBe(normalizeStarknetContractAddress(REGISTRY));
+      expect(isConcreteStarknetSubmitAdapter(v2)).toBe(true);
     });
   });
 

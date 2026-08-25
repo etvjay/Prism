@@ -12,6 +12,7 @@ import { fixedClock } from "../../features/prism-identity/adapters/clock";
 import { viemChallengeCrypto } from "../../features/prism-identity/adapters/viem-crypto";
 import { LocalErc1271SemanticsChecker, makeEoaSigner, presentedFromIssued, mutatePresented } from "../../features/prism-identity/testing/fixtures";
 import { InMemoryOperationStore } from "../../features/prism-operations/adapters/memory-operation-store";
+import { StarknetSubmitAdapter } from "../../features/prism-operations/adapters/starknet-submit";
 import { PrismApplicationService } from "../prism-application";
 import { InMemoryRegistry } from "../adapters/in-memory-registry";
 import type { Hex } from "../../features/prism-operations/domain/operation";
@@ -21,6 +22,7 @@ const DOMAIN = "prism.example";
 const BASE_ACCOUNT = makeEoaSigner().address.toLowerCase();
 const CONTROLLER = "0x1111111111111111111111111111111111111111";
 const OTHER_CONTROLLER = "0x2222222222222222222222222222222222222222";
+const ADAPTER_CONTROLLER = "0x0000000000000000000000001111111111111111111111111111111111111111";
 const PRISM_ID = "prism:P7F21";
 const VENUE = "BASE";
 const TX_HASH: Hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -421,6 +423,91 @@ describe("App boundary — application command/query contract", () => {
     expect(ops[0].state).not.toBe("submitted"); // moved to retryable branch
   });
 
+  it("ambiguous account.execute failure becomes poll-only requires_attention and cannot be resubmitted", async () => {
+    const h = buildHarness();
+    let executeCalls = 0;
+    const adapter = new StarknetSubmitAdapter({
+      account: {
+        address: ADAPTER_CONTROLLER,
+        async execute() {
+          executeCalls++;
+          throw new Error("transport reset after broadcast");
+        },
+      },
+      registryAddress: "0x3333",
+    });
+    const app = new PrismApplicationService({
+      challengeService: h.challengeService,
+      operationStore: h.operationStore,
+      registry: h.registry,
+      submitPort: adapter,
+      submitPortMode: "STARKNET_INJECTED",
+      isStarknetSubmitConfigured: true,
+      registryVersion: "v1",
+      clock: h.clock,
+      idGenerator: idGen(),
+    });
+
+    const result = await app.createIdentity({
+      headers: { requestId: "ambiguous-1", idempotencyKey: "idem-ambiguous-1" },
+      session: appSession(h.clock.now()),
+      payload: { controllerAddress: ADAPTER_CONTROLLER },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("ambiguous submission must not succeed");
+    expect(result.error.code).toBe("ERR-022");
+    expect(result.error.retryable).toBe("poll_only");
+
+    const [operation] = await h.operationStore.listNonTerminal(10);
+    expect(operation.state).toBe("requires_attention");
+    expect(operation.errorCode).toBe("ERR-022");
+    expect(operation.txHash).toBeNull();
+
+    const retry = await app.retryOperation(operation.id, h.clock.now() + 5);
+    expect(retry.ok).toBe(false);
+    if (retry.ok) throw new Error("requires_attention must not be automatically resubmitted");
+    expect(retry.error.code).toBe("ERR-023");
+    expect(executeCalls).toBe(1);
+  });
+
+  it("terminal adapter ERR-007 is preserved and stored as failed_terminal", async () => {
+    const h = buildHarness();
+    const adapter = new StarknetSubmitAdapter({
+      account: {
+        address: ADAPTER_CONTROLLER,
+        async execute() {
+          throw new Error("Contract reverted: ERR-007: DIGEST CONSUMED");
+        },
+      },
+      registryAddress: "0x3333",
+    });
+    const app = new PrismApplicationService({
+      challengeService: h.challengeService,
+      operationStore: h.operationStore,
+      registry: h.registry,
+      submitPort: adapter,
+      submitPortMode: "STARKNET_INJECTED",
+      isStarknetSubmitConfigured: true,
+      registryVersion: "v1",
+      clock: h.clock,
+      idGenerator: idGen(),
+    });
+
+    const result = await app.createIdentity({
+      headers: { requestId: "terminal-1", idempotencyKey: "idem-terminal-1" },
+      session: appSession(h.clock.now()),
+      payload: { controllerAddress: ADAPTER_CONTROLLER },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("terminal adapter error must fail");
+    expect(result.error.code).toBe("ERR-007");
+    const operation = await h.operationStore.getByIdempotencyKey("idem-terminal-1");
+    expect(operation).toBeDefined();
+    if (!operation) throw new Error("terminal operation was not persisted");
+    expect(operation.state).toBe("failed_terminal");
+    expect(operation.errorCode).toBe("ERR-007");
+  });
+
   // -------------------------------------------------------------------------
   // 9. Retry — generic retry must fail closed without a configured submit adapter
   // -------------------------------------------------------------------------
@@ -458,7 +545,7 @@ describe("App boundary — application command/query contract", () => {
     const { StarknetSubmitAdapter } = await import("../../features/prism-operations/adapters/starknet-submit");
     const adapter = new StarknetSubmitAdapter({
       account: {
-        address: CONTROLLER,
+        address: ADAPTER_CONTROLLER,
         async execute() {
           return { transaction_hash: TX_HASH };
         },
@@ -469,7 +556,7 @@ describe("App boundary — application command/query contract", () => {
       id: "op-retry-adapter",
       kind: "create_identity",
       idempotencyKey: "idem-retry-adapter",
-      requestFingerprint: JSON.stringify({ kind: "create_identity", controllerAddress: CONTROLLER }),
+      requestFingerprint: JSON.stringify({ kind: "create_identity", controllerAddress: ADAPTER_CONTROLLER }),
       now: h.clock.now(),
     });
     op = await h.operationStore.transition(op.id, { to: "awaiting_authorization", now: h.clock.now() + 1, expectedVersion: op.version });

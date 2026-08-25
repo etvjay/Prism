@@ -83,7 +83,7 @@ export function getStarknetNetwork(env: StarknetNetworkConfig = {
 }
 
 export interface FactorySubmitOptions {
-  /** Injected submit port for controlled callers (e.g. tests with StarknetSubmitAdapter fake). If omitted, defaults to InMemoryRegistry TEST_DOUBLE. */
+  /** Injected submit port for controlled callers; structural test doubles stay test-only. */
   submitPort?: StarknetSubmitPort;
 }
 
@@ -122,7 +122,7 @@ export interface AppFactory {
   submitPort: StarknetSubmitPort;
   /** Explicit mode label so callers never mistake TEST_DOUBLE for live submission. */
   submitPortMode: SubmitPortMode;
-  /** True only when a real StarknetSubmitAdapter was injected via factory options. Never derived from env secrets. */
+  /** True only when a concrete StarknetSubmitAdapter/V2 instance was injected. */
   isStarknetSubmitConfigured: boolean;
   operationStore: OperationStore;
   ownershipStore: OwnershipProofStore;
@@ -370,8 +370,9 @@ function createMemoryFactory(
   // Submit port semantics are explicit: the default is a local-only double;
   // live submission is possible only through an injected concrete adapter.
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
-  const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
-  const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
+  const hasConcreteSubmitAdapter = isConcreteStarknetSubmitAdapter(overrides?.submitPort);
+  const submitPortMode: SubmitPortMode = hasConcreteSubmitAdapter ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
+  const isStarknetSubmitConfigured = hasConcreteSubmitAdapter;
   const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
   if (runtimeMode === "production") assertChainTouchingConfigured();
   let n = 1;
@@ -530,8 +531,9 @@ async function createPostgresFactory(
       })
     : null;
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
-  const submitPortMode: SubmitPortMode = overrides?.submitPort ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
-  const isStarknetSubmitConfigured = overrides?.submitPort !== undefined && overrides?.submitPort !== null;
+  const hasConcreteSubmitAdapter = isConcreteStarknetSubmitAdapter(overrides?.submitPort);
+  const submitPortMode: SubmitPortMode = hasConcreteSubmitAdapter ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
+  const isStarknetSubmitConfigured = hasConcreteSubmitAdapter;
   const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
   if (runtimeMode === "production") {
     try {
