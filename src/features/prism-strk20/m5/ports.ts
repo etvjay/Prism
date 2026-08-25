@@ -13,7 +13,10 @@ export interface CapabilityPort {
 }
 
 export interface RegistrationPort {
-  isRegistered(): Promise<boolean>;
+  // null means the wallet/API does not expose registration readback; the runner
+  // must then rely on the wallet's prepare/submit result without claiming that
+  // registration was independently observed.
+  isRegistered(): Promise<boolean | null>;
 }
 
 export interface FeePort {
@@ -35,7 +38,7 @@ export type Strk20InvokeAction = {
 export type Strk20Action = Strk20TransferAction | Strk20InvokeAction;
 
 export interface Strk20CallAndProof {
-  call: { contract_address: string; entrypoint: string; calldata: string[] };
+  call: { contract_address: string; entry_point: string; calldata: string[] };
   proof: { data: string; output: string[]; proof_facts: string[] };
 }
 

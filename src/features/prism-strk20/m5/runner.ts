@@ -15,7 +15,7 @@ import {
   PRIVACY_POOL_SEPOLIA,
   normalizeHex,
   addressesEqual,
-  MATURITY_BLOCKS,
+  isValidStarknetAddress,
 } from "./constants";
 import type {
   M5Provider,
@@ -53,6 +53,8 @@ export const M5_ERROR_CODE = {
   CONSERVATION_FAILED: "M5-019",
   STRANDED_BALANCE: "M5-020",
   NOTE_DENOMINATION_WRONG: "M5-021",
+  SIMULATION_PROOF_INVALID: "M5-022",
+  CONFIG_INVALID: "M5-023",
 } as const;
 
 export type M5ErrorCode = (typeof M5_ERROR_CODE)[keyof typeof M5_ERROR_CODE];
@@ -123,6 +125,11 @@ export interface M5LivePredicates {
   poolEventObserved: boolean;
   helperCalldataInReceipt: boolean;
   vesuDepositObserved: boolean;
+  // The current WalletAccountV6/M5 receipt ports do not expose private-note
+  // readback or a maturity oracle. These remain false until an external,
+  // consented wallet/session adapter supplies them explicitly.
+  noteReadbackObserved: boolean;
+  maturityObserved: boolean;
   conservationOk: boolean;
   noStrandedBalance: boolean;
   independentReadbackOk: boolean;
@@ -171,10 +178,37 @@ function isU128(v: bigint): boolean {
   return v >= 0n && v <= MAX_U128;
 }
 
+function assertConfiguredAddress(value: string, name: string): void {
+  if (!isValidStarknetAddress(value) || BigInt(value) === 0n) {
+    throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, `${name}_must_be_nonzero_hex_address`);
+  }
+}
+
+function safeErrorMessage(error: unknown): string {
+  const raw = String((error as Error)?.message ?? error ?? "unknown_error");
+  if (/viewing.?key|private.?key|seed.?phrase|mnemonic/i.test(raw)) return "provider_error_redacted";
+  return raw.slice(0, 160);
+}
+
+function isExpectedSepoliaChainId(chainId: string): boolean {
+  const normalized = chainId.trim().toUpperCase();
+  // Wallet APIs commonly return the symbolic id; accept the canonical felt
+  // encoding too, but never a substring/lookalike such as NOT_SEPOLIA.
+  return normalized === "SN_SEPOLIA" || normalized === "0X534E5F5345504F4C4941";
+}
+
+function isTerminalReceiptStatus(status: string): boolean {
+  return status === "SUCCEEDED" || status === "REVERTED";
+}
+
 // Exact helper calldata: [STRK, VTOKEN, amount, "${openNoteIds[0]}"]
 export function buildHelperCalldata(inAmount: bigint, opts?: { strk?: string; vToken?: string }): string[] {
   const strk = opts?.strk ?? STRK_SEPOLIA;
   const vt = opts?.vToken ?? VTOKEN_STRK_SEPOLIA;
+  assertConfiguredAddress(strk, "strk_token");
+  assertConfiguredAddress(vt, "v_token");
+  if (addressesEqual(strk, vt)) throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "strk_token_and_v_token_must_differ");
+  if (inAmount < 0n) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "NEGATIVE_IN_AMOUNT");
   if (!isU128(inAmount)) throw new M5Error(M5_ERROR_CODE.AMOUNT_OVERFLOW, `in_amount ${inAmount} exceeds u128`);
   if (inAmount < MIN_AMOUNT) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "ZERO_IN_AMOUNT");
   return [strk, vt, toFeltDecimal(inAmount), "${openNoteIds[0]}"];
@@ -183,6 +217,7 @@ export function buildHelperCalldata(inAmount: bigint, opts?: { strk?: string; vT
 export function buildActions(inAmount: bigint, selfAddress: string, cfg: M5RunnerConfig): Strk20Action[] {
   const strk = cfg.strkToken ?? STRK_SEPOLIA;
   const helper = cfg.helperAddress ?? HELPER_ADDRESS_SEPOLIA;
+  assertConfiguredAddress(helper, "helper_address");
   const calldata = buildHelperCalldata(inAmount, { strk, vToken: cfg.vToken ?? VTOKEN_STRK_SEPOLIA });
   // 1. Transfer OPEN to self (creates open note)
   // 2. Invoke helper with placeholder
@@ -227,6 +262,17 @@ export class M5VesuRunner {
       commit: cfg.commit ?? "",
     };
     assertViewingKeyFree(cfg, "M5RunnerConfig");
+    assertConfiguredAddress(this.cfg.strkToken!, "strk_token");
+    assertConfiguredAddress(this.cfg.vToken!, "v_token");
+    assertConfiguredAddress(this.cfg.helperAddress!, "helper_address");
+    assertConfiguredAddress(this.cfg.privacyPool!, "privacy_pool");
+    if (addressesEqual(this.cfg.strkToken!, this.cfg.vToken!)) {
+      throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "strk_token_and_v_token_must_differ");
+    }
+    if (this.cfg.chainIdExpected!.trim().toUpperCase() !== "SN_SEPOLIA") {
+      throw new M5Error(M5_ERROR_CODE.CONFIG_INVALID, "M5_route_is_SN_SEPOLIA_only");
+    }
+    if (cfg.inAmount < 0n) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount negative");
     if (!isU128(cfg.inAmount)) throw new M5Error(M5_ERROR_CODE.AMOUNT_OVERFLOW, `in_amount ${cfg.inAmount} exceeds u128 max`);
     if (cfg.inAmount < MIN_AMOUNT) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount zero");
   }
@@ -259,6 +305,8 @@ export class M5VesuRunner {
       poolEventObserved: false,
       helperCalldataInReceipt: false,
       vesuDepositObserved: false,
+      noteReadbackObserved: false,
+      maturityObserved: false,
       conservationOk: false,
       noStrandedBalance: false,
       independentReadbackOk: false,
@@ -275,6 +323,9 @@ export class M5VesuRunner {
         provider.supportedSpecs(),
         provider.requestChainId(),
       ]);
+      if (!Array.isArray(a) || !Array.isArray(s) || !a.every((v) => typeof v === "string") || !s.every((v) => typeof v === "string") || typeof c !== "string") {
+        throw new Error("malformed_capability_response");
+      }
       apiVersions = a;
       specs = s;
       chainId = c;
@@ -294,40 +345,29 @@ export class M5VesuRunner {
     predicates.capabilityObserved = true;
 
     // Network mismatch -> failure state
-    const expected = this.cfg.chainIdExpected;
-    const normalizedChain = chainId.trim().toUpperCase();
-    if (normalizedChain !== expected && normalizedChain !== expected.replace("SN_", "0x534e5f")) {
-      // Also accept numeric chainId for flexibility, but primary is SN_SEPOLIA string
-      if (!normalizedChain.includes("SEPOLIA") && expected === "SN_SEPOLIA") {
-        throw new M5Error(M5_ERROR_CODE.NETWORK_MISMATCH, `chain ${chainId} != expected ${expected}`);
-      }
-    }
-    // Strict check: if expected is SN_SEPOLIA, chain must be SN_SEPOLIA (or 0x534e5f... sepolia)
-    // We already gated above loosely; now exact
-    if (expected === "SN_SEPOLIA" && normalizedChain !== "SN_SEPOLIA" && !normalizedChain.includes("SEPOLIA")) {
-      throw new M5Error(M5_ERROR_CODE.NETWORK_MISMATCH, `expected SN_SEPOLIA got ${chainId}`);
+    const expected = this.cfg.chainIdExpected.trim().toUpperCase();
+    const chainMatches = expected === "SN_SEPOLIA"
+      ? isExpectedSepoliaChainId(chainId)
+      : chainId.trim().toUpperCase() === expected;
+    if (!chainMatches) {
+      throw new M5Error(M5_ERROR_CODE.NETWORK_MISMATCH, `expected ${expected} got ${chainId}`);
     }
 
     // 2. Fee/registration preflight
-    let fee: bigint;
-    let feeBlock: number | null = null;
     try {
       const f = await provider.getFeeAmount();
       assertViewingKeyFree(f, "fee_observation");
       if (f.fee < 0n) throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, "negative_fee");
-      fee = f.fee;
-      feeBlock = f.blockNumber;
       predicates.feeObserved = true;
     } catch (e) {
       if (e instanceof M5Error) throw e;
-      throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, `fee unavailable: ${(e as Error).message}`);
+      throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, `fee unavailable: ${safeErrorMessage(e)}`);
     }
 
     // Registration — if wallet exposes isRegistered, check; else infer via prepare error
-    let registered: boolean | null = null;
     try {
-      registered = await provider.isRegistered();
-      predicates.registrationObserved = true;
+      const registered = await provider.isRegistered();
+      predicates.registrationObserved = registered !== null;
       if (registered === false) {
         throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, "wallet not registered into privacy pool; viewing key not set");
       }
@@ -346,6 +386,7 @@ export class M5VesuRunner {
     const selfAddressRaw = await provider.getAddress();
     const selfAddress = typeof selfAddressRaw === "string" ? selfAddressRaw : String(selfAddressRaw);
     assertViewingKeyFree({ selfAddress }, "self_address");
+    assertConfiguredAddress(selfAddress, "wallet_address");
 
     const actions = buildActions(this.cfg.inAmount, selfAddress, this.cfg);
     assertViewingKeyFree(actions, "strk20_actions");
@@ -376,27 +417,33 @@ export class M5VesuRunner {
     try {
       simResult = await provider.strk20PrepareInvoke(actions, true);
       // Simulate must return empty proof (not submittable)
+      if (
+        !simResult ||
+        typeof simResult !== "object" ||
+        !simResult.proof ||
+        typeof simResult.proof.data !== "string" ||
+        !Array.isArray(simResult.proof.output) ||
+        !Array.isArray(simResult.proof.proof_facts)
+      ) {
+        throw new M5Error(M5_ERROR_CODE.SIMULATION_PROOF_INVALID, "simulate_returned_malformed_proof");
+      }
       if (simResult.proof.data !== "" || simResult.proof.output.length !== 0 || simResult.proof.proof_facts.length !== 0) {
-        // Some wallets may return empty strings differently — but we check that simulate does not contain real proof
-        // If wallet returns real proof in simulate, that's wallet bug; we treat as not observed
+        throw new M5Error(M5_ERROR_CODE.SIMULATION_PROOF_INVALID, "simulate_returned_non_empty_proof");
+      }
+      if (!simResult.call?.contract_address || !addressesEqual(simResult.call.contract_address, this.cfg.privacyPool!)) {
+        throw new M5Error(M5_ERROR_CODE.CALLDATA_MISMATCH, "simulate_outer_call_not_pinned_privacy_pool");
       }
       predicates.simulateObserved = true;
-      // Verify simulate call shape preserves helper address
-      const callTargetsHelper =
-        simResult.call.contract_address &&
-        addressesEqual(simResult.call.contract_address, this.cfg.privacyPool!);
-      // The pool is the contract_address for the outer call; helper is in actions, not necessarily in call.contract_address
-      // For prepared invoke, the call is the pool invoke; helper appears in actions, which we already verified
-      void callTargetsHelper;
     } catch (e) {
-      if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, `simulate NOT_REGISTERED: ${(e as Error).message}`);
-      if (isInsufficientBalanceError(e)) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, `insufficient private balance: ${(e as Error).message}`);
-      if (isPrivacyLeakError(e)) throw new Strk20Error(STRK20_ERROR_CODE.PRIVACY_OVERCLAIM, `privacy leak: ${(e as Error).message}`);
+      if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, `simulate NOT_REGISTERED: ${safeErrorMessage(e)}`);
+      if (isInsufficientBalanceError(e)) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, `insufficient private balance: ${safeErrorMessage(e)}`);
+      if (isPrivacyLeakError(e)) throw new Strk20Error(STRK20_ERROR_CODE.PRIVACY_OVERCLAIM, "privacy leak");
       // Also handle screening
       const msg = String((e as Error).message ?? "").toLowerCase();
-      if (msg.includes("screening") && msg.includes("reject")) throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, msg);
-      if (msg.includes("screening") && msg.includes("unavailable")) throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, msg);
-      throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `simulate failed: ${(e as Error).message}`);
+      if (msg.includes("screening") && msg.includes("reject")) throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, safeErrorMessage(e));
+      if (msg.includes("screening") && msg.includes("unavailable")) throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, safeErrorMessage(e));
+      if (e instanceof M5Error) throw e;
+      throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `simulate failed: ${safeErrorMessage(e)}`);
     }
 
     // If simulate observed zero output (helper would have reverted for dust) — model failure
@@ -415,24 +462,24 @@ export class M5VesuRunner {
     } catch (e) {
       if (e instanceof M5Error) throw e;
       const msg = String((e as Error).message ?? "");
-      if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, msg);
+      if (isNotRegisteredError(e)) throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, safeErrorMessage(e));
       if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("reject"))
-        throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, msg);
+        throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, safeErrorMessage(e));
       if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("unavailable"))
-        throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, msg);
+        throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, safeErrorMessage(e));
       if (msg.toLowerCase().includes("user_refused") || msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("denied")) {
-        throw new M5Error(M5_ERROR_CODE.WALLET_UNAVAILABLE, `user refused: ${msg}`);
+        throw new M5Error(M5_ERROR_CODE.WALLET_UNAVAILABLE, `user refused: ${safeErrorMessage(e)}`);
       }
       // If provider is mock with _isMock and no real prover, treat as blocked
       if ((provider as unknown as { _isMock?: boolean })._isMock) {
         return {
           verdict: M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
           reason: "NO_PROVER",
-          detail: `Mock provider cannot generate SNIP-36 proof: ${msg}; no fabricated hash emitted.`,
+          detail: `Mock provider cannot generate SNIP-36 proof: ${safeErrorMessage(e)}; no fabricated hash emitted.`,
           commit: this.cfg.commit,
         };
       }
-      throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `invoke failed: ${msg}`);
+      throw new M5Error(M5_ERROR_CODE.HELPER_REVERT, `invoke failed: ${safeErrorMessage(e)}`);
     }
 
     // 6. Receipt polling — via provider or independent RPC
@@ -441,24 +488,31 @@ export class M5VesuRunner {
     const timeout = this.cfg.receiptTimeoutMs!;
     const interval = this.cfg.receiptIntervalMs!;
     while (Date.now() - start < timeout) {
-      receipt = await provider.getReceipt(txHash);
-      if (receipt) break;
-      // Also try independent RPC if available
-      if (this.cfg.independentRpc) {
+      try {
+        const observed = await provider.getReceipt(txHash);
+        if (observed && (isTerminalReceiptStatus(observed.executionStatus) || observed.executionStatus === "UNKNOWN")) {
+          receipt = observed;
+        }
+      } catch (e) {
+        throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt read failed: ${safeErrorMessage(e)}`);
+      }
+      // Also try independent RPC if available, but do not treat RECEIVED or
+      // PENDING as a terminal receipt.
+      if (!receipt && this.cfg.independentRpc) {
         try {
           const r = await this.cfg.independentRpc.getTransactionReceipt(txHash);
-          if (r) {
+          if (r && (isTerminalReceiptStatus(r.executionStatus) || r.executionStatus === "UNKNOWN")) {
             receipt = {
               executionStatus: r.executionStatus as "SUCCEEDED" | "REVERTED" | "RECEIVED",
               blockNumber: r.blockNumber,
               events: r.events.map((e) => ({ address: e.address, keys: e.keys })),
             };
-            break;
           }
         } catch {
-          // ignore
+          // An independent read is supplementary; keep polling the wallet path.
         }
       }
+      if (receipt) break;
       await new Promise((res) => setTimeout(res, interval));
     }
 
@@ -502,8 +556,6 @@ export class M5VesuRunner {
 
     // 8. Verify pool event, helper calldata, Vesu deposit
     const poolAddrNorm = normalizeHex(this.cfg.privacyPool!);
-    const helperAddrNorm = normalizeHex(this.cfg.helperAddress!);
-    const vTokenNorm = normalizeHex(this.cfg.vToken!);
 
     // Use independent if available, else provider receipt
     const eventsToCheck = independent?.events ?? receipt.events;
@@ -518,18 +570,11 @@ export class M5VesuRunner {
     // The pool's calldata contains helper address; we cannot see calldata in receipt events directly,
     // but we can check that receipt events include either helper or vToken, and that pool event's keys include something
     // For stronger check, we look for helper address in any event's address or keys
-    const allAddresses = eventsToCheck.map((e) => normalizeHex(e.address));
-    const allKeys = eventsToCheck.flatMap((e) => e.keys.map((k) => normalizeHex(k)));
-    const helperInvolved = allAddresses.includes(helperAddrNorm) || allKeys.includes(helperAddrNorm);
-    // Also vToken deposit event: vToken address should appear as event emitter (Deposit/ModifyPosition)
-    const vTokenEvent = eventsToCheck.find((e) => normalizeHex(e.address) === vTokenNorm);
-    // Helper involvement may be via calldata not events — so we treat pool event + vToken event as sufficient for helper involvement
-    // But we explicitly check vToken event for Vesu deposit
-    predicates.vesuDepositObserved = !!vTokenEvent;
-    // For helper calldata check: if helper not in events but vToken deposit receiver == helper, we still need helper in calldata
-    // Since we can't see calldata from receipt alone, we accept vTokenEvent + poolEvent as evidence that helper was invoked
-    // However we must attempt to verify helper appears via independent RPC trace if available — for now mark helperCalldata true if vTokenEvent exists
-    predicates.helperCalldataInReceipt = helperInvolved || !!vTokenEvent;
+    // ReceiptPort exposes events only; it does not expose raw transaction
+    // calldata or a typed Vesu Deposit event. Never infer either predicate
+    // from a vToken address alone.
+    predicates.vesuDepositObserved = false;
+    predicates.helperCalldataInReceipt = false;
 
     // 9. Conservation / no stranded balance
     // Query helper balances via independent RPC or provider callBalance
@@ -541,16 +586,16 @@ export class M5VesuRunner {
         helperStrkBalance = await balanceReader(this.cfg.strkToken!, this.cfg.helperAddress!);
         helperVTokenBalance = await balanceReader(this.cfg.vToken!, this.cfg.helperAddress!);
         predicates.noStrandedBalance = helperStrkBalance === 0n && helperVTokenBalance === 0n;
-        // Conservation: in_amount delivered → vToken shares == note amount (shares)
-        // We cannot directly know shares without note read, but we can verify no stranded
-        // If there is stranded, conservation failed
+        // No-strand is a public balance observation. Full conservation also
+        // requires the wallet-owned open-note amount, which this port cannot
+        // read without an external consented wallet/session.
         if (!predicates.noStrandedBalance) {
           throw new M5Error(
             M5_ERROR_CODE.STRANDED_BALANCE,
             `helper stranded: STRK=${helperStrkBalance} vToken=${helperVTokenBalance}`,
           );
         }
-        predicates.conservationOk = true;
+        predicates.conservationOk = false;
       } catch (e) {
         if (e instanceof M5Error && e.code === M5_ERROR_CODE.STRANDED_BALANCE) throw e;
         // Balance read failure — not fatal for X2, but conservation not proven
@@ -563,29 +608,22 @@ export class M5VesuRunner {
       predicates.noStrandedBalance = false;
     }
 
-    // 10. Maturity check — note: freshly credited vToken shares need ~10 blocks before spending
-    // We can't check private note maturity without viewing key, but we can check block distance
-    const currentBlock = receipt.blockNumber ?? independent?.blockNumber ?? feeBlock ?? 0;
-    const confirmedBlock = receipt.blockNumber ?? 0;
-    if (confirmedBlock && currentBlock - confirmedBlock < MATURITY_BLOCKS) {
-      // Not yet mature — this is expected right after tx; we just note it, not fail the E2E
-      // The failure state MATURITY_PENDING would be if someone tried to spend immediately
-      // We don't fail here, just note that note is maturing
-      // If test explicitly tries to spend, it would throw MATURITY_PENDING
-    }
+    // 10. Note readback/maturity are deliberately not inferred from the
+    // public receipt block. A fresh open note needs wallet-owned readback and
+    // the protocol's maturity observation; neither is present on M5Provider.
+    predicates.noteReadbackObserved = false;
+    predicates.maturityObserved = false;
 
-    // 11. Zero output guard — if receipt succeeded but no vToken event, output was zero and should have reverted
-    if (!vTokenEvent && predicates.executionSucceeded) {
-      throw new M5Error(M5_ERROR_CODE.ZERO_OUTPUT, "no vToken deposit event: zero output would have reverted");
-    }
-
-    // 12. Upstream validator invocation when configured
+    // 11. Upstream validator invocation when configured
     let validatorRes: { ok: boolean; pool: boolean; mine: boolean; reason?: string } | null = null;
     if (this.cfg.validator) {
       try {
         validatorRes = await this.cfg.validator.validate(txHash);
-        if (!validatorRes.mine) {
-          throw new M5Error(M5_ERROR_CODE.VALIDATOR_MINE_FALSE, `validator mine=false for ${txHash}: ${validatorRes.reason ?? ""}`);
+        if (!validatorRes.ok || !validatorRes.pool || !validatorRes.mine) {
+          throw new M5Error(
+            M5_ERROR_CODE.VALIDATOR_MINE_FALSE,
+            `validator failed ok=${validatorRes.ok} pool=${validatorRes.pool} mine=${validatorRes.mine}: ${validatorRes.reason ?? ""}`,
+          );
         }
         predicates.validatorMineOk = true;
       } catch (e) {
@@ -597,7 +635,23 @@ export class M5VesuRunner {
       predicates.validatorMineOk = null;
     }
 
-    const verdict = predicates.independentReadbackOk && predicates.validatorMineOk !== false ? "M5_E2E_SUCCESS_X3" : "M5_E2E_RUNNER_READY_X2";
+    const x3Complete =
+      predicates.capabilityObserved &&
+      predicates.feeObserved &&
+      predicates.simulateObserved &&
+      predicates.submissionObserved &&
+      predicates.receiptObserved &&
+      predicates.executionSucceeded &&
+      predicates.poolEventObserved &&
+      predicates.helperCalldataInReceipt &&
+      predicates.vesuDepositObserved &&
+      predicates.noteReadbackObserved &&
+      predicates.maturityObserved &&
+      predicates.conservationOk &&
+      predicates.noStrandedBalance &&
+      predicates.independentReadbackOk &&
+      predicates.validatorMineOk === true;
+    const verdict = x3Complete ? "M5_E2E_SUCCESS_X3" : "M5_E2E_RUNNER_READY_X2";
 
     return {
       verdict: verdict as M5Success["verdict"],

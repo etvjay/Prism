@@ -1,7 +1,7 @@
 # M5 Vesu E2E Runner — Ops
 
 **Route:** `PrismVesuLendingHelper` · SN_SEPOLIA · STRK → Vesu STRK vToken shares
-**Status:** `M5_E2E_RUNNER_READY_X2` (local), `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE` without wallet/prover
+**Status:** `M5_E2E_RUNNER_READY_X2` (local), `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE` without wallet/prover; complete closeout `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER`
 
 ## Purpose
 
@@ -13,13 +13,13 @@ capability check
 → simulate/prepared invoke (empty proof, calldata shape verified)
 → exact STRK20 actions [transfer OPEN, invoke helper [STRK, VTOKEN, u128, openNoteId]]
 → wallet-side SNIP-36 proof submission boundary
-→ receipt polling
+→ terminal receipt polling/recovery (`RECEIVED`/`PENDING` are not completion)
 → independent public RPC readback (second path for X3)
-→ conservation / no stranded balance (helper STRK==0, vToken==0)
+→ public no-strand read (helper STRK==0, vToken==0; not full note conservation)
 → upstream validator invocation when configured
 ```
 
-All failure states are distinct: `NOT_REGISTERED`, `SCREENING_REJECTED` vs `UNAVAILABLE`, `MATURITY_PENDING`, `ZERO_OUT_AMOUNT`, `HELPER_REVERT` → `POOL_ROLLBACK` atomic, `VALIDATOR_MINE_FALSE`, `UNKNOWN_RECEIPT`.
+All failure states are distinct: `NOT_REGISTERED` (or registration unknown), `SCREENING_REJECTED` vs `UNAVAILABLE`, `MATURITY_PENDING`, `ZERO_OUT_AMOUNT`, `HELPER_REVERT` → `POOL_ROLLBACK` atomic, `VALIDATOR_MINE_FALSE`, `UNKNOWN_RECEIPT`, invalid simulation proof, and malformed pinned configuration.
 
 ## Files
 
@@ -29,16 +29,18 @@ All failure states are distinct: `NOT_REGISTERED`, `SCREENING_REJECTED` vs `UNAV
 - `src/features/prism-strk20/m5/rpc.ts` — public/read-only RPC reader
 - `src/features/prism-strk20/m5/validator.ts` — upstream validator when `STRK20_VALIDATOR_PATH/URL` set
 - `src/features/prism-strk20/m5/wallet-adapter.ts` — `WalletAccountV6` → `M5Provider` (current types: starknet 10.4.0, get-starknet 6.0.3, types-js 0.10.3)
-- `src/features/prism-strk20/m5/__tests__/runner.test.ts` — 19 X2 tests (no wallet, no RPC)
+- `src/features/prism-strk20/m5/__tests__/runner.test.ts` — 27 X2 adversarial tests (no wallet, no RPC)
+- `src/features/prism-strk20/m5/__tests__/rpc.test.ts` — 2 X2 JSON-RPC shape/readback tests
 - `ops/m5-vesu-e2e/harness.mjs` — CLI harness (offline → BLOCKED, never fabricates hash)
 
 ## Boundaries
 
-- Exact calldata: `[STRK, VTOKEN, amount:u128, "${openNoteIds[0]}"]`; amount checked `<= MAX_U128`, zero rejected
+- Exact calldata: `[STRK, VTOKEN, amount:u128, "${openNoteIds[0]}"]`; amount checked `<= MAX_U128`, zero rejected; malformed/zero pinned addresses fail closed
 - u256 real-token surfaces: `balance_of/approve/transfer_from` are u256; helper measures `balance_before/after` delta as u256 → checked `try_into u128` (high limb non-zero → `OUT_OVERFLOW` revert, never truncates)
 - Note denomination: `out_token == VTOKEN` and `OpenNoteDeposit.token == VTOKEN`, amount is **shares** not assets (requires `convert_to_assets` at read time)
 - Privacy: hides direct user linkage only; amount/timing/target/open-note amount remain public (per header truth statement)
 - Viewing keys / seed phrases / private state never touched (guarded by `assertNoViewingKey`)
+- Receipt events alone do not prove helper calldata, typed Vesu `Deposit`, open-note amount, maturity, or full conservation. Those predicates remain false until an external provider/session supplies explicit evidence.
 
 ## Usage
 
@@ -65,7 +67,7 @@ const result = await runner.run(adapter); // never fabricates hash on BLOCKED
 - `deployment tx 0x02bbeb65… @13945547 SUCCEEDED` → observed independently, `class_hash` matches source `Scarb.toml` starknet 2.20.0 build
 - Pool helper→Vesu leg (probe `0x050d928… @13945591`) → events observed via same public RPC; not full pool route
 
-Full pool route predicates remain **not observed** until a real Wallet API transaction is submitted (requires funded wallet + prover).
+Full pool route predicates remain **not observed** until a real Wallet API transaction is submitted (requires funded wallet + prover), then independently read back with the missing calldata/Vesu/note/maturity evidence surfaces.
 
 ## Env
 
@@ -75,7 +77,14 @@ Full pool route predicates remain **not observed** until a real Wallet API trans
 
 ## Verdict mapping
 
-- No wallet/prover → `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE` (or `M5_BLOCKED_BY_WALLET_PROVER` per task), no hash
+- No wallet/prover → `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE` (closeout status `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER`), no hash
 - Runner green, no live pool tx → `M5_E2E_RUNNER_READY_X2`
-- Live pool tx + receipt SUCCEEDED + pool event + helper calldata + vToken Deposit + conservation + independent RPC + validator `mine=true` → `M5_E2E_SUCCESS_X3`
+- Live pool tx + receipt SUCCEEDED + pool event + raw helper calldata + typed Vesu Deposit + wallet open-note readback + maturity + conservation + independent RPC + validator `ok/pool/mine=true` → `M5_E2E_SUCCESS_X3`
 - Any `mine=false`, stranded balance, or invented ABI → reopen M5 per closeout protocol stop criteria
+
+## Exact blocker in the current environment
+
+No WalletAccountV6/privacy prover session is attached, so wallet authorization,
+SNIP-36 proof generation, pool deposit, open-note readback, and maturity cannot
+be observed. The narrow real helper→Vesu probe is recorded separately and is
+not a pool-invoked privacy proof. `strk20.json` remains unchanged.

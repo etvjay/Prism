@@ -62,13 +62,12 @@ export class WalletV6M5Adapter implements M5Provider {
       return this.deps.wallet.provider.getChainId();
     }
   }
-  async isRegistered(): Promise<boolean> {
-    // Wallet handles registration; we probe via a simulate that would throw NOT_REGISTERED
-    // If wallet exposes isRegistered we would use it, but spec says wallet manages it.
-    // We try a lightweight prepare with empty actions to test, but that would be privacy leak.
-    // Instead, we return true and let the prepare/invoke surface NOT_REGISTERED distinctly.
-    // This preserves distinct error code per spec.
-    return true;
+  async isRegistered(): Promise<boolean | null> {
+    // WalletAccountV6 owns registration and the pinned Wallet API surface does
+    // not expose a proven read-only registration query. Do not turn that
+    // absence into a fabricated `true`; the prepare/submit boundary still maps
+    // an explicit NOT_REGISTERED rejection.
+    return null;
   }
   async getFeeAmount(): Promise<{ fee: bigint; blockNumber: number | null }> {
     if (this.deps.feeReader) return this.deps.feeReader.getFeeAmount();
@@ -125,9 +124,5 @@ export class WalletV6M5Adapter implements M5Provider {
   }
   async getAddress(): Promise<string> {
     return this.deps.wallet.address;
-  }
-  async getBlockNumber(): Promise<number> {
-    // Not required for core flow
-    return 0;
   }
 }

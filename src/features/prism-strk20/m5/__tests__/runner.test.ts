@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { M5VesuRunner, M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE, M5_ERROR_CODE, buildHelperCalldata, buildActions } from "../runner";
-import { MAX_U128, STRK_SEPOLIA, VTOKEN_STRK_SEPOLIA, HELPER_ADDRESS_SEPOLIA } from "../constants";
+import { MAX_U128, STRK_SEPOLIA, VTOKEN_STRK_SEPOLIA, HELPER_ADDRESS_SEPOLIA, PRIVACY_POOL_SEPOLIA } from "../constants";
 import type { M5Provider } from "../ports";
+import { WalletV6M5Adapter, type WalletAccountV6Like } from "../wallet-adapter";
 
 // X2 doubles — never fabricate hash, never use mock proof as evidence
 
@@ -16,13 +17,13 @@ function makeMockProvider(overrides: Partial<M5Provider> = {}): M5Provider {
       // Simulate returns empty proof, non-simulate would return real (but mock has no prover)
       if (simulate) {
         return {
-          call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entrypoint: "invoke", calldata: [] },
+          call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] },
           proof: { data: "", output: [], proof_facts: [] },
         };
       }
       // Real prepare should not be called on mock without prover — simulate blocked path
       return {
-        call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entrypoint: "invoke", calldata: [] },
+        call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] },
         proof: { data: "0xMOCK_SHOULD_NEVER_BE_EVIDENCE", output: ["0x1"], proof_facts: ["0x1"] },
       };
     },
@@ -39,7 +40,7 @@ function makeMockProvider(overrides: Partial<M5Provider> = {}): M5Provider {
   return Object.assign(base, overrides, { _isMock: (overrides as { _isMock?: boolean })._isMock ?? true });
 }
 
-function makeSuccessProvider(): M5Provider {
+function makeSuccessProvider(overrides: Partial<M5Provider> = {}): M5Provider {
   return makeMockProvider({
     _isMock: false,
     strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
@@ -53,6 +54,7 @@ function makeSuccessProvider(): M5Provider {
       ],
     }),
     callBalance: async (token: string) => 0n,
+    ...overrides,
   } as unknown as Partial<M5Provider>);
 }
 
@@ -109,6 +111,57 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.SCREENING_UNAVAILABLE);
   });
 
+  it("simulation proof must remain empty and non-submittable", async () => {
+    let submissions = 0;
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeMockProvider({
+      _isMock: false,
+      strk20PrepareInvoke: async () => ({
+        call: { contract_address: PRIVACY_POOL_SEPOLIA, entry_point: "invoke", calldata: [] },
+        proof: { data: "0xnot-simulation", output: ["0x1"], proof_facts: ["0x2"] },
+      }),
+      strk20InvokeTransaction: async () => {
+        submissions += 1;
+        return { transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" };
+      },
+    } as unknown as Partial<M5Provider>);
+
+    await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.SIMULATION_PROOF_INVALID);
+    expect(submissions).toBe(0);
+  });
+
+  it("malformed simulation responses fail closed before submission", async () => {
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeMockProvider({
+      _isMock: false,
+      strk20PrepareInvoke: async () => null as never,
+    } as unknown as Partial<M5Provider>);
+
+    await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.SIMULATION_PROOF_INVALID);
+  });
+
+  it("network guard rejects lookalike chain identifiers", async () => {
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeMockProvider({
+      requestChainId: async () => "NOT_SEPOLIA",
+      _isMock: false,
+    });
+
+    await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.NETWORK_MISMATCH);
+  });
+
+  it("malformed capability responses block without invoking the wallet", async () => {
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const provider = makeMockProvider({
+      supportedWalletApi: async () => undefined as never,
+      _isMock: false,
+    });
+
+    const result = await runner.run(provider);
+    expect((result as { verdict: string }).verdict).toBe(M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE);
+    expect((result as { reason: string }).reason).toBe("CAPABILITY_UNAVAILABLE");
+  });
+
   it("helper calldata exactness: preserves [STRK, VTOKEN, u128, placeholder]", () => {
     const amount = 1_000_000_000_000_000_000n;
     const cd = buildHelperCalldata(amount);
@@ -121,6 +174,12 @@ describe("M5VesuRunner — X2 provider-injected", () => {
   it("u128 boundary: overflow → M5-017", () => {
     expect(() => buildHelperCalldata(MAX_U128 + 1n)).toThrow(M5_ERROR_CODE.AMOUNT_OVERFLOW);
     expect(() => buildHelperCalldata(0n)).toThrow(M5_ERROR_CODE.INVALID_AMOUNT);
+    expect(() => buildHelperCalldata(-1n)).toThrow(M5_ERROR_CODE.INVALID_AMOUNT);
+  });
+
+  it("pool/token/vToken configuration rejects malformed addresses", () => {
+    expect(() => buildHelperCalldata(1n, { strk: "not-an-address", vToken: VTOKEN_STRK_SEPOLIA })).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
+    expect(() => new M5VesuRunner({ inAmount: 1n, privacyPool: "0x0" })).toThrow(M5_ERROR_CODE.CONFIG_INVALID);
   });
 
   it("u256/u128: note denomination is vToken shares", async () => {
@@ -140,7 +199,19 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     f = mod.transition(f, { to: "registration_required", now: 1001 }).flow;
     f = mod.transition(f, { to: "approval_pending", now: 1002 }).flow;
     f = mod.transition(f, { to: "shielding", now: 1003, shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001" }).flow as unknown as typeof f;
-    f = mod.transition(f, { to: "confirmed", now: 1004, confirmedBlock: 100 }).flow as unknown as typeof f;
+    f = mod.transition(f, {
+      to: "confirmed",
+      now: 1004,
+      confirmedBlock: 100,
+      shieldTxHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      receipt: {
+        transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+        executionStatus: "SUCCEEDED",
+        finalityStatus: "ACCEPTED_ON_L2",
+        blockNumber: 100,
+        poolEventFound: true,
+      },
+    }).flow as unknown as typeof f;
     f = mod.transition(f, { to: "maturing", now: 1005 }).flow as unknown as typeof f;
     expect(() => mod.transition(f, { to: "privately_available", now: 1006, currentBlock: 105, balanceConsent: "granted" })).toThrow(/maturity_pending/);
   });
@@ -149,7 +220,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const runner = new M5VesuRunner({ inAmount: 1n }); // 1 wei likely 0 shares
     const provider = makeMockProvider({
       _isMock: false,
-      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entrypoint: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
+      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
       strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
       getReceipt: async () => ({
         executionStatus: "REVERTED",
@@ -164,7 +235,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
     const provider = makeMockProvider({
       _isMock: false,
-      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entrypoint: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
+      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
       strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
       getReceipt: async () => ({ executionStatus: "REVERTED", blockNumber: 100, events: [] }),
     } as unknown as Partial<M5Provider>);
@@ -175,11 +246,30 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n, receiptTimeoutMs: 50, receiptIntervalMs: 10 });
     const provider = makeMockProvider({
       _isMock: false,
-      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entrypoint: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
+      strk20PrepareInvoke: async () => ({ call: { contract_address: "0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91", entry_point: "invoke", calldata: [] }, proof: { data: "", output: [], proof_facts: [] } }),
       strk20InvokeTransaction: async () => ({ transaction_hash: "0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca" }),
       getReceipt: async () => null,
     } as unknown as Partial<M5Provider>);
     await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.UNKNOWN_RECEIPT);
+  });
+
+  it("receipt polling recovers from RECEIVED before a terminal receipt", async () => {
+    let reads = 0;
+    const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
+    const terminal = makeSuccessProvider();
+    const provider = makeSuccessProvider({
+      getReceipt: async () => {
+        reads += 1;
+        if (reads === 1) {
+          return { executionStatus: "RECEIVED", blockNumber: null, events: [] };
+        }
+        return terminal.getReceipt("0x05abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abca");
+      },
+    } as unknown as Partial<M5Provider>);
+
+    const result = await runner.run(provider);
+    expect((result as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
+    expect(reads).toBe(2);
   });
 
   it("validator mine=false → M5-010", async () => {
@@ -194,6 +284,16 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     await expect(runner.run(provider)).rejects.toThrow(M5_ERROR_CODE.VALIDATOR_MINE_FALSE);
   });
 
+  it("validator ok=false or pool=false cannot promote the route", async () => {
+    const runner = new M5VesuRunner({
+      inAmount: 1_000_000_000_000_000_000n,
+      validator: {
+        validate: async () => ({ ok: false, pool: true, mine: true, reason: "validator_ok_false" }),
+      },
+    });
+    await expect(runner.run(makeSuccessProvider())).rejects.toThrow(M5_ERROR_CODE.VALIDATOR_MINE_FALSE);
+  });
+
   it("no wallet/prover → M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE, no fabricated hash", async () => {
     const runner = new M5VesuRunner({ inAmount: 1_000_000_000_000_000_000n });
     const result = await runner.run(null as unknown as M5Provider);
@@ -202,6 +302,31 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     // Must not contain a fabricated hash anywhere
     const asStr = JSON.stringify(result);
     expect(asStr).not.toMatch(/0x[0-9a-f]{64}/);
+  });
+
+  it("WalletV6 adapter does not fabricate registration or block observations", async () => {
+    const wallet: WalletAccountV6Like = {
+      address: "0x047c0f8b01b9c7c75c669dc549bc305a0f2d796808117339a1c87730162b131c",
+      provider: { getChainId: async () => "SN_SEPOLIA" },
+      strk20PrepareInvoke: async () => ({
+        call: { contract_address: PRIVACY_POOL_SEPOLIA, entry_point: "invoke", calldata: [] },
+        proof: { data: "", output: [], proof_facts: [] },
+      }),
+      strk20InvokeTransaction: async () => ({ transaction_hash: "0x1" }),
+    };
+    const adapter = new WalletV6M5Adapter({
+      wallet,
+      capabilityProvider: {
+        supportedWalletApi: async () => ["0.10.3"],
+        supportedSpecs: async () => [],
+        requestChainId: async () => "SN_SEPOLIA",
+      },
+      walletFeatures: {},
+      feeReader: { getFeeAmount: async () => ({ fee: 1n, blockNumber: 1 }) },
+    });
+
+    expect(await adapter.isRegistered()).toBeNull();
+    expect((adapter as unknown as { getBlockNumber?: unknown }).getBlockNumber).toBeUndefined();
   });
 
   it("mock provider with no real prover → BLOCKED, not fake success", async () => {
@@ -222,7 +347,7 @@ describe("M5VesuRunner — X2 provider-injected", () => {
     expect(ok.predicates.noteDenominationShares).toBe(true);
   });
 
-  it("X3 success with independent readback + validator", async () => {
+  it("receipt events alone cannot promote helper calldata, Vesu deposit, note readback, or maturity", async () => {
     const runner = new M5VesuRunner({
       inAmount: 1_000_000_000_000_000_000n,
       independentRpc: {
@@ -241,9 +366,14 @@ describe("M5VesuRunner — X2 provider-injected", () => {
       },
     });
     const provider = makeSuccessProvider();
-    // Also provide callBalance via provider fallback
     const result = await runner.run(provider);
-    expect((result as { verdict: string }).verdict).toBe("M5_E2E_SUCCESS_X3");
+    expect((result as { verdict: string }).verdict).toBe("M5_E2E_RUNNER_READY_X2");
+    const predicates = (result as unknown as { predicates: Record<string, boolean | null> }).predicates;
+    expect(predicates.helperCalldataInReceipt).toBe(false);
+    expect(predicates.vesuDepositObserved).toBe(false);
+    expect(predicates.noteReadbackObserved).toBe(false);
+    expect(predicates.maturityObserved).toBe(false);
+    expect(predicates.conservationOk).toBe(false);
   });
 
   it("viewing key guard: provider with viewingKey → forbidden", async () => {

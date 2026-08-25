@@ -27,6 +27,13 @@ export const PRIVACY_POOL_MAINNET =
 export const MAX_U128 = (1n << 128n) - 1n;
 export const MIN_AMOUNT = 1n;
 
+const STARKNET_ADDRESS = /^0x[0-9a-f]{1,64}$/i;
+
+/** Structural guard for public Starknet contract addresses at this boundary. */
+export function isValidStarknetAddress(value: unknown): value is string {
+  return typeof value === "string" && STARKNET_ADDRESS.test(value);
+}
+
 // STRK decimals (18) — no conversion in helper; note is shares denominated
 export const STRK_DECIMALS = 18;
 
@@ -44,14 +51,16 @@ export function isCanonicalHelperPair(inToken: string, outToken: string): boolea
 
 export function normalizeHex(addr: string): string {
   // Pad to 64 hex chars lower case for numeric comparison
+  if (!isValidStarknetAddress(addr)) return "0xinvalid";
   const h = addr.toLowerCase().replace(/^0x/, "");
   return `0x${h.padStart(64, "0")}`;
 }
 
 export function addressesEqual(a: string, b: string): boolean {
+  if (!isValidStarknetAddress(a) || !isValidStarknetAddress(b)) return false;
   try {
     return BigInt(a) === BigInt(b);
   } catch {
-    return normalizeHex(a) === normalizeHex(b);
+    return false;
   }
 }

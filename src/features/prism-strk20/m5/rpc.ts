@@ -3,7 +3,10 @@
 // No private state, no viewing keys.
 
 import type { Hex } from "../domain/receipt";
-import { normalizeHex } from "./constants";
+
+// starknet.js 10.4.0 `hash.getSelectorFromName("balance_of")`, encoded as
+// the felt selector required by the Starknet JSON-RPC `starknet_call` schema.
+export const BALANCE_OF_SELECTOR = "0x35a73cd311a05d46deda634c5ee045db92f811b4e74bca4437fcb5302b7af33" as const;
 
 export interface StarknetRpcConfig {
   url: string;
@@ -63,7 +66,7 @@ export async function fetchBalanceViaRpc(rpcUrl: string, token: string, account:
     jsonrpc: "2.0",
     id: 1,
     method: "starknet_call",
-    params: [{ contract_address: token, entrypoint: "balance_of", calldata }, "latest"],
+    params: [{ contract_address: token, entry_point_selector: BALANCE_OF_SELECTOR, calldata }, "latest"],
   });
   const res = await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body });
   if (!res.ok) throw new Error(`balance_of RPC failed: ${res.status}`);

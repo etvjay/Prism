@@ -2,7 +2,7 @@
 
 **Lane:** M5 Vesu-pinned helper hardening  
 **Status:** Proposed for parent integration/deployment review  
-**Evidence ceiling:** X2 local controlled implementation; no live execution claimed  
+**Evidence ceiling:** X2 local helper implementation; narrow helper→real-Vesu probe is recorded separately; no live privacy-pool execution claimed
 **Verdict:** `M5_VESU_HELPER_READY_FOR_DEPLOYMENT_REVIEW`
 
 ## Scope
@@ -123,6 +123,14 @@ run the upstream validator, not a local reimplementation
 ```
 
 If the official Wallet API/prover is unavailable, the E2E runner must return `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE`; it must not substitute a mock proof.
+
+The current M5 receipt port exposes only receipt events and optional public
+ERC-20 balances. It does not prove raw helper calldata, a typed Vesu Deposit
+receiver/assets observation, wallet open-note readback, or note maturity. The
+runner therefore keeps those predicates false and remains X2 even when a
+fixture receipt contains pool/vToken-address events. The exact current blocker
+is `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER`: no injected WalletAccountV6/
+SNIP-36 prover or consented note-readback session is available.
 
 ## Relevant live configuration observed separately
 

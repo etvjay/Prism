@@ -1,7 +1,7 @@
 # M5 E2E Runner — Evidence & Gate Closure
 
-**Date:** 2026-08-24
-**Base:** `c68cd72` → this commit
+**Date:** 2026-08-25
+**Base:** `040b011` (scoped local M5 hardening; no root evidence mutation)
 **Route:** `PrismVesuLendingHelper` · SN_SEPOLIA · `STRK (0x04718f5a…938d) → Vesu STRK vToken (0x07152ae4…f8fff)` · helper `0x07f3dd9a…90adf` pinned to pool `0x0254a6b2…0d91`
 **Helper source:** `contracts/prism_vesu_lending_helper/src/lib.cairo:1-187` (canon `privacy_invoke(in_token, out_token, in_amount:u128, note_id) -> Span<OpenNoteDeposit>` preserved 1:1)
 **Gate:** `M5_CLOSEOUT_PROTOCOL.md` + `BACKEND_PHASE_M5_E2E_REDTEAM.md` H1 fixed (u256 real-token surfaces, checked `u256→u128` via `try_into` never truncates)
@@ -13,11 +13,11 @@ Provider-injected, no mock proof as evidence. Simulate `strk20PrepareInvoke(...,
 ```
 src/features/prism-strk20/m5/constants.ts
 src/features/prism-strk20/m5/ports.ts
-src/features/prism-strk20/m5/runner.ts      — capability → fee/registration → simulate → actions [transfer OPEN, invoke [STRK,VTOKEN,u128,${openNoteIds[0]}]] → wallet proof boundary → receipt polling → independent RPC → conservation/no-strand → validator mine
+src/features/prism-strk20/m5/runner.ts      — capability → fee/registration → exact simulation → actions [transfer OPEN, invoke [STRK,VTOKEN,u128,${openNoteIds[0]}]] → wallet proof boundary → terminal-receipt polling/recovery → independent RPC → public no-strand read → validator gate
 src/features/prism-strk20/m5/rpc.ts         — fetch-based public RPC (no secrets)
 src/features/prism-strk20/m5/validator.ts   — STRK20_VALIDATOR_PATH/URL when configured; null → X2
 src/features/prism-strk20/m5/wallet-adapter.ts — WalletAccountV6 (starknet 10.4.0, get-starknet 6.0.3, types-js 0.10.3) → M5Provider
-src/features/prism-strk20/m5/__tests__/runner.test.ts — 19 X2 tests
+src/features/prism-strk20/m5/__tests__/runner.test.ts — 27 X2 adversarial tests
 ops/m5-vesu-e2e/harness.mjs                 — CLI: --self-test / offline BLOCKED / --live (requires wallet)
 ops/m5-vesu-e2e/README.md
 ```
@@ -25,11 +25,13 @@ ops/m5-vesu-e2e/README.md
 ## Local verification (X2)
 
 ```
-contracts/prism_vesu_lending_helper: scarb clean && scarb build → ok (starknet 2.20.0)
-contracts/prism_vesu_lending_helper: snforge test → 16 passed
-contracts/prism_allocation_helper: snforge test → 11 passed (regression)
-npm test -- src/features/prism-strk20/m5/__tests__/runner.test.ts → 19 passed
-npm test (full) → 521 passed, 14 skipped
+contracts/prism_vesu_lending_helper: scarb build → ok (starknet 2.20.0)
+contracts/prism_vesu_lending_helper: snforge test → 16 passed, 0 failed
+contracts/prism_allocation_helper: snforge test → 11 passed, 0 failed (regression)
+npm test -- src/features/prism-strk20/m5/__tests__/runner.test.ts → 27 passed, 0 failed
+npm test -- src/features/prism-strk20/m5/__tests__/rpc.test.ts → 2 passed, 0 failed (entry_point_selector/readback shape)
+npm test -- action/receipt/privacy focused tests → 52 passed, 0 failed
+npm test (full) → 884 passed, 1 skipped
 npm run typecheck → 0 errors
 npm run build → compiled, static 7/7
 git diff --check → 0
@@ -48,6 +50,32 @@ Executed against `https://starknet-sepolia-rpc.publicnode.com` (read-only):
 | independent second RPC path | distinct URL | **not configured** in this env → X2 ceiling |
 
 No new deployment, no broadcast, no private state accessed.
+
+## Local evidence ceiling and exact external blocker
+
+The runner now fails closed instead of deriving live predicates from a thin
+receipt fixture:
+
+```text
+ReceiptPort currently exposes receipt events and optional public ERC-20
+balances only. It does not expose raw transaction calldata, a typed Vesu
+Deposit/receiver/assets observation, wallet open-note readback, or a wallet/
+protocol maturity observation.
+
+Therefore a vToken-address event alone cannot prove helper calldata or a Vesu
+deposit, zero helper balances cannot prove note conservation, and a receipt
+block cannot prove note maturity. Those predicates remain false and cannot
+promote X2 to X3 in the local runner.
+
+WalletV6M5Adapter also returns registration=unknown (`null`) because the
+pinned WalletAccountV6 surface has no proven read-only registration query; it
+does not fabricate `true` or a block number.
+```
+
+The environment has no injected WalletAccountV6/privacy prover session. The
+missing session prevents observing wallet authorization, SNIP-36 proof
+generation, pool deposit, open-note readback, and maturity. This is the exact
+closeout blocker: `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER`.
 
 ## Live predicates — NOT observed (require wallet/prover)
 
@@ -86,32 +114,42 @@ All eight required failure states are modeled distinctly in `runner.ts` + tests:
 | helper revert | `M5-008 HELPER_REVERT` | REVERTED receipt |
 | pool rollback (atomic) | `M5-009 POOL_ROLLBACK` | REVERTED → atomic |
 | validator mine=false | `M5-010 VALIDATOR_MINE_FALSE` | validator mock false |
-| unknown receipt | `M5-011 UNKNOWN_RECEIPT` | null after timeout |
+| unknown receipt | `M5-011` | null after timeout; `RECEIVED` is polled until terminal |
+| simulation/config validation | `M5-022`, `M5-023` | non-empty simulation proof, malformed/zero pinned address |
 | + viewing key forbidden | `M5-015`, stranded `M5-020`, overflow `M5-017`, calldata mismatch `M5-018` | additional guards |
 
 ## Invariants preserved
 
 - **Calldata:** `[STRK, VTOKEN, amount:u128 felt, "${openNoteIds[0]}"]` exact; verified by `calldataExact` predicate and `addressesEqual` (BigInt numeric, not string equality)
 - **u256/u128:** input token surfaces `balance_of/approve/deposit` are `u256`; `delta_u256 >0` then `try_into().expect('OUT_OVERFLOW')` — high limb non-zero aborts, never truncates
-- **Denomination:** `note.token == VTOKEN` and `note.amount` is **shares** (vToken), not assets; `CONVERSION` via `convert_to_assets` at read time (documented in header + predicate `noteDenominationShares`)
+- **Denomination:** intended helper output is `VTOKEN` shares, not assets; local calldata proves the requested output token, but actual open-note token/amount and `convert_to_assets` readback remain unobserved.
 - **No strk20.json write:** runner and harness never touch `strk20.json`; ledger `transactions=[] contracts=[]` unchanged
-- **No mock proof as evidence:** simulate proof `data="" output=[] proof_facts=[]` is checked and never submitted; `_isMock` provider → `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE`
+- **No mock proof as evidence:** simulate proof `data="" output=[] proof_facts=[]` is enforced and never submitted; `_isMock` provider → `M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE`
+- **No receipt overclaim:** helper calldata, Vesu deposit, note readback, maturity, and full conservation remain false until their explicit evidence surfaces exist.
 
 ## Verdict
 
-In this environment (CI, no WalletAccountV6, no prover):
+In this environment (no injected WalletAccountV6, no prover, no note-readback session):
 
 ```
-M5_BLOCKED_BY_WALLET_PROVER
+BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER
 ```
 
-The runner is **ready** (`M5_E2E_RUNNER_READY_X2` observed via X2 tests) and **blocked** from X3 only by the missing wallet/prover boundary, which is the honest closeout state per `M5_CLOSEOUT_PROTOCOL` §M5.3.
+The runner is **ready** (`M5_E2E_RUNNER_READY_X2` observed via 27 X2 tests), while
+the complete route is blocked by both the missing wallet/prover session and the
+missing explicit calldata/Vesu/note/maturity evidence surfaces. The narrow
+helper→Vesu probe remains separate evidence and does not close the pool route.
 
-When a real wallet is injected, the same runner promotes to `M5_E2E_SUCCESS_X3` after `SUCCEEDED + pool event + helper calldata + vToken Deposit + conservation + independent read + validator mine=true` are observed. No code change is required to promote — only the injected provider.
+Do not promote merely because a wallet returns a transaction hash. X3 requires
+`SUCCEEDED + pool event + raw helper calldata + typed Vesu Deposit
+(receiver==helper, assets/shares) + wallet open-note readback + maturity
+observation + conservation/no-strand + independent re-read + validator
+ok/pool/mine=true`. A future external adapter must supply the missing facts.
 
 ## Commit
 
-Will be recorded by the next commit on this branch. `git diff --check` clean, `typecheck`/`build`/`snforge` green as above.
+The scoped M5 commit records the local hardening only. `strk20.json` remains
+unchanged (`transactions=[]`, `contracts=[]`); no live evidence is promoted.
 
 ## Next operator step (when wallet available)
 
