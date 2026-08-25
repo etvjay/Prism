@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryPrismEventsStore } from "../adapters/postgres-prism-events-store";
 import { EventProjectionCoordinator } from "../domain/event-projection-coordinator";
 import { InMemoryEventProjectionCheckpointStore } from "../domain/event-projection-checkpoint";
-import type { RegistryCanonicalEvent } from "../domain/event-indexer";
+import { resolveBinding, type RegistryCanonicalEvent } from "../domain/event-indexer";
 import type { PrismEventsStore } from "../adapters/postgres-prism-events-store";
 
 const REGISTRY = "0x67b2f847d7805501c3db79474bdb33e7538825fa0f83aa3cd0083f02ee655c4";
@@ -45,12 +45,97 @@ describe("EventProjectionCoordinator", () => {
     expect(first.inserted).toBe(1);
     expect(first.nextFromBlock).toBe(11);
     expect(await events.count(SCOPE)).toBe(1);
+    expect((await events.get(TX, 0, SCOPE))?.payload).toMatchObject({ prismId: "prism:1" });
     expect((await coordinator.getCheckpoint())?.scanWatermark).toBe(10);
 
     const second = await coordinator.runOnce();
     expect(second.reason).toBe("empty_scan_checkpoint_advanced");
     expect((await coordinator.getCheckpoint())?.nextFromBlock).toBe(13);
     expect(source.calls()).toBe(2);
+  });
+
+  it("exposes a scope-bound projection provider for application resolve", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const source = indexer([{
+      events: [{ ...EVENT, payload: { prismId: "prism:42", controller: "0x2" } }],
+      watermark: 100,
+    }]);
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1" as const,
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: source,
+    });
+
+    await coordinator.runOnce();
+    const projection = await coordinator.getProjection();
+    expect(projection.scope?.registryVersion).toBe("v1");
+    expect(projection.identities.has("prism:42")).toBe(true);
+  });
+
+  it("keeps provider-backed V1 and V2 projections isolated for the same event correlation", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const bound = (executionAccount: string): RegistryCanonicalEvent => ({
+      txHash: TX,
+      eventIndex: 1,
+      blockNumber: 10,
+      kind: "ExecutionIdentityBound",
+      payload: { prismId: "prism:42", venue: "BASE", executionAccount, proofDigest: TX },
+    });
+    const v1 = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: indexer([{ events: [bound("0x111")], watermark: 10 }]),
+    });
+    const v2 = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v2",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: indexer([{ events: [bound("0x222")], watermark: 10 }]),
+    });
+
+    await Promise.all([v1.runOnce(), v2.runOnce()]);
+    const p1 = await v1.getProjection();
+    const p2 = await v2.getProjection();
+    expect(p1.scope?.registryVersion).toBe("v1");
+    expect(p2.scope?.registryVersion).toBe("v2");
+    expect(resolveBinding(p1, "prism:42", "BASE")).toBe("0x111");
+    expect(resolveBinding(p2, "prism:42", "BASE")).toBe("0x222");
+    expect((await events.count(SCOPE))).toBe(1);
+    expect((await events.count({ ...SCOPE, registryVersion: "v2" }))).toBe(1);
+  });
+
+  it("fails closed instead of persisting an unsupported alphanumeric Prism ID", async () => {
+    const events = new InMemoryPrismEventsStore();
+    const checkpoints = new InMemoryEventProjectionCheckpointStore();
+    const coordinator = new EventProjectionCoordinator({
+      registryAddress: REGISTRY,
+      network: "SN_SEPOLIA",
+      registryVersion: "v1",
+      initialFromBlock: 0,
+      checkpointStore: checkpoints,
+      eventsStore: events,
+      indexer: indexer([{
+        events: [{ ...EVENT, payload: { prismId: "prism:P1", controller: "0x2" } }],
+        watermark: 10,
+      }]),
+    });
+
+    await expect(coordinator.runOnce()).rejects.toThrow("event_projection_prism_id_invalid");
+    expect(await events.count(SCOPE)).toBe(0);
+    expect(await checkpoints.get(SCOPE)).toBeNull();
   });
 
   it("replays duplicate events safely after restart", async () => {

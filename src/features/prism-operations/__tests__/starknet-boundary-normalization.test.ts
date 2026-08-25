@@ -197,7 +197,7 @@ describe("application, event projection, and M3 Starknet boundaries", () => {
     });
     const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
     expect(result.events[0]?.registryAddress).toBe(REGISTRY_CANONICAL);
-    expect(result.events[0]?.payload).toEqual({ prismId: "0x1", controller: CONTROLLER_CANONICAL });
+    expect(result.events[0]?.payload).toEqual({ prismId: "prism:1", controller: CONTROLLER_CANONICAL });
 
     const invalid = new StarknetEventIndexerAdapter({
       registryAddress: REGISTRY,

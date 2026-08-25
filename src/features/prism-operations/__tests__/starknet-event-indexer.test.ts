@@ -115,6 +115,19 @@ describe("StarknetEventIndexerAdapter — deterministic ordering & idempotency",
     expect((result.events[0].payload as { proofDigest: string }).proofDigest).toBe(`0x${(0x1234n << 128n | 0x42n).toString(16).padStart(64, "0")}`);
   });
 
+  it("projects registry felt IDs into the canonical off-chain prism:<decimal> form", async () => {
+    const reader = readerWithEvents([
+      { block_number: 10, transaction_hash: TX_A, event_index: 0, keys: prismCreatedKeys("0x2a"), data: ["0x1111"] },
+      { block_number: 10, transaction_hash: TX_A, event_index: 1, keys: prismBoundKeys("0x2a", "0x42415345", "0xabc"), data: ["0xd1e5"] },
+      { block_number: 10, transaction_hash: TX_A, event_index: 2, keys: prismRevokedKeys("0x2a", "0x42415345", "0xabc"), data: [] },
+    ]);
+    const adapter = new StarknetEventIndexerAdapter({ reader, registryAddress: REGISTRY, registryVersion: "v1", network: "SN_SEPOLIA", requireEventOrigin: false });
+    const result = await adapter.fetchRegistryEvents({ fromBlock: 0 });
+
+    expect(result.events.map((event) => (event.payload as { prismId: string }).prismId)).toEqual(["prism:42", "prism:42", "prism:42"]);
+    expect(result.events.every((event) => !(event.payload as { prismId: string }).prismId.startsWith("0x"))).toBe(true);
+  });
+
   it("reconstructs the maximum exact V2 u256 digest from max limbs", async () => {
     const reader = readerWithEvents([
       { block_number: 10, transaction_hash: TX_B, event_index: 0, keys: [SEL_BOUND, "0x1", "0x42415345", "0xabc"], data: [`0x${"f".repeat(32)}`, `0x${"f".repeat(32)}`] },

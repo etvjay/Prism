@@ -122,6 +122,35 @@ describe("WatermarkedResolveService — canonical preference & stale-cache refus
     expect(res.authoritativeSource).toBe("indexer_projection");
   });
 
+  it("falls back through an asynchronous provider-backed projection port using the canonical Prism ID", async () => {
+    const projection = (() => {
+      let s = emptyProjection();
+      const ev = {
+        txHash: TX_A,
+        eventIndex: 0,
+        blockNumber: 100,
+        kind: "ExecutionIdentityBound" as const,
+        payload: { prismId: "prism:42", venue: VENUE, executionAccount: ACCOUNT, proofDigest: TX_A },
+      } as unknown as Parameters<typeof applyEvent>[1];
+      s = applyEvent(s, ev).state;
+      return s;
+    })();
+    const registry = fakeRegistry({
+      async resolve() {
+        throw new Error("registry_unavailable");
+      },
+    });
+    const svc = new WatermarkedResolveService(registry, {
+      staleBoundK: 5,
+      getConfirmedBlock: async () => 100,
+      projectionReadPort: { async getProjection() { return projection; } },
+    });
+
+    const res = await svc.resolve("prism:42", VENUE);
+    expect(res.executionAccount).toBe(ACCOUNT);
+    expect(res.authoritativeSource).toBe("indexer_projection");
+  });
+
   it("throws StaleCacheError when projection is stale and canonical unavailable", async () => {
     const projection = (() => {
       let s = emptyProjection();

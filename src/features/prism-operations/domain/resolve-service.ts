@@ -18,6 +18,16 @@ export interface ConfirmedBlockPort {
   getConfirmedBlock(): Promise<number | null>;
 }
 
+/**
+ * Async projection read boundary. Implementations are scoped to one registry,
+ * network, and ABI version; they must never merge event streams from another
+ * scope. The application resolver consumes only the reconstructed projection,
+ * never raw provider events.
+ */
+export interface ProjectionReadPort {
+  getProjection(): Promise<ProjectionState | null>;
+}
+
 export type ResolveServingResult = {
   /** Active destination or null = NO_ACTIVE_DESTINATION */
   executionAccount: string | null;
@@ -49,22 +59,26 @@ export type ResolveServiceOptions = {
   getConfirmedBlock?: () => Promise<number | null>;
   /** Ledger-backed confirmed-block port (preferred over raw function). */
   confirmedBlockPort?: ConfirmedBlockPort;
+  /** Durable/indexed projection fallback, bound to one canonical event scope. */
+  projectionReadPort?: ProjectionReadPort;
 };
 
 export class WatermarkedResolveService {
   private readonly registry: RegistryReadPort;
   /** Optional indexer projection for canonical-preference fallback (LEDGER_INDEX). */
-  private readonly getProjection: (() => ProjectionState) | null;
+  private readonly getProjection: (() => ProjectionState | null | Promise<ProjectionState | null>) | null;
+  private readonly projectionReadPort: ProjectionReadPort | null;
   private readonly staleBoundK: number;
   private readonly getConfirmedBlock: (() => Promise<number | null>) | null;
   private readonly confirmedBlockPort: ConfirmedBlockPort | null;
 
   constructor(
     registry: RegistryReadPort,
-    options: ResolveServiceOptions & { getProjection?: () => ProjectionState } = {},
+    options: ResolveServiceOptions & { getProjection?: () => ProjectionState | null | Promise<ProjectionState | null> } = {},
   ) {
     this.registry = registry;
     this.getProjection = options.getProjection ?? null;
+    this.projectionReadPort = options.projectionReadPort ?? null;
     this.staleBoundK = options.staleBoundK ?? 5;
     this.getConfirmedBlock = options.getConfirmedBlock ?? null;
     this.confirmedBlockPort = options.confirmedBlockPort ?? null;
@@ -84,6 +98,26 @@ export class WatermarkedResolveService {
         return await this.getConfirmedBlock();
       } catch {
         return null;
+      }
+    }
+    return null;
+  }
+
+  private async readProjection(): Promise<ProjectionState | null> {
+    if (this.projectionReadPort) {
+      try {
+        return await this.projectionReadPort.getProjection();
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message.slice(0, 120) : "unknown";
+        throw new StaleCacheError(`projection_unavailable:${detail}`);
+      }
+    }
+    if (this.getProjection) {
+      try {
+        return await this.getProjection();
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message.slice(0, 120) : "unknown";
+        throw new StaleCacheError(`projection_unavailable:${detail}`);
       }
     }
     return null;
@@ -165,8 +199,8 @@ export class WatermarkedResolveService {
       };
     } catch (cause) {
       // Canonical read failure — fallback to indexer projection if available and not stale
-      if (this.getProjection) {
-        const projection = this.getProjection();
+      const projection = await this.readProjection();
+      if (projection) {
         const watermark = projection.watermark;
         const confirmedBlock = await this.resolveConfirmedBlock(opts.confirmedBlock);
         // Fail-closed on unknown confirmed block when projection contains ACTIVE

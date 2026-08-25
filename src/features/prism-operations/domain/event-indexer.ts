@@ -16,6 +16,7 @@
 
 import type { Hex } from "./operation";
 import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
+import { prismIdToRegistryFelt, registryFeltToPrismId } from "../../prism-identity/domain/felt-digest";
 
 export type RegistryEventKind =
   | "PrismIdentityCreated"
@@ -168,6 +169,22 @@ export function withEventScope(event: RegistryCanonicalEvent, input: RegistryEve
     registryVersion: scope.registryVersion,
     abiVersion: scope.abiVersion,
   };
+}
+
+/**
+ * Normalize an event payload's Prism ID at the projection persistence
+ * boundary. Indexer output is already canonical, while old/injected readers
+ * may still provide the raw registry felt (`0x2a`); convert that felt to the
+ * same `prism:42` value application resolution accepts. Unsupported
+ * alphanumeric IDs are rejected rather than assigned or hashed.
+ */
+export function canonicalizeEventPrismId(value: string): string {
+  try {
+    if (/^0x[0-9a-fA-F]{1,64}$/.test(value.trim())) return registryFeltToPrismId(value);
+    return registryFeltToPrismId(prismIdToRegistryFelt(value));
+  } catch {
+    throw new Error("event_prism_id_invalid");
+  }
 }
 
 export function eventKey(event: RegistryCanonicalEvent): string;

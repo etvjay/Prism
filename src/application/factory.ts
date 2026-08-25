@@ -35,7 +35,7 @@ import { StarknetRegistryReader, getStarknetRpcUrl, getStarknetRegistryAddress, 
 import { StarknetLedgerStatusAdapter } from "../features/prism-operations/adapters/starknet-ledger-status";
 import { StarknetEventIndexerAdapter } from "../features/prism-operations/adapters/starknet-event-indexer";
 import type { StarknetEventReader, StarknetRegistryVersion } from "../features/prism-operations/adapters/starknet-event-indexer";
-import { WatermarkedResolveService } from "../features/prism-operations/domain/resolve-service";
+import { WatermarkedResolveService, type ProjectionReadPort } from "../features/prism-operations/domain/resolve-service";
 import { ReconciliationWorker } from "../features/prism-operations/domain/reconciliation-worker";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
 import { isConcreteStarknetSubmitAdapter } from "./ports";
@@ -133,6 +133,8 @@ export interface AppFactory {
   prismEventsStore?: PostgresPrismEventsStore | null;
   /** Durable canonical-event projection; constructed only with Postgres + configured Starknet read. */
   eventProjectionCoordinator?: EventProjectionCoordinator | null;
+  /** Scope-bound durable projection read port used by WatermarkedResolveService fallback. */
+  projectionReadPort?: ProjectionReadPort | null;
   projectionCheckpointStore?: EventProjectionCheckpointStore | null;
   /** Real read-only Starknet ports when STARKNET_RPC_URL+REGISTRY_ADDRESS present; null in dev/test fallback. */
   ledgerStatusAdapter?: (LedgerStatusPort & { getConfirmedBlock(): Promise<number | null> }) | null;
@@ -453,6 +455,7 @@ function createMemoryFactory(
     challengeService,
     prismEventsStore: null,
     eventProjectionCoordinator: null,
+    projectionReadPort: null,
     projectionCheckpointStore: null,
     ledgerStatusAdapter,
     eventIndexerAdapter,
@@ -530,6 +533,7 @@ async function createPostgresFactory(
         indexer: starknetPorts.indexer,
       })
     : null;
+  const projectionReadPort: ProjectionReadPort | null = eventProjectionCoordinator;
   const submitPort: StarknetSubmitPort = overrides?.submitPort ?? registry;
   const hasConcreteSubmitAdapter = isConcreteStarknetSubmitAdapter(overrides?.submitPort);
   const submitPortMode: SubmitPortMode = hasConcreteSubmitAdapter ? "STARKNET_INJECTED" : "TEST_DOUBLE_X2";
@@ -579,6 +583,7 @@ async function createPostgresFactory(
   const resolveService = new WatermarkedResolveService(registryReadPort, {
     staleBoundK: 5,
     confirmedBlockPort: ledgerStatusAdapter ?? undefined,
+    projectionReadPort: projectionReadPort ?? undefined,
   });
   const fallbackLedger: LedgerStatusPort = ledgerStatusAdapter ?? {
     async observeChain() {
@@ -628,6 +633,7 @@ async function createPostgresFactory(
     challengeService,
     prismEventsStore,
     eventProjectionCoordinator,
+    projectionReadPort,
     projectionCheckpointStore,
     ledgerStatusAdapter,
     eventIndexerAdapter,

@@ -153,3 +153,28 @@ export function prismIdToRegistryFelt(prismId: string): Hex {
   }
   return `0x${value.toString(16)}` as Hex;
 }
+
+/**
+ * Named inverse conversion for the event/indexer boundary: a registry
+ * `felt252` Prism ID becomes the exact off-chain identifier consumed by the
+ * application (`prism:<decimal>`). No base36/alphanumeric assignment or
+ * silent repair is allowed; malformed and out-of-range felts are rejected.
+ */
+export function registryFeltToPrismId(value: string): string {
+  if (typeof (value as unknown) !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value.trim())) {
+    throw new Error(`ERR-002: malformed_registry_prism_id_felt:${String(value)}`);
+  }
+  let numeric: bigint;
+  try {
+    numeric = BigInt(value.trim());
+  } catch {
+    throw new Error(`ERR-002: malformed_registry_prism_id_felt:${value}`);
+  }
+  if (numeric <= 0n) {
+    throw new Error(`ERR-002: malformed_registry_prism_id_felt:not_positive:${value}`);
+  }
+  if (numeric >= FELT_PRIME) {
+    throw new Error(`ERR-023: registry_prism_id_out_of_range:${value}`);
+  }
+  return `prism:${numeric.toString(10)}`;
+}

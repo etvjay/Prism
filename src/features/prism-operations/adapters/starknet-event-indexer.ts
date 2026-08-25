@@ -14,6 +14,7 @@ import {
 } from "../domain/event-indexer";
 import type { EventIndexerPort, IndexerObservation } from "../domain/ports";
 import { isValidStarknetContractAddress, sameStarknetContractAddress, normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
+import { FELT_PRIME, registryFeltToPrismId } from "../../prism-identity/domain/felt-digest";
 
 /** Minimal RpcProvider surface needed — injectable for tests. */
 export interface StarknetEventReader {
@@ -100,8 +101,6 @@ const SELECTOR_TO_KIND: Record<string, RegistryEventKind> = {
   [PRISM_EVENT_SELECTORS.BindingRevoked.toLowerCase()]: "BindingRevoked",
 };
 
-const FELT_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
-
 function isFelt(value: string | undefined): boolean {
   if (!value || !/^0x[0-9a-fA-F]+$/.test(value)) return false;
   try {
@@ -116,8 +115,13 @@ function isNonZeroContractAddress(value: string | undefined): boolean {
   return isValidStarknetContractAddress(value);
 }
 
-function isPrismIdFelt(value: string | undefined): boolean {
-  return isFelt(value) && BigInt(value!) > 0n;
+function canonicalPrismId(value: string | undefined): string | null {
+  if (!value || !isFelt(value)) return null;
+  try {
+    return registryFeltToPrismId(value);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeTxHash(value: string): Hex | null {
@@ -427,28 +431,28 @@ export class StarknetEventIndexerAdapter implements EventIndexerPort {
     // - BindingRevoked: keys[1]=prism_id, keys[2]=venue, keys[3]=execution_account
     if (kind === "PrismIdentityCreated") {
       if (keys.length !== 2 || data.length !== 1) return null;
-      const prismId = keys[1];
+      const prismId = canonicalPrismId(keys[1]);
       const controller = data[0];
-      if (!isPrismIdFelt(prismId) || !isNonZeroContractAddress(controller)) return null;
+      if (!prismId || !isNonZeroContractAddress(controller)) return null;
       return { prismId, controller: normalizeStarknetContractAddress(controller, "controller") } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "ExecutionIdentityBound") {
       if (keys.length !== 4) return null;
-      const prismId = keys[1];
+      const prismId = canonicalPrismId(keys[1]);
       const venue = decodeBaseVenue(keys[2]);
       const executionAccount = keys[3];
       const proofDigest = this.registryVersion === "v2"
         ? (data.length === 2 ? combineU256Limbs(data[0], data[1]) : null)
         : (data.length === 1 && isFelt(data[0]) ? data[0] : null);
-      if (!isPrismIdFelt(prismId) || !venue || !isNonZeroContractAddress(executionAccount) || !proofDigest) return null;
+      if (!prismId || !venue || !isNonZeroContractAddress(executionAccount) || !proofDigest) return null;
       return { prismId, venue, executionAccount: normalizeStarknetContractAddress(executionAccount, "executionAccount"), proofDigest } as unknown as RegistryCanonicalEvent["payload"];
     }
     if (kind === "BindingRevoked") {
       if (keys.length !== 4 || data.length !== 0) return null;
-      const prismId = keys[1];
+      const prismId = canonicalPrismId(keys[1]);
       const venue = decodeBaseVenue(keys[2]);
       const executionAccount = keys[3];
-      if (!isPrismIdFelt(prismId) || !venue || !isNonZeroContractAddress(executionAccount)) return null;
+      if (!prismId || !venue || !isNonZeroContractAddress(executionAccount)) return null;
       return { prismId, venue, executionAccount: normalizeStarknetContractAddress(executionAccount, "executionAccount") } as unknown as RegistryCanonicalEvent["payload"];
     }
     return null;

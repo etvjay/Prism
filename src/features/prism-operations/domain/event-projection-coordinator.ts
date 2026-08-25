@@ -6,9 +6,12 @@
 import {
   normalizeRegistryEventScope,
   withEventScope,
+  canonicalizeEventPrismId,
   type RegistryAbiVersion,
   type RegistryCanonicalEvent,
   type RegistryEventScope,
+  reconstruct,
+  type ProjectionState,
 } from "./event-indexer";
 import type { PrismEventsStore } from "../adapters/postgres-prism-events-store";
 import type {
@@ -16,6 +19,7 @@ import type {
   EventProjectionCheckpointInput,
   EventProjectionCheckpointStore,
 } from "./event-projection-checkpoint";
+import type { ProjectionReadPort } from "./resolve-service";
 
 export interface EventProjectionIndexer {
   fetchAllRegistryEvents(input: { fromBlock: number; toBlock?: number | string }): Promise<{
@@ -50,7 +54,7 @@ export type EventProjectionRunResult = {
   checkpointVersion: number | null;
 };
 
-export class EventProjectionCoordinator {
+export class EventProjectionCoordinator implements ProjectionReadPort {
   private readonly registryAddress: string;
   private readonly network: string;
   private readonly registryVersion: RegistryAbiVersion;
@@ -102,8 +106,16 @@ export class EventProjectionCoordinator {
     const fetched = await this.indexer.fetchAllRegistryEvents({ fromBlock, toBlock: "latest" });
     const scopedEvents = fetched.events.map((event) => {
       try {
-        return withEventScope(event, this.scope);
-      } catch {
+        const payload = event.payload as { prismId?: unknown };
+        if (typeof payload.prismId !== "string") throw new Error("event_prism_id_invalid");
+        return withEventScope({
+          ...event,
+          payload: { ...payload, prismId: canonicalizeEventPrismId(payload.prismId) } as RegistryCanonicalEvent["payload"],
+        }, this.scope);
+      } catch (cause) {
+        if (cause instanceof Error && cause.message === "event_prism_id_invalid") {
+          throw new Error("event_projection_prism_id_invalid");
+        }
         throw new Error("event_projection_event_scope_mismatch");
       }
     });
@@ -173,6 +185,27 @@ export class EventProjectionCoordinator {
 
   async getCheckpoint(): Promise<EventProjectionCheckpoint | null> {
     return this.checkpointStore.get(this.scope);
+  }
+
+  /**
+   * Read the durable, scope-bound event projection for application fallback
+   * resolution. The scan watermark is preferred over the newest event block
+   * so an empty/old-event scan still carries the actual indexed head.
+   */
+  async getProjection(): Promise<ProjectionState> {
+    const events = await this.eventsStore.listOrdered(this.scope, 1000);
+    const canonicalEvents = events.map((event) => {
+      const payload = event.payload as { prismId?: unknown };
+      if (typeof payload.prismId !== "string") throw new Error("event_projection_prism_id_invalid");
+      return {
+        ...event,
+        payload: { ...payload, prismId: canonicalizeEventPrismId(payload.prismId) } as RegistryCanonicalEvent["payload"],
+      };
+    });
+    const projection = reconstruct(canonicalEvents);
+    const checkpoint = await this.checkpointStore.get(this.scope);
+    const watermark = maxNullable(projection.watermark, checkpoint?.scanWatermark ?? null);
+    return watermark === projection.watermark ? projection : { ...projection, watermark };
   }
 }
 
