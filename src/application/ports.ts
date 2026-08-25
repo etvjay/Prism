@@ -22,7 +22,12 @@ export interface RegistryReadPort {
   getIdentity(prismId: string): Promise<{ controller: string; createdAtBlock: number; version: number } | null>;
   /** Resolve returns ACTIVE account or null (= NO_ACTIVE_DESTINATION). */
   resolve(prismId: string, venue: string): Promise<{ executionAccount: string | null; watermark: number }>;
-  /** Binding existence check (for revoke idempotence / ERR-009 vs ERR-011). */
+  /**
+   * Binding status check for revoke idempotence / ERR-009 vs ERR-011.
+   * `null` means the adapter has authoritative proof that the key is missing;
+   * it must not be used for an unresolved live read. A live Starknet reader
+   * whose verified ABI has no binding-status view fails closed instead.
+   */
   getBinding(prismId: string, venue: string, executionAccount: string): Promise<{ status: "ACTIVE" | "REVOKED" | null }>;
   /** Digest single-use check — true if already consumed onchain (INV-SYS-004). */
   isDigestConsumed(digest: Hex): Promise<boolean>;

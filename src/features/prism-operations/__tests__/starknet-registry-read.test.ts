@@ -114,6 +114,53 @@ describe("StarknetRegistryReadAdapter — get_identity / resolve (injected, fail
     expect(called).toBe(false);
   });
 
+  it("getBinding fails closed instead of inferring ACTIVE from resolve", async () => {
+    let calls = 0;
+    const adapter = new StarknetRegistryReadAdapter({
+      reader: {
+        callContract: async () => {
+          calls++;
+          return ["0x0", "0xaaaa"]; // valid resolve ACTIVE, not binding status
+        },
+      },
+      registryAddress: REGISTRY,
+    });
+
+    await expect(adapter.getBinding(PRISM_ID, "BASE", "0xaaaa")).rejects.toMatchObject({
+      code: "ERR-021",
+      message: expect.stringContaining("binding_status_unavailable"),
+    });
+    expect(calls).toBe(0);
+  });
+
+  it("getBinding does not turn a malformed prism id into missing/null", async () => {
+    const adapter = new StarknetRegistryReadAdapter({
+      reader: readerReturning(["0x1"]),
+      registryAddress: REGISTRY,
+    });
+
+    await expect(adapter.getBinding("prism:001", "BASE", "0xaaaa")).rejects.toMatchObject({ code: "ERR-002" });
+  });
+
+  it("getBinding does not collapse resolve NoActiveDestination into missing or REVOKED", async () => {
+    let calls = 0;
+    const adapter = new StarknetRegistryReadAdapter({
+      reader: {
+        callContract: async () => {
+          calls++;
+          return ["0x1"]; // valid resolve NO_ACTIVE, not binding status
+        },
+      },
+      registryAddress: REGISTRY,
+    });
+
+    await expect(adapter.getBinding(PRISM_ID, "BASE", "0xaaaa")).rejects.toMatchObject({
+      code: "ERR-021",
+      message: expect.stringContaining("binding_status_unavailable"),
+    });
+    expect(calls).toBe(0);
+  });
+
   it("isDigestConsumed throws for malformed digest", async () => {
     const adapter = new StarknetRegistryReadAdapter({
       reader: readerReturning(["0x1"]),

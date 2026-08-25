@@ -1,8 +1,11 @@
 // Starknet registry read adapter — injected provider, read-only, fail-closed.
-// Implements RegistryReadPort.getIdentity/resolve via Starknet callContract.
+// Implements RegistryReadPort.getIdentity/resolve via verified Starknet view ABIs.
 // No secret file reads, never logs connection strings, never writes strk20.json.
 // Starknet is canonical identity authority; unknown identity returns null (ERR-010 view flag, not revert).
 // Malformed addresses/prismIds throw with stable ERR codes; dependency failures throw.
+// Binding status is intentionally not inferred from resolve: the canonical V1/V2
+// interfaces expose no get_binding view, so getBinding fails closed until a
+// verified typed view or complete scoped event projection is explicitly wired.
 // Pagination for events lives in StarknetEventIndexerAdapter; watermark/stale via resolve-service.
 
 import type { Hex } from "../domain/operation";
@@ -178,22 +181,28 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
   }
 
   async getBinding(prismId: string, venue: string, executionAccount: string): Promise<{ status: "ACTIVE" | "REVOKED" | null }> {
-    // Read binding status via resolve equivalence or direct storage read isn't exposed via view.
-    // For M1, delegate to resolve and infer: if resolve returns same account => ACTIVE, else null.
-    // This is conservative and never fabricates ACTIVE.
+    // The verified V1 and V2 Cairo ABIs expose get_identity and resolve as
+    // views, but no get_binding entrypoint. resolve only reports the current
+    // ACTIVE destination for (prism_id, venue); its NoActiveDestination
+    // sentinel cannot distinguish this account being missing from being
+    // REVOKED. Do not invent a storage read, selector, or serialization, and
+    // do not turn that ambiguity into null or REVOKED.
     assertHexAddress(executionAccount, "executionAccount");
-    let felt: string;
+    if (venue.toUpperCase() !== "BASE") {
+      throw new StarknetRegistryReadError("ERR-001", `invalid_venue:${venue}`);
+    }
     try {
-      felt = prismIdToRegistryFelt(prismId);
-    } catch {
-      return { status: null };
+      prismIdToRegistryFelt(prismId);
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      const codeMatch = msg.match(/ERR-0\d{2,3}/);
+      const code = codeMatch ? codeMatch[0] : "ERR-002";
+      throw new StarknetRegistryReadError(code, `malformed_prism_id:${prismId}`, cause);
     }
-    void felt;
-    const res = await this.resolve(prismId, venue);
-    if (res.executionAccount && res.executionAccount.toLowerCase() === executionAccount.toLowerCase()) {
-      return { status: "ACTIVE" };
-    }
-    return { status: null };
+    throw new StarknetRegistryReadError(
+      "ERR-021",
+      "binding_status_unavailable:canonical_v1_v2_views_expose_no_get_binding_entrypoint",
+    );
   }
 
   async isDigestConsumed(digest: Hex): Promise<boolean> {

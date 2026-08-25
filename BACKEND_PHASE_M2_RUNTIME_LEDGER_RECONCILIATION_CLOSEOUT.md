@@ -68,7 +68,8 @@ Gating:
 - `StarknetRegistryReader implements RegistryReadPort` via injected `RpcProvider.callContract` (no `Account`, no `execute`, no file reads);
 - `getIdentity` maps `prism:<decimal>` → `felt` via `prismIdToRegistryFelt` (M3-X2), handles `Option<Identity>` sentinel `0` → null;
 - `resolve` maps `venue BASE` → `0x42415345` felt, handles `Resolution` variant;
-- `getBinding`/`isDigestConsumed` fail-closed stubs (real binding status requires storage not exposed via view; submit path remains `InMemoryRegistry` until Account wiring lands);
+- `getBinding` fails closed with `ERR-021 binding_status_unavailable`: the verified V1/V2 Cairo ABIs expose no `get_binding` view, and `resolve`'s `NoActiveDestination` cannot distinguish a missing key from a REVOKED key. ACTIVE/REVOKED/missing are distinguishable only from a complete, scoped canonical event projection; that projection is a separate indexer/read path and is not guessed here;
+- `isDigestConsumed` remains a fail-closed stub (real consumed-digest status requires storage not exposed via view; submit path remains `InMemoryRegistry` until Account wiring lands);
 - validates `rpcUrl` `https?` and `registryAddress` `0x hex` before `new RpcProvider`.
 
 ### 2.3 Watermark K=5 wiring
