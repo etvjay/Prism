@@ -181,6 +181,164 @@ function normalizeRecipient(v: string | null): string | null {
   return trimmed.toLowerCase();
 }
 
+function normalizeAllowlist(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.trim().length === 0) return null;
+    result.push(item.trim().toLowerCase());
+  }
+  return result;
+}
+
+function allowlistedValue(value: string, allowed: unknown, normalize = (candidate: string) => candidate.trim().toLowerCase()): boolean | null {
+  const list = normalizeAllowlist(allowed);
+  if (list === null) return null;
+  if (list.includes("*")) return true;
+  const candidate = normalize(value);
+  return candidate.length > 0 && list.includes(candidate);
+}
+
+function allowlistedRecipient(value: string, allowed: unknown): boolean | null {
+  const list = normalizeAllowlist(allowed);
+  if (list === null) return null;
+  if (list.includes("*")) return true;
+  const candidate = normalizeRecipient(value);
+  return candidate === null ? null : list.includes(candidate);
+}
+
+function allowlistedCalls(calls: readonly string[], allowed: unknown): boolean | null {
+  const list = normalizeAllowlist(allowed);
+  if (list === null || !Array.isArray(calls) || calls.length === 0) return null;
+  if (list.includes("*")) return true;
+  return calls.every((call) => typeof call === "string" && list.includes(call.trim().toLowerCase()));
+}
+
+function scopeAmountAllowed(amount: string, ceiling: unknown): boolean | null {
+  if (ceiling === null) return parseDecimal(amount) !== null;
+  if (typeof ceiling !== "string") return null;
+  const requested = parseDecimal(amount);
+  const maximum = parseDecimal(ceiling);
+  if (requested === null || maximum === null) return null;
+  return compareDecimals(requested, maximum) <= 0;
+}
+
+export interface AgentAuthorityCheckInput {
+  readonly intent: ExecutionIntent;
+  readonly plan: ExecutionPlan;
+  readonly policy: Policy;
+  readonly sources: VerificationSources;
+  readonly now: number;
+}
+
+export interface AgentAuthorityCheckResult {
+  readonly initiator: CheckResult;
+  readonly scope: CheckResult;
+}
+
+/**
+ * Evaluate delegated-agent identity and scope independently of route facts.
+ * Missing authoritative identity/configuration is UNKNOWN+BLOCKING; an
+ * explicit mismatch/denial is FAIL+BLOCKING. No client-provided route fact can
+ * turn a scope violation into a pass.
+ */
+export function evaluateAgentAuthority(input: AgentAuthorityCheckInput): AgentAuthorityCheckResult {
+  const { intent, plan, policy, sources, now } = input;
+  const auth = sources.agentAuthorized;
+
+  if (intent.initiator !== "agent") {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "PASS", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, intent.initiator, "not_agent"),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "NOT_APPLICABLE", "INFO", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, intent.agentId ?? "user", "not_agent"),
+    };
+  }
+
+  const expectedAgentId = typeof intent.agentId === "string" && intent.agentId.trim().length > 0 ? intent.agentId.trim() : null;
+  const observedAgentId = typeof auth?.observedAgentId === "string" && auth.observedAgentId.trim().length > 0 ? auth.observedAgentId.trim() : null;
+
+  if (!auth || auth.unknown || auth.authorized === undefined || auth.authorized === null) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, expectedAgentId),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId, expectedAgentId ?? "agent_id_required"),
+    };
+  }
+  if (auth.authorized === false) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "FAIL", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, "authorized"),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId ?? "unknown", "authorized"),
+    };
+  }
+  if (expectedAgentId === null || observedAgentId === null) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, expectedAgentId),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId, expectedAgentId ?? "agent_id_required"),
+    };
+  }
+  if (observedAgentId !== expectedAgentId) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "FAIL", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, expectedAgentId),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId, expectedAgentId),
+    };
+  }
+
+  const scopes = policy.allowedAgentScopes;
+  if (!Array.isArray(scopes)) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "PASS", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, "authorized"),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId, "agent_scope_required"),
+    };
+  }
+  const scope = scopes.find((candidate) => candidate && typeof candidate.agentId === "string" && candidate.agentId === expectedAgentId);
+  if (!scope) {
+    return {
+      initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "PASS", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, "authorized"),
+      scope: makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, observedAgentId, "scope_exists"),
+    };
+  }
+
+  const chainOk = allowlistedValue(plan.chainId, scope.allowedChains);
+  const assetOk = allowlistedValue(plan.asset, scope.allowedAssets);
+  const amountOk = scopeAmountAllowed(intent.requestedAmount, scope.amountCeiling);
+  const contractOk = allowlistedCalls(plan.calls, scope.allowedContracts);
+  // Delegated scopes require an explicit recipient allowlist. A missing list
+  // is UNKNOWN rather than an implicit allow-all.
+  const recipientOk = scope.allowedRecipients === undefined || scope.allowedRecipients === null
+    ? null
+    : allowlistedRecipient(plan.recipient, scope.allowedRecipients);
+  const decisions = [chainOk, assetOk, amountOk, contractOk, recipientOk];
+  const unknown = decisions.some((decision) => decision === null);
+  const blocked = decisions.some((decision) => decision === false);
+  const detail = `agent:${expectedAgentId}:chain=${String(chainOk)}:asset=${String(assetOk)}:amount=${String(amountOk)}:contract=${String(contractOk)}:recipient=${String(recipientOk)}`;
+
+  return {
+    initiator: makeCheck(CHECK_ID.INITIATOR_VALID, "PASS", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, observedAgentId, "authorized"),
+    scope: makeCheck(
+      CHECK_ID.AGENT_SCOPE,
+      unknown ? "UNKNOWN" : blocked ? "FAIL" : "PASS",
+      "BLOCKING",
+      PAUSE_REASON_CODE.AGENT_SCOPE,
+      "policy",
+      now,
+      detail,
+      `scope:${expectedAgentId}`,
+      unknown ? "agent_scope_fact_or_configuration_unknown" : blocked ? "agent_scope_out_of_bounds" : null,
+    ),
+  };
+}
+
+// Alias retained for the P3 check vocabulary used by the phase plan.
+export const AgentAuthorityCheck = evaluateAgentAuthority;
+
+function routeStatus(observed: boolean | null | undefined, policyAllowed: boolean | null): "PASS" | "FAIL" | "UNKNOWN" {
+  if (policyAllowed === false || observed === false) return "FAIL";
+  if (policyAllowed === null || observed === undefined || observed === null) return "UNKNOWN";
+  return "PASS";
+}
+
+function displayAllowlist(value: unknown): string {
+  return Array.isArray(value) ? value.map((item) => typeof item === "string" ? item : "unknown").join(",") : "unknown";
+}
+
 export function evaluatePolicy(input: {
   intent: ExecutionIntent;
   plan: ExecutionPlan;
@@ -263,38 +421,8 @@ export function evaluatePolicy(input: {
 
   // PAUSE-AUTH-001/002/003
   {
-    const auth = sources.agentAuthorized;
-    if (!auth || auth.unknown || auth.authorized === undefined || auth.authorized === null) {
-      checks.push(makeCheck(CHECK_ID.INITIATOR_VALID, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, null, intent.initiator));
-      checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, auth?.observedAgentId ?? null, intent.agentId ?? "n/a"));
-    } else if (auth.authorized === false) {
-      checks.push(makeCheck(CHECK_ID.INITIATOR_VALID, "FAIL", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, String(auth.authorized), "authorized"));
-      checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, auth.observedAgentId ?? intent.agentId ?? "unknown", "in_scope"));
-    } else {
-      checks.push(makeCheck(CHECK_ID.INITIATOR_VALID, "PASS", "BLOCKING", PAUSE_REASON_CODE.INITIATOR_INVALID, "policy", now, intent.initiator, "authorized"));
-      // agent scope detail: if intent is agent-initiated, check ceiling/recipients
-      if (intent.initiator === "agent" && policy.allowedAgentScopes) {
-        const scope = policy.allowedAgentScopes.find((s) => s.agentId === intent.agentId);
-        if (!scope) {
-          checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, intent.agentId ?? "unknown", "scope_exists"));
-        } else {
-          // simplified: scope matches if chain/asset allowed and amount under ceiling
-          const chainOk = scope.allowedChains.includes("*") || scope.allowedChains.includes(plan.chainId.toLowerCase());
-          const assetOk = scope.allowedAssets.includes("*") || scope.allowedAssets.includes(plan.asset.toLowerCase());
-          const scopeAmountCeiling = scope.amountCeiling === null ? null : parseDecimal(scope.amountCeiling);
-          const amtOk =
-            parsedRequestedAmount !== null &&
-            (scope.amountCeiling === null || (scopeAmountCeiling !== null && compareDecimals(parsedRequestedAmount, scopeAmountCeiling) <= 0));
-          if (!chainOk || !assetOk || !amtOk) {
-            checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "FAIL", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, `${plan.chainId}:${plan.asset}:${intent.requestedAmount}`, `scope:${scope.agentId}`));
-          } else {
-            checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "PASS", "BLOCKING", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, scope.agentId, "in_scope"));
-          }
-        }
-      } else {
-        checks.push(makeCheck(CHECK_ID.AGENT_SCOPE, "PASS", "INFO", PAUSE_REASON_CODE.AGENT_SCOPE, "policy", now, intent.agentId ?? "user", "not_agent_or_no_scope"));
-      }
-    }
+    const agentAuthority = evaluateAgentAuthority({ intent, plan, policy, sources, now });
+    checks.push(agentAuthority.initiator, agentAuthority.scope);
 
     const add = sources.additionalApproval;
     if (!add || add.unknown || add.requiresApproval === undefined || add.requiresApproval === null) {
@@ -309,29 +437,57 @@ export function evaluatePolicy(input: {
   // PAUSE-ROUTE-001..004
   {
     const r = sources.routeAllowed;
-    if (!r || r.unknown) {
-      checks.push(makeCheck(CHECK_ID.CHAIN_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.CHAIN_NOT_ALLOWED, "policy", now, plan.chainId, policy.allowedChains.join(",")));
-      checks.push(makeCheck(CHECK_ID.ASSET_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.ASSET_NOT_ALLOWED, "policy", now, plan.asset, policy.allowedAssets.join(",")));
-      checks.push(makeCheck(CHECK_ID.CONTRACT_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.CONTRACT_NOT_ALLOWED, "route_adapter", now, plan.calls.join(","), policy.allowedContracts.join(",")));
-      checks.push(makeCheck(CHECK_ID.ROUTE_NOT_REVOKED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.ROUTE_REVOKED_OR_STALE, "route_adapter", now, null, "not_revoked"));
-    } else {
-      // chain
-      if (r.chainAllowed === undefined || r.chainAllowed === null) checks.push(makeCheck(CHECK_ID.CHAIN_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.CHAIN_NOT_ALLOWED, "policy", now, plan.chainId, policy.allowedChains.join(",")));
-      else if (r.chainAllowed) checks.push(makeCheck(CHECK_ID.CHAIN_ALLOWED, "PASS", "BLOCKING", PAUSE_REASON_CODE.CHAIN_NOT_ALLOWED, "policy", now, plan.chainId, "allowed"));
-      else checks.push(makeCheck(CHECK_ID.CHAIN_ALLOWED, "FAIL", "BLOCKING", PAUSE_REASON_CODE.CHAIN_NOT_ALLOWED, "policy", now, plan.chainId, policy.allowedChains.join(",")));
+    const policyChainAllowed = allowlistedValue(plan.chainId, policy.allowedChains);
+    const policyAssetAllowed = allowlistedValue(plan.asset, policy.allowedAssets);
+    const policyContractAllowed = allowlistedCalls(plan.calls, policy.allowedContracts);
+    const observedChain = r?.unknown ? undefined : r?.chainAllowed;
+    const observedAsset = r?.unknown ? undefined : r?.assetAllowed;
+    const observedContract = r?.unknown ? undefined : r?.contractAllowed;
+    const observedNotRevoked = r?.unknown ? undefined : r?.notRevoked;
+    const chainStatus = routeStatus(observedChain, policyChainAllowed);
+    const assetStatus = routeStatus(observedAsset, policyAssetAllowed);
+    const contractStatus = routeStatus(observedContract, policyContractAllowed);
 
-      if (r.assetAllowed === undefined || r.assetAllowed === null) checks.push(makeCheck(CHECK_ID.ASSET_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.ASSET_NOT_ALLOWED, "policy", now, plan.asset, policy.allowedAssets.join(",")));
-      else if (r.assetAllowed) checks.push(makeCheck(CHECK_ID.ASSET_ALLOWED, "PASS", "BLOCKING", PAUSE_REASON_CODE.ASSET_NOT_ALLOWED, "policy", now, plan.asset, "allowed"));
-      else checks.push(makeCheck(CHECK_ID.ASSET_ALLOWED, "FAIL", "BLOCKING", PAUSE_REASON_CODE.ASSET_NOT_ALLOWED, "policy", now, plan.asset, policy.allowedAssets.join(",")));
-
-      if (r.contractAllowed === undefined || r.contractAllowed === null) checks.push(makeCheck(CHECK_ID.CONTRACT_ALLOWED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.CONTRACT_NOT_ALLOWED, "route_adapter", now, plan.calls.join(","), "allowed"));
-      else if (r.contractAllowed) checks.push(makeCheck(CHECK_ID.CONTRACT_ALLOWED, "PASS", "BLOCKING", PAUSE_REASON_CODE.CONTRACT_NOT_ALLOWED, "route_adapter", now, plan.calls[0] ?? "call", "allowed"));
-      else checks.push(makeCheck(CHECK_ID.CONTRACT_ALLOWED, "FAIL", "BLOCKING", PAUSE_REASON_CODE.CONTRACT_NOT_ALLOWED, "route_adapter", now, plan.calls[0] ?? "call", policy.allowedContracts.join(",")));
-
-      if (r.notRevoked === undefined || r.notRevoked === null) checks.push(makeCheck(CHECK_ID.ROUTE_NOT_REVOKED, "UNKNOWN", "BLOCKING", PAUSE_REASON_CODE.ROUTE_REVOKED_OR_STALE, "route_adapter", now, null, "not_revoked"));
-      else if (r.notRevoked) checks.push(makeCheck(CHECK_ID.ROUTE_NOT_REVOKED, "PASS", "BLOCKING", PAUSE_REASON_CODE.ROUTE_REVOKED_OR_STALE, "route_adapter", now, "active", "not_revoked"));
-      else checks.push(makeCheck(CHECK_ID.ROUTE_NOT_REVOKED, "FAIL", "BLOCKING", PAUSE_REASON_CODE.ROUTE_REVOKED_OR_STALE, "route_adapter", now, "revoked", "active"));
-    }
+    checks.push(makeCheck(
+      CHECK_ID.CHAIN_ALLOWED,
+      chainStatus,
+      "BLOCKING",
+      PAUSE_REASON_CODE.CHAIN_NOT_ALLOWED,
+      "policy",
+      now,
+      plan.chainId,
+      displayAllowlist(policy.allowedChains),
+    ));
+    checks.push(makeCheck(
+      CHECK_ID.ASSET_ALLOWED,
+      assetStatus,
+      "BLOCKING",
+      PAUSE_REASON_CODE.ASSET_NOT_ALLOWED,
+      "policy",
+      now,
+      plan.asset,
+      displayAllowlist(policy.allowedAssets),
+    ));
+    checks.push(makeCheck(
+      CHECK_ID.CONTRACT_ALLOWED,
+      contractStatus,
+      "BLOCKING",
+      PAUSE_REASON_CODE.CONTRACT_NOT_ALLOWED,
+      "route_adapter",
+      now,
+      plan.calls.join(","),
+      displayAllowlist(policy.allowedContracts),
+    ));
+    checks.push(makeCheck(
+      CHECK_ID.ROUTE_NOT_REVOKED,
+      observedNotRevoked === undefined || observedNotRevoked === null ? "UNKNOWN" : observedNotRevoked ? "PASS" : "FAIL",
+      "BLOCKING",
+      PAUSE_REASON_CODE.ROUTE_REVOKED_OR_STALE,
+      "route_adapter",
+      now,
+      observedNotRevoked === undefined || observedNotRevoked === null ? null : observedNotRevoked ? "active" : "revoked",
+      "not_revoked",
+    ));
   }
 
   // PAUSE-INTENT-001/002

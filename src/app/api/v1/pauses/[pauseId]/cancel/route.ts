@@ -12,6 +12,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   const sessionOrErr = requireSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   const expectedVersion = parsed.expectedVersion ?? (body.expectedVersion as number | null | undefined) ?? null;
+  // The session is the authenticated subject; request claims and the
+  // cancellation reason are untrusted inputs for the configured resolver/audit.
+  const authorityClaim = (body.authorityActor as string | undefined) ?? (body.actor as string | undefined);
+  const reason = (body.reason as string | undefined) ?? (body.reasonCode as string | undefined);
   let factory;
   try {
     factory = await getAppFactory();
@@ -22,7 +26,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
     return jsonError(parsed.requestId, "ERR-021", 503, safe);
   }
   try {
-    const pause = await factory.pauseService.cancelPause(decoded, expectedVersion);
+    const pause = await factory.pauseService.cancelPause(decoded, expectedVersion, {
+      authoritySubject: sessionOrErr.userId,
+      authorityClaim: authorityClaim ?? null,
+      reason: reason ?? null,
+    });
     const headers = new Headers({ "content-type": "application/json", etag: `"${pause.version}"` });
     if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
     if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);

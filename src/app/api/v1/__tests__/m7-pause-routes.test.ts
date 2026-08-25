@@ -6,6 +6,7 @@ import { POST as pauseIntentPost } from "../intents/[intentId]/pause/route";
 import { POST as verifyPausePost } from "../pauses/[pauseId]/verify/route";
 import { POST as approvePausePost } from "../pauses/[pauseId]/approve/route";
 import { POST as releasePausePost } from "../pauses/[pauseId]/release/route";
+import { POST as cancelPausePost } from "../pauses/[pauseId]/cancel/route";
 import { GET as getPauseGet } from "../pauses/[pauseId]/route";
 import { GET as getReceiptGet } from "../receipts/[receiptId]/route";
 
@@ -19,6 +20,7 @@ const pauseService = {
   verifyPause: vi.fn(),
   approvePause: vi.fn(),
   releasePause: vi.fn(),
+  cancelPause: vi.fn(),
   getPause: vi.fn(),
   receiptService: { getReceipt: vi.fn() },
 };
@@ -94,6 +96,33 @@ describe("M7 Pause REST boundary regressions", () => {
       null,
       expect.objectContaining({ authoritySubject: session.userId }),
     );
+  });
+
+  it("forwards the authenticated cancel subject and reason to the authority boundary", async () => {
+    pauseService.cancelPause.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED, "pause_authority_policy_not_configured"));
+
+    const response = await cancelPausePost(
+      request({
+        expectedVersion: 0,
+        reason: "user_requested",
+        authorityActor: "claimed-controller",
+      }, { "x-request-id": "req-cancel", "x-correlation-id": "corr-cancel" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED);
+    expect(pauseService.cancelPause).toHaveBeenCalledWith(
+      "pause-1",
+      0,
+      expect.objectContaining({
+        authoritySubject: session.userId,
+        authorityClaim: "claimed-controller",
+        reason: "user_requested",
+      }),
+    );
+    expect(response.headers.get("x-correlation-id")).toBe("corr-cancel");
   });
 
   it("preserves PauseError catalogue/status when pausing an expired intent", async () => {

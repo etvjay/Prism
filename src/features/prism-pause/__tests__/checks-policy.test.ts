@@ -15,7 +15,7 @@ function basePolicy(): Policy {
     allowedContracts: ["*"],
     amountCeiling: "1000",
     requireFirstUseEscalation: true,
-    allowedAgentScopes: [{ agentId: "agent_1", allowedChains: ["base"], allowedAssets: ["0xdead"], allowedContracts: ["*"], amountCeiling: "500" }],
+    allowedAgentScopes: [{ agentId: "agent_1", allowedChains: ["base"], allowedAssets: ["0xdead"], allowedContracts: ["*"], allowedRecipients: ["0xabc"], amountCeiling: "500" }],
   };
 }
 
@@ -58,7 +58,7 @@ function basePause() {
 const passingSources: VerificationSources = {
   recipientBinding: { status: "BOUND", observedValue: "0xabc" },
   firstUse: { isFirstUse: false },
-  agentAuthorized: { authorized: true },
+  agentAuthorized: { authorized: true, observedAgentId: "agent_1" },
   routeAllowed: { chainAllowed: true, assetAllowed: true, contractAllowed: true, notRevoked: true },
   intentPlanMatch: { matches: true },
   simulation: { success: true, effectMatches: true, freshnessOk: true },
@@ -143,7 +143,7 @@ describe("P3 typed checks and policy engine (fail-closed UNKNOWN)", () => {
     const intent = baseIntent({ initiator: "agent", agentId: "agent_1", requestedAmount: "1e2" });
     const checks = evaluatePolicy({ intent, plan: basePlan(), pause: basePause(), policy: basePolicy(), sources: passingSources, now: 1500 });
 
-    expect(checks.find(c => c.checkId === "PAUSE-AUTH-002")).toMatchObject({ status: "FAIL", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AGENT_SCOPE });
+    expect(checks.find(c=>c.checkId==="PAUSE-AUTH-002")).toMatchObject({ status: "UNKNOWN", severity: "BLOCKING", reasonCode: PAUSE_REASON_CODE.AGENT_SCOPE });
     expect(canAutoRelease(checks)).toBe(false);
   });
 

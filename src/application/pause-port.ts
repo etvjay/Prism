@@ -63,7 +63,7 @@ export interface PauseService {
   getPause(pauseId: string): Promise<ExecutionPause | null>;
   verifyPause(pauseId: string, opts?: { planHash?: string; policyVersion?: string }): Promise<ExecutionPause>;
   releasePause(pauseId: string, expectedVersion?: number | null, opts?: { planHash?: string; approvalScopeHash?: string | null; settlementOperationId?: string; correlationId?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause>;
-  cancelPause(pauseId: string, expectedVersion?: number | null): Promise<ExecutionPause>;
+  cancelPause(pauseId: string, expectedVersion?: number | null, opts?: { reason?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause>;
   escalatePause(pauseId: string): Promise<ExecutionPause>;
   approvePause(pauseId: string, approver: string, opts?: { planHash?: string; approvalScopeHash?: string | null }): Promise<ExecutionPause>;
 }
@@ -430,12 +430,19 @@ export class InMemoryPauseService implements PauseService {
     }
   }
 
-  async cancelPause(pauseId: string, expectedVersion?: number | null): Promise<ExecutionPause> {
+  async cancelPause(pauseId: string, expectedVersion?: number | null, opts?: { reason?: string | null; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const domainPause = await this.domainStore.getPause(pauseId);
     if (!domainPause) throw new AppError(APP_ERROR_CODE.IDENTITY_NOT_FOUND, `pause_not_found:${pauseId}`);
     const nowMs = toMs(this.clock.now());
     try {
-      const result = await this.domainService.cancel({ pauseId, now: nowMs, expectedVersion: expectedVersion ?? domainPause.version });
+      const result = await this.domainService.cancel({
+        pauseId,
+        now: nowMs,
+        expectedVersion: expectedVersion ?? domainPause.version,
+        reason: opts?.reason ?? undefined,
+        authoritySubject: opts?.authoritySubject,
+        authorityClaim: opts?.authorityClaim,
+      });
       const corr = this.correlationByPause.get(pauseId) ?? null;
       return mapDomainPauseToRest(result, corr);
     } catch (e) {

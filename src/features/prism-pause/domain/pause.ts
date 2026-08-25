@@ -302,7 +302,15 @@ export function cancel(pause: ExecutionPause, input: CancelInput): ExecutionPaus
   if (pause.state === PAUSE_STATE.CANCELLED) throw new PauseError(PAUSE_ERROR_CODE.CANCEL_NOT_ALLOWED, "already_cancelled");
   if (!canTransition(pause.state, PAUSE_STATE.CANCELLED)) throw new PauseError(PAUSE_ERROR_CODE.CANCEL_NOT_ALLOWED, `cannot_cancel_from_${pause.state}`);
   if (pause.settlementOperationId !== null) throw new PauseError(PAUSE_ERROR_CODE.CANCEL_NOT_ALLOWED, "already_has_settlement_operation");
-  return { ...pause, state: PAUSE_STATE.CANCELLED, version: pause.version + 1 };
+  const reasonCode = typeof input.reason === "string" && input.reason.trim().length > 0
+    ? input.reason.trim()
+    : PAUSE_REASON_CODE.CANCEL_REASON_UNSPECIFIED;
+  return {
+    ...pause,
+    state: PAUSE_STATE.CANCELLED,
+    version: pause.version + 1,
+    reasonCodes: [...pause.reasonCodes, reasonCode],
+  };
 }
 
 export function expire(pause: ExecutionPause, now: number, expectedVersion?: number): ExecutionPause {

@@ -69,6 +69,7 @@ export class PauseService {
     action: PauseAuthorityAction;
     subject?: string | null;
     claimedActor?: string | null;
+    reason?: string | null;
     pause: ExecutionPause;
     intent: ExecutionIntent;
     plan: ExecutionPlan;
@@ -84,6 +85,7 @@ export class PauseService {
         action: input.action,
         subject: input.subject ?? null,
         claimedActor: input.claimedActor ?? null,
+        reason: input.reason ?? null,
         pause: input.pause,
         intent: input.intent,
         plan: input.plan,
@@ -98,6 +100,20 @@ export class PauseService {
     }
     if (!decision.actor || !AUTHORITY_ACTORS.has(decision.actor)) {
       throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNAVAILABLE, "pause_authority_result_invalid");
+    }
+    // A resolver remains the authority source, but an authenticated user or
+    // delegated agent subject must not be rebound to a different intent.
+    if (input.subject !== undefined && input.subject !== null) {
+      const subject = input.subject.trim();
+      if (subject.length === 0) {
+        throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_DENIED, "pause_authority_subject_missing");
+      }
+      if (decision.actor === "user" && subject !== input.intent.principal) {
+        throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_DENIED, "pause_authority_subject_mismatch");
+      }
+      if (decision.actor === "authorized_agent" && input.intent.agentId !== null && input.intent.agentId !== undefined && subject !== input.intent.agentId) {
+        throw new PauseError(PAUSE_ERROR_CODE.AUTHORITY_DENIED, "pause_authority_agent_subject_mismatch");
+      }
     }
     return { ...decision, actor: decision.actor };
   }
@@ -387,13 +403,36 @@ export class PauseService {
     return persisted;
   }
 
-  async cancel(input: { pauseId: string; now?: number; expectedVersion?: number; reason?: string }): Promise<ExecutionPause> {
+  async cancel(input: { pauseId: string; now?: number; expectedVersion?: number; reason?: string; authoritySubject?: string | null; authorityClaim?: string | null }): Promise<ExecutionPause> {
     const now = input.now ?? (this.opts.now ? this.opts.now() : Date.now());
     const pause = await this.store.getPause(input.pauseId);
     if (!pause) throw new PauseError(PAUSE_ERROR_CODE.PAUSE_NOT_FOUND, input.pauseId);
     const expectedVersion = input.expectedVersion ?? pause.version;
     const next = domainCancel(pause, { now, expectedVersion, reason: input.reason });
-    const decision: PauseDecision = { decisionId: nextDecisionId(), pauseId: pause.pauseId, kind: "CANCEL", actor: "user", policyVersion: pause.policyVersion, planHash: pause.planHash, approvalScopeHash: pause.approvalScopeHash, reasonCodes: [...next.reasonCodes], createdAt: now };
+    const plan = await this.store.getPlan(pause.planHash);
+    if (!plan) throw new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, pause.planHash);
+    const intent = await this.store.getIntent(pause.intentId);
+    if (!intent) throw new PauseError(PAUSE_ERROR_CODE.INTENT_NOT_FOUND, pause.intentId);
+    const authority = await this.resolveAuthority({
+      action: "cancel",
+      subject: input.authoritySubject,
+      claimedActor: input.authorityClaim,
+      reason: input.reason ?? null,
+      pause,
+      intent,
+      plan,
+    });
+    const decision: PauseDecision = {
+      decisionId: nextDecisionId(),
+      pauseId: pause.pauseId,
+      kind: "CANCEL",
+      actor: authority.actor,
+      policyVersion: pause.policyVersion,
+      planHash: pause.planHash,
+      approvalScopeHash: pause.approvalScopeHash,
+      reasonCodes: [...next.reasonCodes],
+      createdAt: now,
+    };
     const persisted = await this.persistTransition({ next, expectedVersion, decision });
     try { this.opts.metrics?.increment("pause_cancelled"); } catch {}
     return persisted;

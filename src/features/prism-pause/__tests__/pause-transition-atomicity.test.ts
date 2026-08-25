@@ -3,6 +3,7 @@ import { InMemoryPauseStore } from "../adapters/memory-pause-store";
 import { PauseService } from "../application/pause-service";
 import type { ExecutionPause } from "../domain/pause";
 import type { PauseDecision } from "../ports/pause-store";
+import { testPauseAuthorityResolver } from "./test-authority";
 
 class AlwaysFailAppendStore extends InMemoryPauseStore {
   override async appendDecision(_decision: PauseDecision): Promise<PauseDecision> {
@@ -23,7 +24,7 @@ class FailOnceAppendStore extends InMemoryPauseStore {
 }
 
 async function createPaused(store: InMemoryPauseStore) {
-  const service = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+  const service = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
   const intent = await service.createIntent({
     intentId: "intent_atomicity",
     principal: "prism:alice",

@@ -49,6 +49,71 @@ describe("P4 explicit commands with binding", () => {
     // RELEASED never means completed — it's just a future operation link
   });
 
+  it("cancel fails closed with ERR-123 when no authority resolver is configured", async () => {
+    const store = new InMemoryPauseStore();
+    const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000 });
+    const intent = await svc.createIntent({ intentId: "intent_cancel_authority_missing", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_cancel_authority_missing", policyVersion: "v1" });
+    const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
+    const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
+
+    await expect(svc.cancel({ pauseId: pause.pauseId, now: 1250, reason: "user_requested" })).rejects.toMatchObject({
+      code: PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED,
+    });
+    expect((await svc.getPause(pause.pauseId))?.state).toBe("PAUSED");
+  });
+
+  it("cancel uses the resolver actor, binds an authenticated user subject, and records the reason", async () => {
+    const store = new InMemoryPauseStore();
+    const requests: Array<{ action: string; subject: string | null; claimedActor?: string | null }> = [];
+    const svc = new PauseService(store, {
+      store,
+      defaultPauseTtlMs: 10_000,
+      authorityResolver: {
+        resolve: async (request) => {
+          requests.push({ action: request.action, subject: request.subject, claimedActor: request.claimedActor });
+          return { authorized: true, actor: "controller" };
+        },
+      },
+    });
+    const intent = await svc.createIntent({ intentId: "intent_cancel_authority", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_cancel_authority", policyVersion: "v1" });
+    const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
+    const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
+
+    const cancelled = await svc.cancel({
+      pauseId: pause.pauseId,
+      now: 1250,
+      authoritySubject: "prism:alice",
+      authorityClaim: "claimed-controller",
+      reason: "controller_rejected_route",
+    });
+    expect(cancelled.state).toBe("CANCELLED");
+    expect(requests).toEqual([{ action: "cancel", subject: "prism:alice", claimedActor: "claimed-controller" }]);
+    await expect(store.getDecisions(pause.pauseId)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "CANCEL",
+        actor: "controller",
+        reasonCodes: ["controller_rejected_route"],
+        planHash: plan.planHash,
+      }),
+    ]);
+  });
+
+  it("cancel rejects a user subject that does not match the intent principal", async () => {
+    const store = new InMemoryPauseStore();
+    const svc = new PauseService(store, {
+      store,
+      authorityResolver: testPauseAuthorityResolver,
+    });
+    const intent = await svc.createIntent({ intentId: "intent_cancel_subject", principal: "prism:alice", initiator: "user", purpose: "payment", requestedRecipient: "0xabc", requestedAsset: "0xdead", requestedAmount: "100", requestedRoute: "base:0xdead:transfer", createdAt: 1000, expiresAt: 20_000, clientIdempotencyKey: "idem_cancel_subject", policyVersion: "v1" });
+    const plan = await svc.createPlan({ chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"], valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1100 });
+    const pause = await svc.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1200 });
+
+    await expect(svc.cancel({ pauseId: pause.pauseId, authoritySubject: "prism:eve", reason: "spoofed" })).rejects.toMatchObject({
+      code: PAUSE_ERROR_CODE.AUTHORITY_DENIED,
+    });
+    expect((await svc.getPause(pause.pauseId))?.state).toBe("PAUSED");
+  });
+
   it("cancel from PAUSED succeeds, cancel from RELEASED fails", async () => {
     const store = new InMemoryPauseStore();
     const svc = new PauseService(store, { store, defaultPauseTtlMs: 10_000, authorityResolver: testPauseAuthorityResolver });
