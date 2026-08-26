@@ -1,373 +1,281 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createStore } from "@starknet-io/get-starknet-discovery";
-import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-wallet-standard/features";
-import { constants, WalletAccountV6, walletV6 } from "starknet";
+import { useEffect, useRef, useState } from "react";
+import { useSession } from "./session/SessionProvider";
 import {
-  classifyWalletEnvironment,
-  getExpectedWalletEnvironment,
-  supportsStrk20,
-  type ExpectedWalletEnvironment,
-  type WalletEnvironment,
-} from "./walletState";
+  environmentLabel,
+  formatObservedAddress,
+  formatObservedHash,
+} from "./session/selectors";
+import {
+  capabilityGlyph,
+  capabilitySummary,
+  ctaLabel,
+  SESSION_STATE_GLYPHS,
+  SESSION_STATE_LABELS,
+  SESSION_STRINGS,
+  statusLine,
+} from "./session/strings";
+import styles from "./WalletConnectionPanel.module.css";
 
-type WalletV6Provider = Parameters<typeof WalletAccountV6.connect>[1];
-
-type ConnectionState =
-  | "disconnected"
-  | "discovering"
-  | "connecting"
-  | "privacy-capable"
-  | "privacy-unsupported"
-  | "capability-unknown"
-  | "consent-required"
-  | "network-mismatch"
-  | "unavailable";
-
-type WalletSnapshot = {
-  walletName: string;
-  address: string;
-  chainId: string;
-  environment: WalletEnvironment;
-  expectedEnvironment: ExpectedWalletEnvironment;
-  apiVersions: string[];
-  specs: string[];
-  privacyCapable: boolean;
-};
-
-function normalizeAddress(address: string) {
-  const hex = address.toLowerCase().replace(/^0x/, "");
-  return `0x${hex.padStart(64, "0")}`;
+export interface WalletConnectionPanelProps {
+  /** The parent flow may attach the next real action without changing session state here. */
+  readonly onContinue?: () => void;
+  /** Consent is supplied by the flow that owns the consent contract. */
+  readonly onConsent?: () => void;
 }
 
-function asWalletV6Provider(wallet: WalletWithStarknetFeatures): WalletV6Provider {
-  // get-starknet 6.0.3 resolves types-js 0.10.4-beta.1 while starknet.js 10.4.0's
-  // V6 adapter resolves its bundled 0.10.3 alias. The runtime wallet-standard shape
-  // is shared; keep the compatibility cast at this SDK boundary only.
-  return wallet as unknown as WalletV6Provider;
+function isDisabledState(state: ReturnType<typeof useSession>["uiState"]): boolean {
+  return state === "discovering"
+    || state === "connecting"
+    || state === "unsupported"
+    || state === "proof-preparing"
+    || state === "awaiting-approval"
+    || state === "processing";
 }
 
-function hasWalletApiFeature(wallet: WalletWithStarknetFeatures) {
-  return Boolean((wallet.features as Record<string, unknown>)["starknet:walletApi"]);
+function showsCapabilities(state: ReturnType<typeof useSession>["uiState"]): boolean {
+  return state === "unsupported"
+    || state === "ready"
+    || state === "consent-required"
+    || state === "proof-preparing"
+    || state === "awaiting-approval"
+    || state === "submitted"
+    || state === "processing"
+    || state === "receipt-confirmed"
+    || state === "reverted";
 }
 
-function isConsentRejection(error: unknown) {
-  if (!(error instanceof Error)) return false;
-
-  const message = error.message.toLowerCase();
-  return ["reject", "denied", "cancel", "declin", "authoriz"].some((word) => message.includes(word));
+function explorerHref(transactionHash: string): string {
+  const configured = process.env.NEXT_PUBLIC_STARKNET_EXPLORER_URL?.trim();
+  const base = (configured || "https://starkscan.co/tx").replace(/\/$/, "");
+  return `${base}/${transactionHash}`;
 }
 
-const stateLabels: Record<ConnectionState, string> = {
-  disconnected: "Disconnected",
-  discovering: "Looking for wallets",
-  connecting: "Connecting",
-  "privacy-capable": "STRK20 capable",
-  "privacy-unsupported": "Connected · STRK20 unavailable",
-  "capability-unknown": "Connected · capability unknown",
-  "consent-required": "Connection needs consent",
-  unavailable: "Unavailable",
-  "network-mismatch": "Connected · wrong network",
-};
-
-type WalletSnapshotResult = {
-  snapshot: WalletSnapshot;
-  connectionState: ConnectionState;
-  errorMessage: string | null;
-};
-
-async function refreshWalletSnapshot(
-  wallet: WalletWithStarknetFeatures,
-  rpcUrl: string,
-  expectedEnvironment: ExpectedWalletEnvironment,
-  silentMode = false,
-): Promise<WalletSnapshotResult> {
-  const v6Wallet = asWalletV6Provider(wallet);
-  const account = silentMode
-    ? await WalletAccountV6.connectSilent({ nodeUrl: rpcUrl }, v6Wallet)
-    : await WalletAccountV6.connect({ nodeUrl: rpcUrl }, v6Wallet);
-
-  if (!account.address) {
-    throw new Error("The wallet did not authorize an account.");
-  }
-
-  const walletApiAvailable = hasWalletApiFeature(wallet);
-  let apiVersions: string[] = [];
-  let specs: string[] = [];
-  let capabilityCheckSucceeded = !walletApiAvailable;
-
-  if (walletApiAvailable) {
-    try {
-      [apiVersions, specs] = await Promise.all([
-        walletV6.supportedWalletApi(v6Wallet),
-        walletV6.supportedSpecs(v6Wallet),
-      ]);
-      capabilityCheckSucceeded = true;
-    } catch {
-      capabilityCheckSucceeded = false;
-    }
-  }
-
-  let chainId = "Unknown network";
-
-  try {
-    chainId = walletApiAvailable
-      ? await walletV6.requestChainId(v6Wallet)
-      : await account.provider.getChainId();
-  } catch {
-    // Keep the account state visible, but do not invent a network when the wallet/RPC cannot report it.
-  }
-
-  const environment = classifyWalletEnvironment(chainId, {
-    mainnet: constants.StarknetChainId.SN_MAIN,
-    sepolia: constants.StarknetChainId.SN_SEPOLIA,
+export default function WalletConnectionPanel({ onContinue, onConsent }: WalletConnectionPanelProps) {
+  const {
+    snapshot,
+    wallets,
+    notice,
+    startDiscovery,
+    connectWallet,
+    disconnect,
+    switchNetwork,
+  } = useSession();
+  const { session, capabilities, receipt, state: uiState } = snapshot;
+  const [fullAddressOpen, setFullAddressOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [disconnectPending, setDisconnectPending] = useState(false);
+  const disconnectTimerRef = useRef<number | null>(null);
+  const addressLabel = formatObservedAddress(session.accountAddress);
+  const expectedLabel = environmentLabel(session.expectedEnvironment);
+  const observedLabel = session.environment === "UNKNOWN"
+    ? session.network.chainId ?? SESSION_STRINGS.unknownNetwork
+    : environmentLabel(session.environment);
+  const status = statusLine(uiState, {
+    environment: observedLabel,
+    chainId: session.network.chainId,
+    expectedEnvironment: expectedLabel,
+    capabilitySummary: capabilitySummary(capabilities),
+    blockNumber: receipt?.blockNumber ?? null,
+    reason: receipt?.reason ?? null,
   });
-  const privacyCapable = capabilityCheckSucceeded && supportsStrk20(apiVersions, specs);
-  const networkMatches = environment === expectedEnvironment;
-  const nextSnapshot: WalletSnapshot = {
-    walletName: wallet.name,
-    address: normalizeAddress(account.address),
-    chainId,
-    environment,
-    expectedEnvironment,
-    apiVersions,
-    specs,
-    privacyCapable,
-  };
-
-  if (!networkMatches) {
-    return {
-      snapshot: nextSnapshot,
-      connectionState: "network-mismatch",
-      errorMessage: `Wallet is on ${environment}; Prism expects ${expectedEnvironment}. Switch networks before using private actions.`,
-    };
-  }
-
-  return {
-    snapshot: nextSnapshot,
-    connectionState: capabilityCheckSucceeded
-      ? privacyCapable
-        ? "privacy-capable"
-        : "privacy-unsupported"
-      : "capability-unknown",
-    errorMessage: capabilityCheckSucceeded
-      ? null
-      : "Connected, but this wallet did not answer its capability query.",
-  };
-}
-
-export default function WalletConnectionPanel() {
-  const [wallets, setWallets] = useState<WalletWithStarknetFeatures[]>([]);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("discovering");
-  const [connectingWallet, setConnectingWallet] = useState<string | null>(null);
-  const [activeWallet, setActiveWallet] = useState<WalletWithStarknetFeatures | null>(null);
-  const [snapshot, setSnapshot] = useState<WalletSnapshot | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const expectedEnvironment = getExpectedWalletEnvironment(process.env.NEXT_PUBLIC_STARKNET_NETWORK);
+  const cta = ctaLabel(uiState, expectedLabel);
+  const ctaDisabled = isDisabledState(uiState);
+  const connected = session.accountAddress !== null;
+  const showReceipt = receipt !== null
+    && (uiState === "submitted" || uiState === "processing" || uiState === "receipt-confirmed" || uiState === "reverted");
 
   useEffect(() => {
-    const store = createStore();
-    const syncWallets = (discoveredWallets: readonly WalletWithStarknetFeatures[]) => {
-      setWallets([...discoveredWallets]);
-      setConnectionState((currentState) =>
-        currentState === "discovering" ? "disconnected" : currentState,
-      );
-    };
+    setFullAddressOpen(false);
+    setDisconnectPending(false);
+  }, [uiState]);
 
-    syncWallets(store.getWallets());
-    return store.subscribe(syncWallets);
+  useEffect(() => {
+    return () => {
+      if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
-    if (!activeWallet) return;
-
-    const rpcUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL;
-    if (!rpcUrl) return;
-
-    let mounted = true;
-    const unsubscribe = walletV6.subscribeWalletEvent(asWalletV6Provider(activeWallet), (change) => {
-      if (!mounted) return;
-
-      if (change.accounts && change.accounts.length === 0) {
-        setActiveWallet(null);
-        setSnapshot(null);
-        setConnectionState("disconnected");
-        setErrorMessage(null);
-        return;
-      }
-
-      setConnectionState("connecting");
-      void refreshWalletSnapshot(activeWallet, rpcUrl, expectedEnvironment, true)
-        .then((result) => {
-          if (!mounted) return;
-          setSnapshot(result.snapshot);
-          setConnectionState(result.connectionState);
-          setErrorMessage(result.errorMessage);
-        })
-        .catch((error: unknown) => {
-          if (!mounted) return;
-          setConnectionState(isConsentRejection(error) ? "consent-required" : "unavailable");
-          setErrorMessage("The wallet changed. Reconnect to refresh Prism's authority state.");
-        });
-    });
-
-    return () => {
-      mounted = false;
-      unsubscribe();
+    if (!fullAddressOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullAddressOpen(false);
     };
-  }, [activeWallet, expectedEnvironment]);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [fullAddressOpen]);
 
-  const connectWallet = async (wallet: WalletWithStarknetFeatures) => {
-    const rpcUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL;
-
-    setErrorMessage(null);
-    setSnapshot(null);
-
-    if (!rpcUrl) {
-      setConnectionState("unavailable");
-      setErrorMessage("Set NEXT_PUBLIC_STARKNET_RPC_URL before connecting a wallet.");
+  const handleDisconnect = () => {
+    if (!disconnectPending) {
+      setDisconnectPending(true);
+      disconnectTimerRef.current = window.setTimeout(() => {
+        setDisconnectPending(false);
+        disconnectTimerRef.current = null;
+      }, 3000);
       return;
     }
+    if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+    disconnectTimerRef.current = null;
+    setDisconnectPending(false);
+    disconnect();
+  };
 
-    setConnectingWallet(wallet.name);
-    setConnectionState("connecting");
-
+  const copyAddress = async () => {
+    if (!session.accountAddress) return;
     try {
-      const result = await refreshWalletSnapshot(wallet, rpcUrl, expectedEnvironment);
-      setActiveWallet(wallet);
-      setSnapshot(result.snapshot);
-      setConnectionState(result.connectionState);
-      setErrorMessage(result.errorMessage);
-    } catch (error) {
-      setActiveWallet(null);
-      setConnectionState(isConsentRejection(error) ? "consent-required" : "unavailable");
-      setErrorMessage(
-        isConsentRejection(error)
-          ? "Approve the connection in your wallet to continue."
-          : "The wallet could not be connected. Check the wallet and RPC configuration.",
-      );
-    } finally {
-      setConnectingWallet(null);
+      await navigator.clipboard.writeText(session.accountAddress);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
     }
   };
 
-  const disconnectWallet = async () => {
-    try {
-      await activeWallet?.features["standard:disconnect"].disconnect();
-    } catch {
-      setErrorMessage("The wallet did not confirm disconnect; Prism cleared local state.");
+  const handlePrimaryAction = () => {
+    if (ctaDisabled) return;
+    if (uiState === "wrong-network") {
+      switchNetwork();
+      return;
     }
-
-    setActiveWallet(null);
-    setSnapshot(null);
-    setErrorMessage((currentMessage) =>
-      currentMessage?.startsWith("The wallet did not confirm") ? currentMessage : null,
-    );
-    setConnectionState("disconnected");
+    if (uiState === "disconnected" || uiState === "capability-unknown" || uiState === "unknown") {
+      startDiscovery();
+      return;
+    }
+    if (uiState === "consent-required") {
+      (onConsent ?? onContinue)?.();
+      return;
+    }
+    onContinue?.();
   };
 
   return (
-    <section className="wallet-section" aria-labelledby="wallet-heading">
-      <div className="section-heading">
-        <p className="eyebrow">Wallet access</p>
-        <h2 id="wallet-heading">Connect the authority that makes Prism real.</h2>
-        <p className="section-lede">
-          Prism checks the wallet&apos;s declared Wallet API support before any private state is
-          requested. A capable wallet can become the authority for Starknet execution and the
-          STRK20 private surface.
-        </p>
+    <section
+      aria-labelledby="wallet-session-heading"
+      className={styles.panel}
+      data-state={uiState}
+      role="region"
+    >
+      <div className={styles.panelIntro}>
+        <p className={styles.eyebrow}>{SESSION_STRINGS.eyebrow}</p>
+        <h3 id="wallet-session-heading">{SESSION_STRINGS.title}</h3>
       </div>
 
-      <div className={`wallet-card wallet-card--${connectionState}`}>
-        <div className="wallet-card-header">
+      <div className={styles.card}>
+        <header className={styles.cardHeader}>
           <div>
-            <span className="label">Connection state</span>
-            <strong className="wallet-state">
-              <span className="state-dot" aria-hidden="true" />
-              {stateLabels[connectionState]}
+            <span className={styles.label}>{SESSION_STRINGS.sessionState}</span>
+            <strong className={styles.stateLabel}>
+              <span aria-hidden="true" className={styles.stateGlyph}>{SESSION_STATE_GLYPHS[uiState]}</span>
+              {SESSION_STATE_LABELS[uiState]}
             </strong>
           </div>
-          {snapshot ? (
-            <button className="text-button" type="button" onClick={() => void disconnectWallet()}>
-              Disconnect
-            </button>
-          ) : null}
-        </div>
+        </header>
 
-        {snapshot ? (
-          <div className="wallet-details">
-            <div>
-              <span className="label">Wallet</span>
-              <strong>{snapshot.walletName}</strong>
-            </div>
-            <div>
-              <span className="label">Account</span>
-              <strong className="mono">{snapshot.address}</strong>
-            </div>
-            <div>
-              <span className="label">Network</span>
-              <strong className="mono">{snapshot.chainId}</strong>
-            </div>
-            <div>
-              <span className="label">Environment</span>
-              <strong className="mono">
-                {snapshot.environment} · expects {snapshot.expectedEnvironment}
-              </strong>
-            </div>
-            <div>
-              <span className="label">Declared Wallet API</span>
-              <strong className="mono">
-                {snapshot.apiVersions.length > 0 ? snapshot.apiVersions.join(", ") : "Not reported"}
-              </strong>
-            </div>
-            <div>
-              <span className="label">STRK20 capability</span>
-              <strong>{snapshot.privacyCapable ? "Reported" : "Not reported"}</strong>
-            </div>
-            <div>
-              <span className="label">Declared specs</span>
-              <strong className="mono">
-                {snapshot.specs.length > 0 ? snapshot.specs.join(", ") : "Not reported"}
-              </strong>
-            </div>
+        <p aria-live="polite" className={styles.statusLine}>{status}</p>
+        {notice ? <p className={styles.notice} role="alert">{notice}</p> : null}
+
+        <button
+          className={styles.primaryAction}
+          disabled={ctaDisabled}
+          onClick={handlePrimaryAction}
+          type="button"
+        >
+          {cta}
+        </button>
+
+        {uiState === "disconnected" && wallets.length > 0 ? (
+          <div aria-label={SESSION_STRINGS.discoveredWallets} className={styles.walletList} role="list">
+            {wallets.map((wallet) => (
+              <button
+                className={styles.walletOption}
+                key={wallet.id}
+                onClick={() => connectWallet(wallet.id)}
+                role="listitem"
+                type="button"
+              >
+                <span>{wallet.name}</span>
+                <span aria-hidden="true">{SESSION_STRINGS.connect}</span>
+              </button>
+            ))}
           </div>
-        ) : (
-          <div className="wallet-connect-content">
-            <p>
-              {wallets.length > 0
-                ? "Choose a discovered Starknet wallet to continue."
-                : "Install or unlock a Starknet wallet, then return here to connect."}
-            </p>
-            {wallets.length > 0 ? (
-              <div className="wallet-list">
-                {wallets.map((wallet) => (
-                  <button
-                    className="wallet-option"
-                    disabled={connectionState === "connecting"}
-                    key={wallet.name}
-                    type="button"
-                    onClick={() => connectWallet(wallet)}
-                  >
-                    <span>
-                      <strong>{wallet.name}</strong>
-                      <small>Starknet wallet</small>
-                    </span>
-                    <span className="wallet-option-action">
-                      {connectingWallet === wallet.name ? "Connecting…" : "Connect"}
-                    </span>
-                  </button>
-                ))}
+        ) : null}
+
+        {addressLabel ? (
+          <div className={styles.observedDetails}>
+            {session.walletName ? (
+              <div className={styles.detailRow}>
+                <span className={styles.label}>{SESSION_STRINGS.wallet}</span>
+                <span className={styles.detailValue}>{session.walletName}</span>
+              </div>
+            ) : null}
+            <div className={styles.detailRow}>
+              <span className={styles.label}>{SESSION_STRINGS.account}</span>
+              <div className={styles.addressControls}>
+                <button
+                  aria-label={`${SESSION_STRINGS.copyAddress} ${addressLabel}`}
+                  className={styles.addressButton}
+                  onClick={() => void copyAddress()}
+                  type="button"
+                >
+                  <span className={styles.mono}>{addressLabel}</span>
+                </button>
+                <button
+                  aria-expanded={fullAddressOpen}
+                  className={styles.disclosure}
+                  onClick={() => setFullAddressOpen((open) => !open)}
+                  type="button"
+                >
+                  {fullAddressOpen ? SESSION_STRINGS.hideFullAddress : SESSION_STRINGS.viewFullAddress}
+                </button>
+                {copied ? <span aria-live="polite" className={styles.copied}>{SESSION_STRINGS.copied}</span> : null}
+                {fullAddressOpen ? <code className={styles.fullAddress}>{session.accountAddress}</code> : null}
+              </div>
+            </div>
+            {session.network.chainId ? (
+              <div className={styles.detailRow}>
+                <span className={styles.label}>{SESSION_STRINGS.network}</span>
+                <span className={styles.detailValue}>{observedLabel} · <span className={styles.mono}>{session.network.chainId}</span></span>
               </div>
             ) : null}
           </div>
-        )}
+        ) : null}
 
-        {errorMessage ? <p className="wallet-message wallet-message--error">{errorMessage}</p> : null}
-        <p className="wallet-message wallet-message--privacy">
-          Capability detection uses supported API/spec queries only. Prism does not read shielded
-          balances, viewing keys, private keys, or seed phrases in this step.
-        </p>
+        {uiState === "capability-unknown" ? (
+          <div aria-label={SESSION_STRINGS.checkingCapabilities} className={styles.capabilityList} role="list">
+            {[0, 1, 2].map((slot) => (
+              <span className={styles.capabilitySkeleton} key={slot} role="listitem" />
+            ))}
+          </div>
+        ) : showsCapabilities(uiState) ? (
+          <div aria-label={SESSION_STRINGS.observedCapabilities} className={styles.capabilityList} role="list">
+            {capabilities.map((capability) => (
+              <span className={`${styles.capability} ${styles[`capability--${capability.status}`]}`} key={capability.id} role="listitem">
+                <span aria-hidden="true">{capabilityGlyph(capability.status)}</span>
+                {capability.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {connected ? (
+          <button className={styles.disconnect} onClick={handleDisconnect} type="button">
+            {disconnectPending ? SESSION_STRINGS.confirmDisconnect : SESSION_STRINGS.disconnect}
+          </button>
+        ) : null}
+
+        {showReceipt ? (
+          <div aria-live="polite" className={`${styles.receipt} ${styles[`receipt--${receipt.status}`]}`}>
+            <div>
+              <span className={styles.label}>{SESSION_STRINGS.receipt}</span>
+              <span className={styles.receiptStatus}>{receipt.status}</span>
+              <code className={styles.mono}>{formatObservedHash(receipt.transactionHash)}</code>
+            </div>
+            <a href={explorerHref(receipt.transactionHash)} rel="noopener noreferrer" target="_blank">
+              {SESSION_STRINGS.viewExplorer} <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        ) : null}
       </div>
     </section>
   );

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import WalletConnectionPanel from "../wallet/WalletConnectionPanel";
+import { SessionProvider } from "../wallet/session/SessionProvider";
 import styles from "./PrismWorkspacePreview.module.css";
 
 type WorkspaceTab = "home" | "activity" | "connections" | "profile";
@@ -60,6 +61,12 @@ function EmptyPanel({ title, body, marker }: { title: string; body: string; mark
 export default function PrismWorkspacePreview() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("home");
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [sessionDemo, setSessionDemo] = useState(false);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    setSessionDemo(query.get("demo") === "session");
+  }, []);
 
   useEffect(() => {
     const handleWorkspaceTab = (event: Event) => {
@@ -152,7 +159,11 @@ export default function PrismWorkspacePreview() {
               </div>
               <PreviewActionRail onAction={handleAction} />
               {actionNotice ? <p className={styles.actionNotice} role="status">{actionNotice}</p> : null}
-              <WalletConnectionPanel />
+              {sessionDemo ? (
+                <SessionProvider>
+                  <WalletConnectionPanel />
+                </SessionProvider>
+              ) : null}
             </div>
           ) : null}
 

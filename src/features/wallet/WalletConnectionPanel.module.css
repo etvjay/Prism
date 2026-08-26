@@ -1,0 +1,414 @@
+.panel {
+  width: min(100%, 520px);
+  margin: 28px auto 0;
+  color: #202127;
+}
+
+.panelIntro {
+  display: grid;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.eyebrow,
+.label {
+  margin: 0;
+  color: #73747a;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Consolas, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.panelIntro h3 {
+  max-width: 420px;
+  margin: 0;
+  color: #191a20;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 430;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+
+.card {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--prism-panel-border, #e3e4e8);
+  border-radius: 12px;
+  background: var(--prism-panel-surface, #fcfcfd);
+}
+
+.cardHeader {
+  display: flex;
+  min-height: 30px;
+  align-items: start;
+  justify-content: space-between;
+  padding-right: 122px;
+}
+
+.stateLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  color: #35363d;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.stateGlyph {
+  min-width: 22px;
+  color: var(--prism-accent, #526f95);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.statusLine {
+  min-height: 20px;
+  margin: 0;
+  color: #686970;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.notice {
+  margin: -4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #e6dfd0;
+  border-radius: 9px;
+  color: #8b744d;
+  background: #fffaf0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.primaryAction,
+.walletOption {
+  min-height: 44px;
+  border: 1px solid var(--prism-accent, #526f95);
+  border-radius: 9px;
+  color: #fff;
+  background: var(--prism-accent, #526f95);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 620;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.primaryAction:hover:not(:disabled),
+.primaryAction:focus-visible:not(:disabled) {
+  border-color: #3f5c80;
+  background: #3f5c80;
+}
+
+.primaryAction:disabled {
+  border-color: #d8d9de;
+  color: #8d8e95;
+  background: #eef0f3;
+  cursor: not-allowed;
+}
+
+.primaryAction:focus-visible,
+.walletOption:focus-visible,
+.addressButton:focus-visible,
+.disclosure:focus-visible,
+.disconnect:focus-visible,
+.receipt a:focus-visible {
+  outline: 2px solid var(--prism-focus, #526f95);
+  outline-offset: 2px;
+}
+
+.walletList {
+  display: grid;
+  gap: 8px;
+}
+
+.walletOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-color: #d7d9df;
+  color: #35363d;
+  background: #f5f6f8;
+  font-size: 12px;
+  text-align: left;
+}
+
+.walletOption:hover,
+.walletOption:focus-visible {
+  border-color: #b9bbc3;
+  background: #fff;
+}
+
+.walletOption > span:last-child {
+  color: #6d6e76;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.observedDetails {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.detailRow {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.3fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-height: 28px;
+}
+
+.detailValue,
+.addressButton {
+  min-width: 0;
+  color: #35363d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Consolas, monospace);
+  font-size: 12px;
+}
+
+.addressControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 10px;
+  min-width: 0;
+}
+
+.addressButton,
+.disclosure,
+.disconnect {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.addressButton {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.addressButton:hover,
+.disclosure:hover,
+.disconnect:hover {
+  color: #3f5c80;
+}
+
+.disclosure {
+  min-height: 24px;
+  color: #6d6e76;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.copied {
+  color: #4f7856;
+  font-size: 11px;
+}
+
+.fullAddress {
+  flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border: 1px solid #e3e4e8;
+  border-radius: 7px;
+  color: #51525a;
+  background: #fff;
+  font-size: 11px;
+}
+
+.capabilityList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 26px;
+}
+
+.capability,
+.capabilitySkeleton {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #d8d9de;
+  border-radius: 999px;
+  color: #686970;
+  background: #f2f3f5;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.capability--supported {
+  border-color: #c8dacb;
+  color: #4f7856;
+  background: #f1f8f2;
+}
+
+.capability--unsupported {
+  border-color: #e6cfa6;
+  color: #8b744d;
+  background: #fff8eb;
+}
+
+.capability--unknown {
+  color: #777981;
+  background: #f2f3f5;
+}
+
+.capabilitySkeleton {
+  width: 102px;
+}
+
+.capabilitySkeleton:nth-child(2) {
+  width: 94px;
+}
+
+.capabilitySkeleton:nth-child(3) {
+  width: 78px;
+}
+
+.disconnect {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  min-height: 44px;
+  padding: 0 2px;
+  color: #6d6e76;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.receipt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid #e3e4e8;
+}
+
+.receipt > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.receiptStatus {
+  color: #686970;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.receipt a {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid #d7d9df;
+  border-radius: 7px;
+  color: #526f95;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.receipt a:hover,
+.receipt a:focus-visible {
+  border-color: #526f95;
+  background: #f5f7fa;
+}
+
+.receipt--confirmed .receiptStatus {
+  color: #4f7856;
+}
+
+.receipt--reverted .receiptStatus {
+  color: #8b744d;
+}
+
+@media (max-width: 719px) {
+  .panel {
+    width: 100%;
+  }
+
+  .receipt {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .receipt a {
+    align-self: flex-start;
+  }
+}
+
+@media (max-width: 479px) {
+  .card {
+    padding: 16px;
+  }
+
+  .detailRow {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .fullAddress {
+    max-width: 320px;
+  }
+
+  .capabilityList {
+    row-gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .panel *,
+  .panel *::before,
+  .panel *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .primaryAction:active:not(:disabled) {
+    border-width: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  .card,
+  .capability,
+  .capabilitySkeleton,
+  .receipt a,
+  .walletOption {
+    border: 1px solid CanvasText;
+  }
+
+  .primaryAction {
+    border: 1px solid ButtonText;
+    color: ButtonText;
+    background: ButtonFace;
+  }
+}

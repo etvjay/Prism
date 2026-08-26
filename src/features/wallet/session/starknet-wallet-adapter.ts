@@ -22,6 +22,8 @@ import type { StarknetWalletSession, WalletSessionAdapter } from "./types";
 export interface StarknetWalletSessionProvider {
   readonly name?: string;
   connect(): Promise<{ readonly address: string }>;
+  /** Silent re-read used for account/network change events. */
+  getSession?(): Promise<{ readonly address: string } | null>;
   disconnect?(): Promise<void>;
   supportedWalletApi(): Promise<readonly string[]>;
   supportedSpecs(): Promise<readonly string[]>;
@@ -99,13 +101,19 @@ export class StarknetWalletSessionAdapter implements WalletSessionAdapter<Starkn
       throw new WalletSessionError(WALLET_SESSION_ERROR_CODE.PROVIDER_DISCONNECTED, "account_required_for_refresh");
     }
     try {
+      const observedAccount = this.provider.getSession
+        ? await this.provider.getSession()
+        : { address: session.accountAddress };
+      if (observedAccount === null) {
+        return clearAuthorityState(session, now);
+      }
       const [apiVersions, specs, chainId] = await Promise.all([
         this.provider.supportedWalletApi(),
         this.provider.supportedSpecs(),
         this.provider.requestChainId(),
       ]);
       return applyStarknetObservation(session, {
-        accountAddress: session.accountAddress,
+        accountAddress: observedAccount.address,
         chainId,
         apiVersions,
         specs,
