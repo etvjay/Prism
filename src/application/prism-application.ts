@@ -11,6 +11,8 @@ import { AppError, APP_ERROR_CODE } from "./errors";
 import type {
   AppCommandRequest,
   AppResponse,
+  AliasLookupData,
+  AliasLookupQuery,
   BindData,
   BindPayload,
   CreateIdentityData,
@@ -21,6 +23,8 @@ import type {
   IssueChallengePayload,
   ResolveData,
   ResolveQuery,
+  ResolutionContinuityData,
+  ResolutionContinuityQuery,
   RevokeData,
   RevokePayload,
   SubmitProofData,
@@ -40,6 +44,8 @@ import { normalizeProofDigestIdentity } from "../features/prism-identity/domain/
 import { normalizeStarknetContractAddress, sameStarknetContractAddress, StarknetContractAddressError } from "../features/prism-identity/domain/starknet-boundary";
 import { OperationError } from "../features/prism-operations/domain/errors";
 import { PrismError } from "../features/prism-identity/domain/errors";
+import { AliasLookupService, serializeAliasLookupResult } from "../features/prism-resolution/application/alias-lookup-service";
+import { ResolutionContinuityService, type ResolutionIdentifier } from "../features/prism-resolution/application/continuity-service";
 
 export interface PrismApplicationDeps {
   readonly challengeService: PrismChallengeService;
@@ -53,6 +59,10 @@ export interface PrismApplicationDeps {
   readonly registryVersion: "v1" | "v2";
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
+  /** Provider-neutral alias lookup; absent only in legacy direct harnesses. */
+  readonly aliasLookupService?: AliasLookupService;
+  /** Continuity service over canonical resolution + scoped snapshots. */
+  readonly resolutionContinuityService?: ResolutionContinuityService;
 }
 
 function nowOrThrow(clock: Clock): number {
@@ -629,6 +639,85 @@ export class PrismApplicationService implements ChallengeProofApplicationPort {
     } catch (e) {
       return this.mapError(e, requestId);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Alias / continuity queries — external provider evidence is distinct from
+  // canonical Prism identity and all unavailable paths remain fail-closed.
+  // -------------------------------------------------------------------------
+
+  async lookupAlias(req: { payload: AliasLookupQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<AliasLookupData>> {
+    const requestId = req.headers?.requestId ?? null;
+    try {
+      const service = this.deps.aliasLookupService ?? new AliasLookupService();
+      const result = await service.lookup({ provider: req.payload.provider, value: req.payload.value });
+      return ok<AliasLookupData>(serializeAliasLookupResult(result), undefined, requestId);
+    } catch (cause) {
+      return this.mapError(cause, requestId);
+    }
+  }
+
+  /** Descriptive alias retained for callers using provider vocabulary. */
+  async resolveAlias(req: { payload: AliasLookupQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<AliasLookupData>> {
+    return this.lookupAlias(req);
+  }
+
+  async assessContinuity(req: { payload: ResolutionContinuityQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<ResolutionContinuityData>> {
+    const requestId = req.headers?.requestId ?? null;
+    const service = this.deps.resolutionContinuityService;
+    if (!service) {
+      return err({
+        code: APP_ERROR_CODE.RPC_UNAVAILABLE,
+        name: "rpc_unavailable",
+        category: "dependency",
+        retryable: "true_backoff",
+        userAction: "wait_retry",
+        httpStatusHint: 503,
+        detail: "resolution_continuity_unconfigured",
+      }, requestId);
+    }
+    try {
+      const serialized = service.serialize(await service.resolve({
+        identifier: req.payload.identifier as ResolutionIdentifier,
+        venue: req.payload.venue,
+        purpose: req.payload.purpose,
+      }));
+      const data: ResolutionContinuityData = {
+        status: serialized.status,
+        continuityStatus: serialized.continuityStatus,
+        state: serialized.state,
+        evidenceStatus: serialized.evidenceStatus,
+        blocked: serialized.blocked,
+        prismId: serialized.prismId,
+        alias: serialized.alias,
+        associationEvidence: serialized.associationEvidence,
+        externalSubject: serialized.externalSubject,
+        executionAccount: serialized.executionAccount,
+        destination: serialized.destination,
+        providerStatus: serialized.providerStatus,
+        previous: serialized.previousSnapshot,
+        current: serialized.snapshot,
+        diff: serialized.diff,
+        risks: serialized.risks,
+        watermark: serialized.watermark,
+        freshness: serialized.freshness,
+        freshnessStatus: serialized.freshnessStatus,
+        source: serialized.source,
+        detail: serialized.detail,
+      };
+      return ok<ResolutionContinuityData>(data, undefined, requestId, serialized.watermark);
+    } catch (cause) {
+      return this.mapError(cause, requestId);
+    }
+  }
+
+  /** Descriptive aliases retained for callers using the full service name. */
+  async resolveContinuity(req: { payload: ResolutionContinuityQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<ResolutionContinuityData>> {
+    return this.assessContinuity(req);
+  }
+
+  async assessResolutionContinuity(req: { payload: ResolutionContinuityQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<ResolutionContinuityData>> {
+    return this.assessContinuity(req);
   }
 
   // -------------------------------------------------------------------------

@@ -45,8 +45,16 @@ import { StarknetRegistryReader, getStarknetRpcUrl, getStarknetRegistryAddress, 
 import { StarknetLedgerStatusAdapter } from "../features/prism-operations/adapters/starknet-ledger-status";
 import { StarknetEventIndexerAdapter } from "../features/prism-operations/adapters/starknet-event-indexer";
 import type { StarknetEventReader, StarknetRegistryVersion } from "../features/prism-operations/adapters/starknet-event-indexer";
-import { WatermarkedResolveService, type ProjectionReadPort } from "../features/prism-operations/domain/resolve-service";
+import { StaleCacheError, WatermarkedResolveService, type ProjectionReadPort } from "../features/prism-operations/domain/resolve-service";
 import { ReconciliationWorker } from "../features/prism-operations/domain/reconciliation-worker";
+import { AliasLookupService } from "../features/prism-resolution/application/alias-lookup-service";
+import { ResolutionContinuityService, type ResolutionDestinationResolver } from "../features/prism-resolution/application/continuity-service";
+import { InMemoryResolutionSnapshotStore } from "../features/prism-resolution/adapters/memory-resolution-snapshot-store";
+import { PostgresResolutionSnapshotStore } from "../features/prism-resolution/adapters/postgres-resolution-snapshot-store";
+import type { ResolutionSnapshotStore } from "../features/prism-resolution/domain/snapshot";
+import { StarknetIdAliasProvider } from "../integrations/starknet-id/adapter";
+import type { StarknetIdLookupPort } from "../integrations/starknet-id/types";
+import type { IdentityAliasAssociationPort, IdentityAliasProvider } from "../integrations/identity-alias/types";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
 import { isConcreteStarknetSubmitAdapter } from "./ports";
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
@@ -145,6 +153,16 @@ export interface FactoryStarknetOverrides {
   bindingOwnerAuthorization?: BindingOwnerAuthorizationPort | null;
   /** Real provider only; the default is an explicit blocked adapter, never fake encryption. */
   privateBindingProtection?: PrivateBindingProtectionPort | null;
+  /** Provider-neutral alias providers keyed by normalized namespace. */
+  aliasProviders?: ReadonlyMap<string, IdentityAliasProvider> | Readonly<Record<string, IdentityAliasProvider>>;
+  /** Convenience injection for one provider in focused tests. */
+  aliasProvider?: IdentityAliasProvider | null;
+  /** Starknet ID lookup evidence; no default network client is created. */
+  starknetIdLookupPort?: StarknetIdLookupPort | null;
+  /** Explicit Prism-owned alias association evidence. */
+  aliasAssociation?: IdentityAliasAssociationPort | null;
+  /** Durable continuity baseline store; production defaults to PostgreSQL. */
+  resolutionSnapshotStore?: ResolutionSnapshotStore;
 }
 
 export interface AppFactory {
@@ -154,6 +172,9 @@ export interface AppFactory {
   assertChainTouchingConfigured(): void;
   handlers: ReturnType<typeof createPrismApiHandlers>;
   app: PrismApplicationService;
+  aliasLookupService: AliasLookupService;
+  resolutionContinuityService: ResolutionContinuityService;
+  resolutionSnapshotStore: ResolutionSnapshotStore;
   registry: InMemoryRegistry;
   /** Canonical read port — may be real Starknet reader when env configured, else in-memory fallback (dev/test). */
   registryReadPort: RegistryReadPort;
@@ -458,6 +479,83 @@ export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): {
   };
 }
 
+function createAliasProviders(overrides?: FactoryStarknetOverrides): ReadonlyMap<string, IdentityAliasProvider> {
+  const defaultProvider = new StarknetIdAliasProvider(overrides?.starknetIdLookupPort);
+  const providers = overrides?.aliasProviders instanceof Map
+    ? new Map([...overrides.aliasProviders.entries()].map(([provider, adapter]) => [provider.trim().toLowerCase(), adapter] as const))
+    : overrides?.aliasProviders
+      ? new Map(Object.entries(overrides.aliasProviders).map(([provider, adapter]) => [provider.trim().toLowerCase(), adapter] as const))
+      : new Map<string, IdentityAliasProvider>([[defaultProvider.providerId, defaultProvider]]);
+  if (overrides?.aliasProvider) providers.set(overrides.aliasProvider.providerId.trim().toLowerCase(), overrides.aliasProvider);
+  return providers;
+}
+
+function createDestinationResolver(input: {
+  registry: RegistryReadPort;
+  resolveService: WatermarkedResolveService;
+  runtimeMode: FactoryRuntimeMode;
+  canonicalRegistryConfigured: boolean;
+}): ResolutionDestinationResolver {
+  return {
+    async resolve(prismId, venue) {
+      if (!input.canonicalRegistryConfigured && input.runtimeMode !== "test") {
+        throw new Error("canonical_registry_unconfigured");
+      }
+      // A null resolution is meaningful only after an authoritative identity
+      // existence read; never treat an unknown Prism ID as no destination.
+      const identity = await input.registry.getIdentity(prismId);
+      if (!identity) {
+        return {
+          executionAccount: null,
+          chain: venue,
+          bindingStatus: "NO_ACTIVE_DESTINATION",
+          visibility: "UNKNOWN",
+          watermark: null,
+          authoritativeSource: "unknown",
+        };
+      }
+
+      if (input.runtimeMode === "test" && !input.canonicalRegistryConfigured) {
+        const result = await input.registry.resolve(prismId, venue);
+        return {
+          executionAccount: result.executionAccount,
+          chain: venue,
+          bindingStatus: result.executionAccount === null ? "NO_ACTIVE_DESTINATION" : "ACTIVE",
+          visibility: "UNKNOWN",
+          watermark: result.watermark,
+          authoritativeSource: "in_memory_test",
+        };
+      }
+
+      try {
+        const result = await input.resolveService.resolve(prismId, venue);
+        return {
+          executionAccount: result.executionAccount,
+          chain: venue,
+          bindingStatus: result.executionAccount === null ? "NO_ACTIVE_DESTINATION" : "ACTIVE",
+          visibility: "UNKNOWN",
+          watermark: result.watermark,
+          authoritativeSource: result.authoritativeSource,
+        };
+      } catch (cause) {
+        if (cause instanceof StaleCacheError) {
+          const watermarkText = cause.message.match(/watermark[_:]([0-9]+)/)?.[1];
+          const watermark = watermarkText === undefined ? null : Number(watermarkText);
+          return {
+            executionAccount: null,
+            chain: venue,
+            bindingStatus: "NO_ACTIVE_DESTINATION",
+            visibility: "UNKNOWN",
+            watermark: Number.isSafeInteger(watermark) ? watermark : null,
+            authoritativeSource: "stale_refused",
+          };
+        }
+        throw cause;
+      }
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory creators
 // ---------------------------------------------------------------------------
@@ -520,23 +618,6 @@ function createMemoryFactory(
   const isStarknetSubmitConfigured = hasConcreteSubmitAdapter;
   const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
   if (runtimeMode === "production") assertChainTouchingConfigured();
-  let n = 1;
-  const app = new PrismApplicationService({
-    challengeService,
-    operationStore,
-    registry: registryReadPort,
-    submitPort,
-    submitPortMode,
-    isStarknetSubmitConfigured,
-    registryVersion,
-    clock,
-    idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
-  });
-  const handlers = createPrismApiHandlers(app, {
-    assertChainTouchingConfigured,
-    bindingDisclosureService,
-    bindingDisclosureClock: clock,
-  });
   const pauseStore = new InMemoryPauseStore();
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = runtimeMode === "test"
@@ -555,6 +636,45 @@ function createMemoryFactory(
   const resolveService = new WatermarkedResolveService(registryReadPort, {
     staleBoundK: 5,
     confirmedBlockPort: ledgerStatusAdapter ?? undefined,
+  });
+  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new InMemoryResolutionSnapshotStore();
+  const aliasProviders = createAliasProviders(overrides);
+  const aliasLookupService = new AliasLookupService({
+    providers: aliasProviders,
+    provider: overrides?.aliasProvider,
+    association: overrides?.aliasAssociation,
+  });
+  const resolutionContinuityService = new ResolutionContinuityService({
+    aliasProvider: overrides?.aliasProvider ?? aliasProviders.get("starknet-id") ?? null,
+    aliasProviderResolver: (provider) => aliasProviders.get(provider.trim().toLowerCase()) ?? null,
+    aliasAssociation: overrides?.aliasAssociation,
+    destinationResolver: createDestinationResolver({
+      registry: registryReadPort,
+      resolveService,
+      runtimeMode,
+      canonicalRegistryConfigured: isStarknetConfigured,
+    }),
+    snapshotStore: resolutionSnapshotStore,
+    now: clock,
+  });
+  let n = 1;
+  const app = new PrismApplicationService({
+    challengeService,
+    operationStore,
+    registry: registryReadPort,
+    submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
+    registryVersion,
+    clock,
+    idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
+    aliasLookupService,
+    resolutionContinuityService,
+  });
+  const handlers = createPrismApiHandlers(app, {
+    assertChainTouchingConfigured,
+    bindingDisclosureService,
+    bindingDisclosureClock: clock,
   });
   // Reconciliation worker — transport-neutral fakes when starknet not configured; real adapters when configured.
   // X2 guard: daemon must not start in tests; caller must use tickAllOnce. Worker is still constructed for startupRecovery demo.
@@ -585,6 +705,7 @@ function createMemoryFactory(
       (operationStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       (pauseStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       bindingDisclosureStore.close?.().catch(() => undefined),
+      (resolutionSnapshotStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
     ]);
   };
   return {
@@ -592,6 +713,9 @@ function createMemoryFactory(
     assertChainTouchingConfigured,
     handlers,
     app,
+    aliasLookupService,
+    resolutionContinuityService,
+    resolutionSnapshotStore,
     registry,
     registryReadPort,
     submitPort,
@@ -644,6 +768,7 @@ async function createPostgresFactory(
   const prismEventsStore = new PostgresPrismEventsStore({ connectionString: url });
   const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore({ connectionString: url });
   const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore({ connectionString: url });
+  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new PostgresResolutionSnapshotStore({ connectionString: url });
   const privateBindingProtection = overrides?.privateBindingProtection ?? new UnconfiguredPrivateBindingProtection();
   const bindingOwnerAuthorization = overrides?.bindingOwnerAuthorization;
 
@@ -654,9 +779,10 @@ async function createPostgresFactory(
     await prismEventsStore.migrate();
     await projectionCheckpointStore.migrate();
     await bindingDisclosureStore.migrate?.();
+    await (resolutionSnapshotStore as unknown as { migrate?: () => Promise<void> }).migrate?.();
   } catch (cause) {
     // Close any pools that were opened before rethrowing fail-closed
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined), (resolutionSnapshotStore as unknown as { close?: () => Promise<void> }).close?.().catch(() => undefined)]);
     if (cause instanceof AppError) throw cause;
     // Wrap driver error as stable 503 without leaking URL
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_connect_or_migrate_failed:${(cause as Error)?.message?.slice(0, 80) ?? "unknown"}`);
@@ -671,7 +797,7 @@ async function createPostgresFactory(
     starknetError = e as Error;
   }
   if (starknetError) {
-    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined), (resolutionSnapshotStore as unknown as { close?: () => Promise<void> }).close?.().catch(() => undefined)]);
     throw starknetError;
   }
   const registry = new InMemoryRegistry(); // Fallback registry for test helpers; real read path uses registryReadPort
@@ -704,7 +830,7 @@ async function createPostgresFactory(
     try {
       assertChainTouchingConfigured();
     } catch (cause) {
-      await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
+      await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined), (resolutionSnapshotStore as unknown as { close?: () => Promise<void> }).close?.().catch(() => undefined)]);
       throw cause;
     }
   }
@@ -725,23 +851,6 @@ async function createPostgresFactory(
     clock,
     idGenerator: { generateBindingId: () => `binding-${bindingN++}` },
   });
-  let n = 1;
-  const app = new PrismApplicationService({
-    challengeService,
-    operationStore,
-    registry: registryReadPort,
-    submitPort,
-    submitPortMode,
-    isStarknetSubmitConfigured,
-    registryVersion,
-    clock,
-    idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
-  });
-  const handlers = createPrismApiHandlers(app, {
-    assertChainTouchingConfigured,
-    bindingDisclosureService,
-    bindingDisclosureClock: clock,
-  });
   const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = runtimeMode === "test"
     ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
@@ -759,6 +868,44 @@ async function createPostgresFactory(
     staleBoundK: 5,
     confirmedBlockPort: ledgerStatusAdapter ?? undefined,
     projectionReadPort: projectionReadPort ?? undefined,
+  });
+  const aliasProviders = createAliasProviders(overrides);
+  const aliasLookupService = new AliasLookupService({
+    providers: aliasProviders,
+    provider: overrides?.aliasProvider,
+    association: overrides?.aliasAssociation,
+  });
+  const resolutionContinuityService = new ResolutionContinuityService({
+    aliasProvider: overrides?.aliasProvider ?? aliasProviders.get("starknet-id") ?? null,
+    aliasProviderResolver: (provider) => aliasProviders.get(provider.trim().toLowerCase()) ?? null,
+    aliasAssociation: overrides?.aliasAssociation,
+    destinationResolver: createDestinationResolver({
+      registry: registryReadPort,
+      resolveService,
+      runtimeMode,
+      canonicalRegistryConfigured: isStarknetConfigured,
+    }),
+    snapshotStore: resolutionSnapshotStore,
+    now: clock,
+  });
+  let n = 1;
+  const app = new PrismApplicationService({
+    challengeService,
+    operationStore,
+    registry: registryReadPort,
+    submitPort,
+    submitPortMode,
+    isStarknetSubmitConfigured,
+    registryVersion,
+    clock,
+    idGenerator: { generateOperationId: () => `op-${n++}-${Date.now()}` },
+    aliasLookupService,
+    resolutionContinuityService,
+  });
+  const handlers = createPrismApiHandlers(app, {
+    assertChainTouchingConfigured,
+    bindingDisclosureService,
+    bindingDisclosureClock: clock,
   });
   const fallbackLedger: LedgerStatusPort = ledgerStatusAdapter ?? {
     async observeChain() {
@@ -789,6 +936,7 @@ async function createPostgresFactory(
       prismEventsStore.close().catch(() => undefined),
       projectionCheckpointStore.close().catch(() => undefined),
       bindingDisclosureStore.close?.().catch(() => undefined),
+      (resolutionSnapshotStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
     ]);
   };
   return {
@@ -796,6 +944,9 @@ async function createPostgresFactory(
     assertChainTouchingConfigured,
     handlers,
     app,
+    aliasLookupService,
+    resolutionContinuityService,
+    resolutionSnapshotStore,
     registry,
     registryReadPort,
     submitPort,
@@ -938,6 +1089,7 @@ export function resetFactory() {
       s.prismEventsStore?.close().catch(() => undefined),
       s.projectionCheckpointStore?.close().catch(() => undefined),
       s.bindingDisclosureStore?.close?.().catch(() => undefined),
+      (s.resolutionSnapshotStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.reconciliationWorker?.stop(),
     ]);
     // also shutdown worker
@@ -964,6 +1116,7 @@ export async function closeFactory(): Promise<void> {
       s.prismEventsStore?.close().catch(() => undefined),
       s.projectionCheckpointStore?.close().catch(() => undefined),
       s.bindingDisclosureStore?.close?.().catch(() => undefined),
+      (s.resolutionSnapshotStore as unknown as { close?: () => Promise<void> })?.close?.().catch(() => undefined),
       s.shutdown?.().catch(() => undefined),
     ]);
   }

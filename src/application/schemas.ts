@@ -8,6 +8,10 @@ import type { Hex, OperationState } from "../features/prism-operations/domain/op
 import type { PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { AppSession } from "./auth";
 import type { BindingView, PublicBindingView } from "../features/prism-identity/domain/binding-disclosure";
+import type { AliasLookupResult } from "../features/prism-resolution/application/alias-lookup-service";
+import type { ResolutionContinuityResult } from "../features/prism-resolution/application/continuity-service";
+import type { ResolutionDiff } from "../features/prism-resolution/domain/risks";
+import type { ResolutionSnapshot } from "../features/prism-resolution/domain/snapshot";
 
 // ---------------------------------------------------------------------------
 // Envelope primitives
@@ -179,6 +183,33 @@ export interface ResolveData {
   readonly exists: boolean;
   readonly watermark?: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Provider-neutral alias and resolution-continuity queries
+// ---------------------------------------------------------------------------
+
+export interface AliasLookupQuery {
+  readonly provider: string;
+  readonly value: string;
+}
+export type AliasLookupData = AliasLookupResult;
+
+export type ResolutionContinuityIdentifier =
+  | { readonly kind: "prism-id"; readonly prismId: string }
+  | { readonly kind: "external-alias"; readonly alias: { readonly provider: string; readonly value: string } };
+
+export interface ResolutionContinuityQuery {
+  readonly identifier: ResolutionContinuityIdentifier;
+  readonly venue: string;
+  readonly purpose?: string;
+}
+
+/** Transport projection renames internal snapshot fields to previous/current. */
+export type ResolutionContinuityData = Omit<ResolutionContinuityResult, "previousSnapshot" | "snapshot" | "diff"> & {
+  readonly previous: ResolutionSnapshot | null;
+  readonly current: ResolutionSnapshot | null;
+  readonly diff: ResolutionDiff | null;
+};
 
 // ---------------------------------------------------------------------------
 // Binding disclosure queries — audience is explicit at the route boundary.

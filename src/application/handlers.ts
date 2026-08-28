@@ -28,6 +28,10 @@ import type {
   ListOwnerPrivateBindingsData,
   ListOwnerPrivateBindingsPayload,
   AppErrorResponse,
+  AliasLookupData,
+  AliasLookupQuery,
+  ResolutionContinuityData,
+  ResolutionContinuityQuery,
 } from "./schemas";
 import type { PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { AppSession } from "./auth";
@@ -202,6 +206,15 @@ export class PrismApiHandlers {
   /** GET /v1/resolve/:identifier?venue=BASE — watermarked resolve (QRY-8-01, INV-SYS-007). */
   resolve: QueryHandler<ResolveQuery, ResolveData> = (req) => this.app.resolve(req);
 
+  /** GET /v1/aliases/:provider/:value — provider evidence + explicit association. */
+  lookupAlias: QueryHandler<AliasLookupQuery, AliasLookupData> = (req) => this.app.lookupAlias(req);
+  resolveAlias: QueryHandler<AliasLookupQuery, AliasLookupData> = (req) => this.app.resolveAlias(req);
+
+  /** GET /v1/resolution/:identifier/continuity — scoped continuity assessment. */
+  assessContinuity: QueryHandler<ResolutionContinuityQuery, ResolutionContinuityData> = (req) => this.app.assessContinuity(req);
+  resolveContinuity: QueryHandler<ResolutionContinuityQuery, ResolutionContinuityData> = (req) => this.app.resolveContinuity(req);
+  assessResolutionContinuity: QueryHandler<ResolutionContinuityQuery, ResolutionContinuityData> = (req) => this.app.assessResolutionContinuity(req);
+
   /** GET /v1/operations/:id — durably persisted operation read (SM-PRISM-003). */
   getOperation: QueryHandler<{ operationId: string }, PersistedOperation | null> = (req) =>
     this.app.getOperation(req);
@@ -295,6 +308,22 @@ export const API_CONTRACTS = [
     systemOp: "QRY-8-01",
     errors: ["ERR-010"],
     notes: "canonical preference + stale-cache refusal (INV-SYS-007)",
+  },
+  {
+    method: "GET",
+    path: "/v1/aliases/:provider/:value",
+    handler: "lookupAlias",
+    systemOp: "QRY-ALIAS-01",
+    errors: ["UNAVAILABLE", "BLOCKED_BY_INTERFACE_EVIDENCE", "INVALID_RESPONSE"],
+    notes: "provider subject remains external; only explicit association evidence may expose a Prism ID",
+  },
+  {
+    method: "GET",
+    path: "/v1/resolution/:identifier/continuity",
+    handler: "assessContinuity",
+    systemOp: "QRY-RESOLUTION-CONTINUITY-01",
+    errors: ["UNKNOWN", "SNAPSHOT_UNAVAILABLE", "NO_ACTIVE_DESTINATION"],
+    notes: "canonical registry resolution plus scoped snapshot diff; risks never settle directly",
   },
   {
     method: "GET",
