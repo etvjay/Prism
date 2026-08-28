@@ -1,6 +1,10 @@
 # Prism Testnet Rehearsal Artifacts
 
-This directory contains the backend-only rehearsal inventory and a read-only
+This rehearsal deliberately does not claim a live escrow adapter. The payment
+ports are application adapters carrying the exact, typed ABI payload fields
+(`payerApproval` for funding and `authorization` for claims); signing,
+broadcast, provider receipts, and deployment remain outside this artifact.
+
 preflight harness. It does not deploy contracts, create wallets, fund accounts,
 sign messages, invoke contracts, broadcast transactions, contact an RPC/provider,
 write an evidence ledger, or write `strk20.json`.

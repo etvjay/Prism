@@ -72,9 +72,18 @@ export interface ClaimProofVerifier {
 }
 
 /**
- * Narrow Base Sepolia escrow contract boundary. Deliberately no `execute`,
- * arbitrary beneficiary, admin withdrawal, upgrade, or generic call method.
+ * Application adapter boundary for the exact escrow ABI payloads. This is a
+ * port contract, not a live-chain adapter or deployment claim; implementations
+ * must carry these fields unchanged to the verified ABI encoder.
  */
+export interface EscrowFundingAuthorization {
+  readonly payerApproval: GiftSignature;
+}
+
+export interface EscrowClaimAuthorization {
+  readonly authorization: GiftSignature;
+}
+
 export interface PublicBaseSepoliaEscrowPort {
   readonly chainId: 84_532;
   readonly isTestDouble?: boolean;
@@ -94,13 +103,8 @@ export interface PublicBaseSepoliaEscrowPort {
     readonly expiry: number;
     readonly nonce: number;
   }): Promise<EscrowSubmission>;
-  fundEscrow?(input: { readonly claimId: string; readonly payerApproval: GiftSignature }): Promise<EscrowSubmission>;
-  claimEscrow(input: {
-    readonly claimId: string;
-    readonly recipientAddress: GiftHex;
-    readonly nullifier: GiftHex;
-    readonly authorization?: GiftSignature;
-  }): Promise<EscrowSubmission>;
+  fundEscrow?(input: { readonly claimId: string } & EscrowFundingAuthorization): Promise<EscrowSubmission>;
+  claimEscrow(input: { readonly claimId: string; readonly recipientAddress: GiftHex; readonly nullifier: GiftHex } & EscrowClaimAuthorization): Promise<EscrowSubmission>;
   /** Refund destination is contract-stored sender; no beneficiary argument. */
   refundEscrow(input: { readonly claimId: string }): Promise<EscrowSubmission>;
   observeFunding(claimId: string): Promise<GiftFundingObservation | null>;

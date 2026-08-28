@@ -5,6 +5,8 @@
 import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "../domain/errors";
 import {
   claimClaimableGift,
+  reconcileClaimableGift,
+  reconcileRefundableGift,
   createClaimableGift,
   expireClaimableGift,
   fundClaimableGift,
@@ -196,14 +198,16 @@ export class ClaimableGiftService {
 
   async reconcileClaim(claimId: string, now: number, authorization: GiftClaimAuthorization, receipt: GiftReceipt): Promise<ClaimableGift> {
     const gift = await this.require(claimId);
-    if (receipt.claimId !== claimId || receipt.status !== "succeeded") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "claim_receipt_mismatch");
-    return this.deps.store.update(claimId, gift.version, (current) => claimClaimableGift(current, { now, authorization, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }));
+    if (receipt.claimId !== claimId) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "claim_receipt_mismatch");
+    const result = await this.deps.store.update(claimId, gift.version, (current) => reconcileClaimableGift(current, { now, authorization, receipt }));
+    if (receipt.status === "reverted") await this.deps.nullifierStore.release?.(authorization.nullifier, claimId);
+    return result;
   }
 
   async reconcileRefund(claimId: string, now: number, actor: GiftHex, receipt: GiftReceipt): Promise<ClaimableGift> {
     const gift = await this.require(claimId);
-    if (receipt.claimId !== claimId || receipt.status !== "succeeded") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_receipt_mismatch");
-    return this.deps.store.update(claimId, gift.version, (current) => refundClaimableGift(current, { now, actor, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }));
+    if (receipt.claimId !== claimId) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_receipt_mismatch");
+    return this.deps.store.update(claimId, gift.version, (current) => reconcileRefundableGift(current, { now, actor, receipt }));
   }
 
   async get(claimId: string): Promise<ClaimableGift | undefined> {

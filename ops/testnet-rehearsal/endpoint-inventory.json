@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "purpose": "Read-only inventory for the Prism SN_SEPOLIA/Base Sepolia rehearsal. This is a source-and-spec inventory, not a deployment manifest and not an evidence envelope.",
   "inspection_basis": {
-    "baseline_commit": "be4f31e3e2a644441b53ff00e889f7f9d0c2c937",
+    "baseline_commit": "1e03d9c3d2eca86b04081b5ea98b94d5d877b917",
     "worktree": "/home/ubuntu/prism-work/prism-v0-backend",
     "source_scope": "exact backend candidate implementation commit; tracked rehearsal-required source routes only; the 32nd application route method, the portfolio route, is intentionally excluded from this 31-entry rehearsal surface and covered by the application route inventory",
     "protected_paths_untouched_by_artifact": [
