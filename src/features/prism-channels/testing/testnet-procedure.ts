@@ -56,7 +56,7 @@ export function buildC1Fixture(input: {
     messages: input.messages,
     publicCommitments: input.publicCommitments,
     limitations: [
-      "X2 fixture: in-memory stores, deterministic commitments, fake hash — no real Starknet/Base publish, no real encryption.",
+      "X2 fixture: in-memory stores, deterministic test commitments, and a legacy recorder; no live Starknet provider or participant encryption.",
       "For X3 testnet promotion: replace in-memory stores with durable (Postgres + onchain commitment publish), use real communication-key commitments, and attach independent RPC/explorer verification.",
     ],
     maturity: "X2",

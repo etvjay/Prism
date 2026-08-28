@@ -22,6 +22,14 @@ export const CHANNEL_ERROR_CODE = {
   IMPLICIT_PAYMENT_AUTHORITY: "ERR-046",
   MESSAGE_NOT_FOUND: "ERR-047",
   STORAGE_UNAVAILABLE: "ERR-048",
+  ENCRYPTION_PROVIDER_UNAVAILABLE: "ERR-049",
+  CIPHERTEXT_AUTHENTICATION_FAILED: "ERR-050",
+  RECIPIENT_MISMATCH: "ERR-051",
+  COMMITMENT_MISMATCH: "ERR-052",
+  INVALID_ENCRYPTED_MEMO: "ERR-053",
+  ANCHOR_UNAVAILABLE: "ERR-054",
+  ANCHOR_PROVIDER_MISMATCH: "ERR-055",
+  ANCHOR_INCONSISTENT: "ERR-056",
 } as const;
 
 export type ChannelErrorCode = (typeof CHANNEL_ERROR_CODE)[keyof typeof CHANNEL_ERROR_CODE];
@@ -46,6 +54,14 @@ const SHAPES: Record<string, { name: string; category: string; retryable: string
   "ERR-046": { name: "implicit_payment_authority", category: "policy", retryable: "no", userAction: "explicit_authorization_required", httpStatusHint: 403 },
   "ERR-047": { name: "message_not_found", category: "not_found", retryable: "no", userAction: "check_message_id", httpStatusHint: 404 },
   "ERR-048": { name: "storage_unavailable", category: "dependency", retryable: "true_backoff", userAction: "retry", httpStatusHint: 503 },
+  "ERR-049": { name: "encryption_provider_unavailable", category: "dependency", retryable: "true_backoff", userAction: "connect_communication_provider", httpStatusHint: 503 },
+  "ERR-050": { name: "ciphertext_authentication_failed", category: "validation", retryable: "no", userAction: "discard_tampered_message", httpStatusHint: 422 },
+  "ERR-051": { name: "recipient_mismatch", category: "authorization", retryable: "no", userAction: "use_authorized_recipient", httpStatusHint: 403 },
+  "ERR-052": { name: "commitment_mismatch", category: "validation", retryable: "no", userAction: "refresh_authenticated_commitments", httpStatusHint: 409 },
+  "ERR-053": { name: "invalid_encrypted_memo", category: "validation", retryable: "no", userAction: "use_authenticated_encryption", httpStatusHint: 422 },
+  "ERR-054": { name: "anchor_unavailable", category: "dependency", retryable: "true_backoff", userAction: "retry_anchor_submission", httpStatusHint: 503 },
+  "ERR-055": { name: "anchor_provider_mismatch", category: "validation", retryable: "no", userAction: "configure_supported_anchor_provider", httpStatusHint: 422 },
+  "ERR-056": { name: "anchor_inconsistent", category: "conflict", retryable: "no", userAction: "investigate_anchor_readback", httpStatusHint: 409 },
 };
 
 export class PrismChannelError extends Error {

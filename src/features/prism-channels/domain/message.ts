@@ -6,7 +6,7 @@ import { CHANNEL_ERROR_CODE, PrismChannelError } from "./errors";
 import type { ContentType } from "./channel";
 import { CONTENT_TYPES } from "./channel";
 import type { PrismChannel } from "./channel";
-import { canSendInStatus } from "./channel";
+import { assertValidCommitment, canSendInStatus } from "./channel";
 import type { Hex } from "./channel";
 
 export interface ChannelMessage {
@@ -20,6 +20,9 @@ export interface ChannelMessage {
   readonly paymentRef?: Hex | null; // encrypted payment reference (opaque hex)
   readonly claimRef?: Hex | null;
   readonly receiptRef?: Hex | null;
+  readonly encryptionVersion?: number | null;
+  readonly senderKeyCommitment?: Hex | null;
+  readonly recipientKeyCommitment?: Hex | null;
   readonly version: number;
 }
 
@@ -34,6 +37,9 @@ export interface CreateMessageInput {
   paymentRef?: string | null;
   claimRef?: string | null;
   receiptRef?: string | null;
+  encryptionVersion?: number | null;
+  senderKeyCommitment?: string | null;
+  recipientKeyCommitment?: string | null;
 }
 
 // Plaintext leakage detection — simple heuristic for tests/red-team.
@@ -48,7 +54,7 @@ const PLAINTEXT_PATTERNS: RegExp[] = [
 ];
 
 const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
-const HEX_CIPHERTEXT_PATTERN = /^0x[0-9a-fA-F]{64,}$/; // at least 32 bytes, hex
+const HEX_CIPHERTEXT_PATTERN = /^0x[0-9a-fA-F]{56,}$/; // at least 28 bytes (12-byte IV + 16-byte AEAD tag)
 const HEX_REF_PATTERN = /^0x[0-9a-fA-F]{32,}$/;
 
 export function assertValidMessageId(value: string): string {
@@ -116,6 +122,26 @@ export function createMessage(input: CreateMessageInput): ChannelMessage {
   }
   if (!Number.isFinite(input.createdAt)) throw new PrismChannelError(CHANNEL_ERROR_CODE.INVALID_STATUS_TRANSITION, "invalid_created_at");
 
+  const hasEncryptionMetadata = (input.encryptionVersion !== undefined && input.encryptionVersion !== null)
+    || (input.senderKeyCommitment !== undefined && input.senderKeyCommitment !== null)
+    || (input.recipientKeyCommitment !== undefined && input.recipientKeyCommitment !== null);
+  const hasCompleteEncryptionMetadata = input.encryptionVersion !== null
+    && input.encryptionVersion !== undefined
+    && input.senderKeyCommitment !== null
+    && input.senderKeyCommitment !== undefined
+    && input.recipientKeyCommitment !== null
+    && input.recipientKeyCommitment !== undefined;
+  if (hasEncryptionMetadata && !hasCompleteEncryptionMetadata) {
+    throw new PrismChannelError(CHANNEL_ERROR_CODE.INVALID_ENCRYPTED_MEMO, "encryption_metadata_incomplete");
+  }
+  if (hasCompleteEncryptionMetadata) {
+    if (!Number.isSafeInteger(input.encryptionVersion) || (input.encryptionVersion as number) <= 0) {
+      throw new PrismChannelError(CHANNEL_ERROR_CODE.INVALID_ENCRYPTED_MEMO, "encryption_version_invalid");
+    }
+    assertValidCommitment(input.senderKeyCommitment as string);
+    assertValidCommitment(input.recipientKeyCommitment as string);
+  }
+
   return {
     messageId: input.messageId,
     channelId: input.channel.channelId,
@@ -127,6 +153,9 @@ export function createMessage(input: CreateMessageInput): ChannelMessage {
     paymentRef: (input.paymentRef as Hex) ?? null,
     claimRef: (input.claimRef as Hex) ?? null,
     receiptRef: (input.receiptRef as Hex) ?? null,
+    encryptionVersion: hasCompleteEncryptionMetadata ? input.encryptionVersion as number : null,
+    senderKeyCommitment: hasCompleteEncryptionMetadata ? input.senderKeyCommitment as Hex : null,
+    recipientKeyCommitment: hasCompleteEncryptionMetadata ? input.recipientKeyCommitment as Hex : null,
     version: 0,
   };
 }

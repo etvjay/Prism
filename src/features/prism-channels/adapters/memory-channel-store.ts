@@ -87,6 +87,7 @@ export class InMemoryKeyCommitmentPort implements CommunicationKeyCommitmentPort
 
 // X2 TEST DOUBLE — Public chain publisher that records commitments only.
 export class InMemoryPublicChainPublisher implements PublicChainPublisher {
+  readonly isTestDouble = true as const;
   private readonly published: Array<{ channelId: string; payload: string }> = [];
   async publishCommitment(input: { channelId: string; commitment: Hex }): Promise<void> {
     this.published.push({ channelId: input.channelId, payload: input.commitment });
