@@ -486,6 +486,16 @@ function validRequest(
   return rules.every((rule) => isRecord(rule) && isRecord(rule.data));
 }
 
+function permissionMatchesModule(
+  permission: Erc7715PermissionResponse,
+  module: BaseSepoliaPermissionModule,
+): boolean {
+  if (!module.permissionTypes.includes(permission.permission.type)) return false;
+  const ruleTypes = permission.rules.map((rule) => rule.type);
+  return module.ruleTypes.every((type) => ruleTypes.includes(type))
+    && ruleTypes.every((type) => module.ruleTypes.includes(type));
+}
+
 function safePolicyReason(value: unknown): BaseSepoliaAdapterFailure["reason"] {
   if (isRecord(value) && typeof value.reason === "string") {
     const reason = value.reason;
@@ -603,6 +613,7 @@ export class BaseSepoliaErc7715Adapter {
     for (const rawPermission of response.value) {
       const permission = parsePermissionResponse(rawPermission);
       if (!permission) return failure("invalid", "request", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "malformed_permission_response");
+      if (!permissionMatchesModule(permission, this.#module!)) return failure("invalid", "request", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "permission_module_rejected_response");
       const bindingFailure = permissionMatchesGrant(permission, grant, grant.delegateAccount as EvmAddress, "request");
       if (bindingFailure) return bindingFailure;
       try {
@@ -631,6 +642,9 @@ export class BaseSepoliaErc7715Adapter {
       const permission = parsePermissionResponse(rawPermission);
       if (!permission || permission.chainId !== BASE_SEPOLIA_CHAIN_ID_HEX) {
         return failure("invalid", "list", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "malformed_permission_response");
+      }
+      if (!permissionMatchesModule(permission, this.#module!)) {
+        return failure("invalid", "list", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "permission_module_rejected_response");
       }
       if (this.#account && !sameAddress(permission.to, this.#account.address)) {
         return failure("invalid", "list", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "permission_response_not_bound");
@@ -682,6 +696,9 @@ export class BaseSepoliaErc7715Adapter {
     const permission = parsePermissionResponse(input.permission);
     if (!permission) {
       return failure("invalid", "redeem", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "malformed_permission_response");
+    }
+    if (!permissionMatchesModule(permission, this.#module)) {
+      return failure("invalid", "redeem", BASE_SEPOLIA_SESSION_ERROR_CODE.INVALID_RESPONSE, "permission_module_rejected_response");
     }
     const bindingFailure = permissionMatchesGrant(permission, grant, accountAddress, "redeem");
     if (bindingFailure) return bindingFailure;

@@ -113,6 +113,27 @@ function redemptionAdapter(): BaseSepoliaErc7715Adapter {
 }
 
 describe("Base Sepolia ERC-7715/7710 adapter", () => {
+  it("rejects a wallet permission response whose type or rule vocabulary is outside the configured module", async () => {
+    const adapter = new BaseSepoliaErc7715Adapter({
+      wallet: {
+        request: async ({ method }) => {
+          if (method === "wallet_getSupportedExecutionPermissions") {
+            return { "erc20-token-allowance": { chainIds: [BASE_SEPOLIA_CHAIN_ID_HEX], ruleTypes: ["expiry", "target", "selector"] } };
+          }
+          return [{
+            ...permissionResponse(),
+            permission: { ...permissionResponse().permission, type: "unconfigured-permission" },
+            rules: [...permissionResponse().rules, { type: "unconfigured-rule", data: {} }],
+          }];
+        },
+      },
+      module: moduleDouble(),
+    });
+
+    const result = await adapter.requestPermission(grant());
+    expect(result).toMatchObject({ status: "invalid", reason: "permission_module_rejected_response" });
+  });
+
   it("encodes the ERC-7710 redeemDelegations interface without assuming a manager address", () => {
     const encoded = encodeErc7710RedeemDelegations({
       permissionContexts: [CONTEXT],

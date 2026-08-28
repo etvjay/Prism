@@ -9,6 +9,7 @@ import { assertValidExecutionEndpoint } from "../../prism-identity/domain/bindin
 import { PrivacyActionService } from "../application/privacy-action-service";
 import type { Strk20WalletPort } from "../domain/ports";
 import { normalizeShadowAccountObservation } from "../domain/shadow-account";
+import { assertNoViewingKey } from "../domain/privacy-guard";
 import { validateM5Conservation, validateM5OpenNoteObservation } from "../m5/validation";
 import { projectPrivacyReceipt } from "../../../application/privacy-receipt-service";
 import type { PrivacyActionView } from "../application/privacy-action-service";
@@ -82,6 +83,10 @@ function successReceipt(overrides: Partial<M5ReceiptObservation> = {}): M5Receip
 }
 
 describe("STRK20 provider boundary closeout", () => {
+  it("rejects secret-bearing observations regardless of dashed field spelling or value shape", () => {
+    expect(() => assertNoViewingKey({ nested: { "viewing-key": { opaque: true } } }, "test")).toThrow(/STRK20-015/);
+  });
+
   it("maps user rejection from wallet-managed approval to the stable provider-refused error", async () => {
     const adapter = new InjectedWalletStrk20Adapter(injectedProvider({
       approve: async () => {

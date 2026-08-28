@@ -5,7 +5,11 @@
 import { Strk20Error, STRK20_ERROR_CODE } from "./errors";
 
 const FORBIDDEN_KEY_PATTERNS = [/viewing.?key/i, /private.?key/i, /seed.?phrase/i, /mnemonic/i];
-const FORBIDDEN_FIELDS = new Set(["viewingKey", "viewing_key", "privateKey", "private_key", "seedPhrase", "mnemonic"]);
+const FORBIDDEN_FIELDS = new Set(["viewingKey", "viewing_key", "viewing-key", "privateKey", "private_key", "private-key", "seedPhrase", "seed_phrase", "seed-phrase", "mnemonic"]);
+
+function isForbiddenField(value: string): boolean {
+  return FORBIDDEN_FIELDS.has(value) || /^(viewing[_-]?key|private[_-]?key|seed[_-]?phrase|mnemonic)$/i.test(value);
+}
 
 /**
  * Guard: assert that no payload contains viewing/private key material.
@@ -26,7 +30,7 @@ function assertNoViewingKeyInternal(payload: unknown, context: string, seen: Wea
     seen.add(payload);
     const obj = payload as Record<string, unknown>;
     for (const k of Object.keys(obj)) {
-      if (FORBIDDEN_FIELDS.has(k)) {
+      if (isForbiddenField(k)) {
         throw new Strk20Error(STRK20_ERROR_CODE.VIEWING_KEY_FORBIDDEN, `forbidden_field_${k}_in_${context}`);
       }
       // Recurse shallowly but do not log values
