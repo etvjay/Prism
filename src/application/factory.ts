@@ -828,6 +828,13 @@ async function createPostgresFactory(
     await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined), (resolutionSnapshotStore as unknown as { close?: () => Promise<void> }).close?.().catch(() => undefined)]);
     throw starknetError;
   }
+  // A production Postgres factory must also have a scoped Starknet read path.
+  // Otherwise the fallback InMemoryRegistry would make public reads look like
+  // canonical empty state, which is indistinguishable from a real NONE result.
+  if (runtimeMode === "production" && !starknetPorts) {
+    await Promise.allSettled([ownershipStore.close().catch(() => undefined), operationStore.close().catch(() => undefined), pauseStore.close?.().catch(() => undefined), prismEventsStore.close().catch(() => undefined), projectionCheckpointStore.close().catch(() => undefined), bindingDisclosureStore.close?.().catch(() => undefined)]);
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "starknet_read_unconfigured");
+  }
   const registry = new InMemoryRegistry(); // Fallback registry for test helpers; real read path uses registryReadPort
   const registryReadPort: RegistryReadPort = starknetPorts ? starknetPorts.reader : registry;
   const ledgerStatusAdapter = starknetPorts ? starknetPorts.ledger : null;

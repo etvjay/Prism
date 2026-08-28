@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, readJson, requireSession, jsonError, toHttpResponse } from "@/application/http-helpers";
+import { parseHeaders, readJson, requireSession, jsonError, toHttpResponse, toHttpErrorResponse } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
 import { PauseError } from "@/features/prism-pause/domain/errors";
 
@@ -49,18 +49,14 @@ export async function POST(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ ok: true, data: intent, requestId: parsed.requestId ?? null }), { status: 200, headers });
   } catch (e) {
     if (e instanceof PauseError) {
-      const shape = e.toExternalShape();
-      const headers = new Headers({ "content-type": "application/json" });
-      if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
-      if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
-      return new Response(JSON.stringify({ ok: false, error: shape, requestId: parsed.requestId ?? null }), { status: e.httpStatusHint, headers });
+      return toHttpErrorResponse(e.toExternalShape(), parsed);
     }
     const code = (e as { code?: string })?.code ?? APP_ERROR_CODE.STALE_STATE_CONFLICT;
     const detail = (e as { detail?: string })?.detail ?? (e as Error).message;
     // Map via http-helpers stable shape
     const { AppError } = await import("@/application/errors");
     const appErr = new AppError(code as never, detail);
-    return new Response(JSON.stringify({ ok: false, error: { code: appErr.code, name: appErr.name, category: appErr.category, retryable: appErr.retryable, userAction: appErr.userAction, httpStatusHint: appErr.httpStatusHint, detail: appErr.detail }, requestId: parsed.requestId ?? null }), { status: appErr.httpStatusHint, headers: { "content-type": "application/json", ...(parsed.requestId ? { "x-request-id": parsed.requestId } : {}) } });
+    return toHttpErrorResponse(appErr.toExternalShape(), parsed);
   }
 }
 

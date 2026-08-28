@@ -13,6 +13,23 @@ export interface ParsedHeaders {
   expectedVersion: number | null;
 }
 
+const DEPENDENCY_ERROR_CODES = new Set(["ERR-021", "ERR-022"]);
+
+/** Keep client diagnostics useful without exposing provider output or secrets. */
+export function sanitizeExternalDetail(code: string | undefined, detail: unknown): string | undefined {
+  if (detail === undefined || detail === null) return undefined;
+  if (code && DEPENDENCY_ERROR_CODES.has(code)) {
+    return code === "ERR-022" ? "submission_status_unknown" : "dependency_unavailable";
+  }
+  let safe = String(detail).split(/\r?\n/, 1)[0].slice(0, 240);
+  safe = safe.replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, "<redacted_url>");
+  safe = safe.replace(/\b(?:postgres(?:ql)?|mysql(?:\+[^:]+)?):\/\/[^\s"'<>]+/gi, "<redacted_connection>");
+  safe = safe.replace(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|private[ _-]?key|viewing[ _-]?key|connection(?:[ _-]?string)?|ciphertext|raw[ _-]?proof|proof[ _-]?digest)\s*[:=]\s*)(["']?)[^,\s"']+\2/gi, "$1<redacted>");
+  safe = safe.replace(/((?:private[ _-]?key|viewing[ _-]?key|secret|token|password)\s+)[A-Za-z0-9+/=_-]{8,}/gi, "$1<redacted>");
+  safe = safe.replace(/0x[0-9a-f]{64}/gi, "<opaque>");
+  return safe;
+}
+
 export function parseHeaders(req: Request | { headers: Headers | Record<string, string | undefined> }): ParsedHeaders {
   const get = (name: string): string | null => {
     if (req instanceof Request) return req.headers.get(name);
@@ -64,10 +81,21 @@ export function toHttpResponse<T>(appRes: AppResponse<T>, parsed: ParsedHeaders)
     headers.set("etag", `"${(appRes as { operation: { version: number } }).operation.version}"`);
   }
   if (!appRes.ok) {
-    const code = (appRes as { error: { code: string } }).error.code;
-    const statusHint = (appRes as { error: { httpStatusHint: number } }).error.httpStatusHint;
-    // Never leak stacks — body is stable catalogue shape only.
-    const body = JSON.stringify({ ok: false, error: (appRes as { error: unknown }).error, requestId: parsed.requestId ?? null });
+    const rawError = (appRes as { error: { code: string; name: string; category: string; retryable: string; userAction: string; httpStatusHint: number; detail?: unknown } }).error;
+    const code = rawError.code;
+    const statusHint = rawError.httpStatusHint;
+    const detail = sanitizeExternalDetail(code, rawError.detail);
+    const error = {
+      code: rawError.code,
+      name: rawError.name,
+      category: rawError.category,
+      retryable: rawError.retryable,
+      userAction: rawError.userAction,
+      httpStatusHint: rawError.httpStatusHint,
+      ...(detail ? { detail } : {}),
+    };
+    // Never leak stacks, provider output, credentials, or proof material.
+    const body = JSON.stringify({ ok: false, error, requestId: parsed.requestId ?? null });
     headers.set("x-error-code", code);
     return new Response(body, { status: statusHint, headers });
   }
@@ -88,12 +116,41 @@ export function jsonError(requestId: string | null, code: string, httpStatus: nu
   const headers = new Headers({ "content-type": "application/json" });
   if (requestId) headers.set("x-request-id", requestId);
   headers.set("x-error-code", code);
+  const safeDetail = sanitizeExternalDetail(code, detail);
   const body = JSON.stringify({
     ok: false,
-    error: { code, name: code, category: "unknown", retryable: "no", userAction: "none", httpStatusHint: httpStatus, ...(detail ? { detail } : {}) },
+    error: { code, name: code, category: "unknown", retryable: "no", userAction: "none", httpStatusHint: httpStatus, ...(safeDetail ? { detail: safeDetail } : {}) },
     requestId,
   });
   return new Response(body, { status: httpStatus, headers });
+}
+
+export interface ExternalHttpErrorShape {
+  readonly code: string;
+  readonly name: string;
+  readonly category: string;
+  readonly retryable: string;
+  readonly userAction: string;
+  readonly httpStatusHint: number;
+  readonly detail?: unknown;
+}
+
+/** Serialize a domain error at the HTTP boundary with the same redaction as AppResponse errors. */
+export function toHttpErrorResponse(error: ExternalHttpErrorShape, parsed: ParsedHeaders, status = error.httpStatusHint): Response {
+  const headers = new Headers({ "content-type": "application/json", "x-error-code": error.code });
+  if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
+  if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
+  const detail = sanitizeExternalDetail(error.code, error.detail);
+  const safeError = {
+    code: error.code,
+    name: error.name,
+    category: error.category,
+    retryable: error.retryable,
+    userAction: error.userAction,
+    httpStatusHint: error.httpStatusHint,
+    ...(detail ? { detail } : {}),
+  };
+  return new Response(JSON.stringify({ ok: false, error: safeError, requestId: parsed.requestId ?? null }), { status, headers });
 }
 
 export async function readJson(req: Request): Promise<Record<string, unknown> | null> {

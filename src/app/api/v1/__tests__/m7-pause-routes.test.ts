@@ -203,4 +203,34 @@ describe("M7 Pause REST boundary regressions", () => {
     expect(body.error.httpStatusHint).toBe(503);
     expect(response.headers.get("x-correlation-id")).toBe("corr-receipt");
   });
+
+  it("does not expose raw provider detail in a receipt resource", async () => {
+    pauseService.receiptService.getReceipt.mockResolvedValue({
+      ok: true,
+      data: {
+        receiptId: "receipt-1",
+        operationId: "op-1",
+        kind: "bind_execution_identity",
+        state: "failed_retryable",
+        txHash: null,
+        createdAt: 1_000,
+        updatedAt: 1_001,
+        watermark: null,
+        errorCode: "ERR-021",
+        errorDetail: "provider=https://rpc.example/?token=secret-token",
+        correlationId: "corr-receipt",
+      },
+    });
+
+    const response = await getReceiptGet(
+      request({}, { "x-request-id": "req-receipt-safe" }),
+      { params: Promise.resolve({ receiptId: "receipt-1" }) },
+    );
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(text).not.toContain("https://rpc.example");
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("dependency_unavailable");
+  });
 });

@@ -6,47 +6,80 @@ import { StaleCacheError } from "@/features/prism-operations/domain/resolve-serv
 export async function GET(req: Request, ctx: { params: Promise<{ identifier: string }> }): Promise<Response> {
   const parsed = parseHeaders(req);
   const { identifier } = await ctx.params;
-  const decoded = decodeURIComponent(identifier);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(identifier);
+  } catch {
+    return withCorrelation(jsonError(parsed.requestId, "ERR-023", 400, "malformed_identifier"), parsed.correlationId);
+  }
   const url = new URL(req.url);
   const venue = url.searchParams.get("venue") ?? "BASE";
-  if (!venue) return jsonError(parsed.requestId, "ERR-001", 422, "missing_venue");
+  if (!venue) return withCorrelation(jsonError(parsed.requestId, "ERR-001", 422, "missing_venue"), parsed.correlationId);
+
   let factory;
   try {
     factory = await getAppFactory();
-  } catch (e) {
-    const msg = (e as Error)?.message ?? "store_unavailable";
-    // Never leak connection string; sanitize
-    const safe = msg.includes("postgres") ? "store_unavailable" : msg.slice(0, 80);
-    return jsonError(parsed.requestId, "ERR-021", 503, safe);
+  } catch {
+    return withCorrelation(jsonError(parsed.requestId, "ERR-021", 503, "store_unavailable"), parsed.correlationId);
   }
-  // Prefer WatermarkedResolveService K=5 path when available; falls back to app.resolve for legacy in-memory path.
-  // This closes the gap between durable store + real ledger confirmed block and HTTP serving layer.
+
+  // Resolve must keep the QRY-8-01 unknown-identifier distinction. The
+  // watermarked service owns freshness, while this canonical existence read
+  // prevents a projection-only binding from masquerading as an identity.
+  if (factory.resolveService && factory.registryReadPort && typeof factory.registryReadPort.getIdentity === "function") {
+    try {
+      const identity = await factory.registryReadPort.getIdentity(decoded);
+      if (!identity) {
+        return withCorrelation(jsonError(parsed.requestId, "ERR-010", 404, "identity_not_found"), parsed.correlationId);
+      }
+    } catch {
+      // A canonical dependency failure is handled by the service's explicit
+      // projection fallback; do not turn a transient read failure into 404.
+    }
+  }
+
+  // Prefer the factory's watermarked service. It reads canonical registry state
+  // first and only uses a scope-bound projection when the canonical read fails.
   const allowStale = url.searchParams.get("allowStale") === "true";
   try {
     if (factory.resolveService) {
-      const r = await factory.resolveService.resolve(decoded, venue, { allowStale });
-      // Map WatermarkedResolveService result to AppResponse shape for toHttpResponse
+      const result = await factory.resolveService.resolve(decoded, venue, { allowStale });
       const appRes = {
         ok: true as const,
-        data: { prismId: decoded, venue, executionAccount: r.executionAccount, exists: r.executionAccount !== null, watermark: r.watermark },
-        watermark: r.watermark,
+        data: {
+          prismId: decoded,
+          venue,
+          executionAccount: result.executionAccount,
+          exists: result.executionAccount !== null,
+          watermark: result.watermark,
+          authoritativeSource: result.authoritativeSource,
+          staleRefused: result.staleRefused,
+        },
+        watermark: result.watermark,
         requestId: parsed.requestId,
       };
-      // When stale ACTIVE was refused, we serve NO_ACTIVE_DESTINATION (null) with same watermark — fail-closed, not 500.
-      // For thrown StaleCacheError (projection stale), we map to 409 below.
-      const headers = { ...parsed };
-      // Preserve staleRefused observation via header for observability (not in body)
-      const httpRes = toHttpResponse(appRes as never, headers);
-      if (r.staleRefused) httpRes.headers.set("x-prism-stale-refused", "1");
+      const httpRes = toHttpResponse(appRes as never, parsed);
+      if (result.staleRefused) httpRes.headers.set("x-prism-stale-refused", "1");
       httpRes.headers.set("x-prism-watermark-k", "5");
+      httpRes.headers.set("x-prism-authoritative-source", result.authoritativeSource);
       return httpRes;
     }
-  } catch (e) {
-    if (e instanceof StaleCacheError) {
-      return jsonError(parsed.requestId, e.code, e.httpStatusHint, `stale_cache_refused:${String(e.message).slice(0, 60)}`);
+  } catch (cause) {
+    if (cause instanceof StaleCacheError) {
+      return withCorrelation(jsonError(parsed.requestId, cause.code, cause.httpStatusHint, "stale_cache_refused"), parsed.correlationId);
     }
-    return jsonError(parsed.requestId, "ERR-021", 503, "resolve_failed");
+    // Never pass provider/projection exception text to the client.
+    return withCorrelation(jsonError(parsed.requestId, "ERR-021", 503, "resolve_failed"), parsed.correlationId);
   }
+
+  // Legacy injected factories may not expose WatermarkedResolveService; keep
+  // the application query as a compatibility fallback without adding a second
+  // source of authority.
   const res = await factory.app.resolve({ payload: { prismId: decoded, venue }, headers: { requestId: parsed.requestId } });
   return toHttpResponse(res, parsed);
+}
+
+function withCorrelation(response: Response, correlationId: string | null): Response {
+  if (correlationId) response.headers.set("x-correlation-id", correlationId);
+  return response;
 }
