@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "purpose": "Read-only inventory for the Prism SN_SEPOLIA/Base Sepolia rehearsal. This is a source-and-spec inventory, not a deployment manifest and not an evidence envelope.",
   "inspection_basis": {
-    "baseline_commit": "27062f2",
-    "worktree": "/home/ubuntu/prism-work/backend-closeout-rehearsal",
-    "source_scope": "current dirty snapshot inspected without changing application behavior",
+    "baseline_commit": "fbced69e20067f18d6b80ab8b8eb80711e99a51a",
+    "worktree": "/home/ubuntu/prism-work/prism-v0-backend-remediation",
+    "source_scope": "exact candidate SHA and isolated remediation worktree; tracked source routes only",
     "protected_paths_untouched_by_artifact": [
       "src/",
       "frontend files",
@@ -1926,6 +1926,330 @@
         "promotable": false
       },
       "evidence_note": "A claimed approver in the body is not authority by itself; the configured resolver is authoritative."
+    },
+    {
+      "id": "PAYMENT_REQUEST_CREATE",
+      "area": "payments",
+      "method": "POST",
+      "path": "/v1/payments/requests",
+      "source": "src/app/api/v1/payments/requests/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "create payment request; public projection redacts memo and private recipient material"
+    },
+    {
+      "id": "PAYMENT_REQUEST_READ",
+      "area": "payments",
+      "method": "GET",
+      "path": "/v1/payments/requests/{requestId}",
+      "source": "src/app/api/v1/payments/requests/[requestId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "read payment request public projection; lifecycle remains explicit"
+    },
+    {
+      "id": "PAYMENT_REQUEST_ACTION",
+      "area": "payments",
+      "method": "POST",
+      "path": "/v1/payments/requests/{requestId}",
+      "source": "src/app/api/v1/payments/requests/[requestId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "approve or submit payment request; no signing/broadcast authority"
+    },
+    {
+      "id": "GIFT_CREATE",
+      "area": "gifts",
+      "method": "POST",
+      "path": "/v1/gifts",
+      "source": "src/app/api/v1/gifts/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "create claimable gift; public projection omits proof/private recipient material"
+    },
+    {
+      "id": "GIFT_READ",
+      "area": "gifts",
+      "method": "GET",
+      "path": "/v1/gifts/{claimId}",
+      "source": "src/app/api/v1/gifts/[claimId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "read claimable gift public projection"
+    },
+    {
+      "id": "GIFT_ACTION",
+      "area": "gifts",
+      "method": "POST",
+      "path": "/v1/gifts/{claimId}",
+      "source": "src/app/api/v1/gifts/[claimId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "fund, mark_claimable, claim, expire, or refund; authority remains domain/provider gated"
     }
   ]
 }

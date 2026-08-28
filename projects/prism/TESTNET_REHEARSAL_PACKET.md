@@ -1,7 +1,7 @@
 # Prism Testnet Rehearsal Packet
 
 **Status:** `PREPARATION — READ-ONLY DRY-RUN ONLY; NO DEPLOYMENT OR BROADCAST`
-**Candidate baseline:** local `HEAD 27062f2` in `/home/ubuntu/prism-work/backend-closeout-rehearsal`
+**Candidate baseline:** local `HEAD fbced69e20067f18d6b80ab8b8eb80711e99a51a` in `/home/ubuntu/prism-work/prism-v0-backend-remediation`
 **Target:** `SN_SEPOLIA` + `BASE_SEPOLIA` (`Base chain_id 84532`)
 **Harness:** `ops/testnet-rehearsal/dry-run.mjs`
 **Machine inventory:** `ops/testnet-rehearsal/endpoint-inventory.json`
@@ -117,7 +117,7 @@ requirements, response shapes/statuses, audience, authority, side effects,
 source state, and the seven maturity booleans. The abbreviated map below is the
 route-level handoff.
 
-### 4.1 Present local routes (20 baseline method entries)
+### 4.1 Present local routes (31 candidate method entries)
 
 | ID | Method and path | Local source state | Local wiring/evidence boundary |
 |---|---|---|---|
@@ -148,7 +148,7 @@ headers are `X-Request-Id`, `X-Correlation-Id`, `Idempotency-Key`, `If-Match`,
 `X-Session-Id`, and `X-Session-User`; read responses may carry
 `X-Prism-Watermark` and `ETag`.
 
-### 4.2 Newly mounted transport surfaces (5 method entries)
+### 4.2 Newly mounted transport surfaces (11 method entries, including payment and gift routes)
 
 | ID | Method and path | Integrated truth | Do not do |
 |---|---|---|---|
@@ -157,6 +157,12 @@ headers are `X-Request-Id`, `X-Correlation-Id`, `Idempotency-Key`, `If-Match`,
 | `STRK20_ACTION_CREATE` | `POST /v1/strk20/actions` | Tracked wallet-mediated lifecycle route; create/prepare/submit/observe_receipt are explicit and provider material is rejected/redacted. | Do not treat a local provider double, HTTP 200, or submitted hash as privacy completion. |
 | `STRK20_ACTION_READ` | `GET /v1/strk20/actions/{actionId}` | Tracked JSON-safe action projection route; proof/call material is status-only. | Do not expose proof, calldata, notes, keys, or provider responses. |
 | `PRIVACY_RECEIPT_READ` | `GET /v1/privacy/receipts/{receiptId}` | Tracked derived policy-filtered receipt route; OBSERVED remains receipt/finality/pool-event gated. | Do not expose viewing keys, notes, private balances, sender attribution, or generic-operation data as privacy evidence. |
+| `PAYMENT_REQUEST_CREATE` | `POST /v1/payments/requests` | Mounted local payment-request lifecycle create; public projection is redacted. | Do not infer payer, wallet, signing, funding, escrow, or settlement authority. |
+| `PAYMENT_REQUEST_READ` | `GET /v1/payments/requests/{requestId}` | Mounted public-safe lifecycle read. | Do not collapse unknown/unavailable into completed or failed. |
+| `PAYMENT_REQUEST_ACTION` | `POST /v1/payments/requests/{requestId}` | Explicit approve/submit transition; provider and domain gates remain authoritative. | HTTP 200/submitted is not settlement completion. |
+| `GIFT_CREATE` | `POST /v1/gifts` | Mounted claimable-gift create; local aggregate only. | Base escrow remains blocked by the absent EVM toolchain; do not invent a contract. |
+| `GIFT_READ` | `GET /v1/gifts/{claimId}` | Mounted public-safe claim lifecycle read. | Never expose proof, nullifier, or private recipient material. |
+| `GIFT_ACTION` | `POST /v1/gifts/{claimId}` | Explicit fund/mark_claimable/claim/expire/refund transition with typed unavailable/unknown outcomes. | Do not treat actor/address claims as authority or claim local state as live receipt evidence. |
 
 **Inventory findings after integration:**
 

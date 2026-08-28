@@ -31,10 +31,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ prismId: string
   let factory;
   try {
     factory = await getAppFactory();
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "store_unavailable";
-    const detail = message.includes("postgres") ? "store_unavailable" : message.slice(0, 80);
-    return jsonError(parsed.requestId, "ERR-021", 503, detail);
+  } catch {
+    // Factory/provider failures are intentionally represented by one fixed,
+    // public discriminator. Never forward exception text across HTTP.
+    return jsonError(parsed.requestId, "ERR-021", 503, "dependency_unavailable");
   }
 
   const response = await factory.handlers.getPortfolio({

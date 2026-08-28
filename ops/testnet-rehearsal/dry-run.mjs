@@ -39,6 +39,12 @@ const REQUIRED_ENDPOINTS = [
   "PAUSE_CANCEL",
   "PAUSE_ESCALATE",
   "PAUSE_APPROVE",
+  "PAYMENT_REQUEST_CREATE",
+  "PAYMENT_REQUEST_READ",
+  "PAYMENT_REQUEST_ACTION",
+  "GIFT_CREATE",
+  "GIFT_READ",
+  "GIFT_ACTION",
 ];
 const REQUIRED_AREAS = new Set([
   "identity",
@@ -51,6 +57,8 @@ const REQUIRED_AREAS = new Set([
   "receipts",
   "intents",
   "pause",
+  "payments",
+  "gifts",
 ]);
 
 // Names only. Values are inspected for shape and are never printed.

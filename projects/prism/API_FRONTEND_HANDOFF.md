@@ -144,3 +144,26 @@ HTTP 200 or submitted hash is not a completed privacy action.
 3. Production startup fails closed without Postgres and a valid Starknet RPC + registry address + network + explicit ABI version. Canonical SN_SEPOLIA V2 address/network/start-block/class-hash gates are strict. No production memory fallback is valid.
 4. Private binding creation/read/publication remains blocked until owner authorization and encryption-at-rest/key-ownership/recovery evidence are supplied by real providers.
 5. No endpoint grants a controller or settlement authority from a wallet address alone, an app session, or a request claim. No live broadcast, deployment, mainnet, or evidence-promotion contract is exposed here.
+
+## 5. Payment requests and claimable gifts (mounted routes)
+
+These routes are mounted under `/api/v1` and are backend lifecycle boundaries,
+not a frontend wallet or escrow API:
+
+| Method and path | Audience and purpose | Lifecycle / authority |
+|---|---|---|
+| `POST /api/v1/payments/requests` | Authenticated workflow caller creates a payment request. The response is a public-safe projection. | Local request persistence only; payer approval and any submit step remain explicit. No app session, request claim, or address alone grants signing, funding, or settlement authority. |
+| `GET /api/v1/payments/requests/{requestId}` | Public-safe read of a payment request by id. | Returns the current typed lifecycle state; unknown is not completed and unavailable is not failure evidence. |
+| `POST /api/v1/payments/requests/{requestId}` | Authenticated workflow caller advances `approve` or `submit` as an explicit operation. | Domain/provider gates decide whether the transition is available. `submitted`, `unknown`, and `unavailable` remain distinct; no HTTP 200 implies settlement completion. |
+| `POST /api/v1/gifts` | Authenticated workflow caller creates a claimable gift. | Local claim aggregate only; funding is a separate lifecycle step and Base escrow remains blocked without the absent EVM toolchain. |
+| `GET /api/v1/gifts/{claimId}` | Public-safe read of a gift claim projection. | `pending`, `claimable`, `claimed`, `expired`, and `refunded` are lifecycle facts from the claim store, not wallet or chain authority. |
+| `POST /api/v1/gifts/{claimId}` | Explicit `fund`, `mark_claimable`, `claim`, `expire`, or `refund` transition. | Proof/recipient/actor checks remain domain/provider-owned. `ERR-062`/`ERR-063` and unavailable/unknown states fail closed; no escrow contract is implied or invented. |
+
+Payment and gift responses may expose only allow-listed public fields, including
+identifiers, lifecycle state, decimal-string amounts, asset/chain metadata,
+expiry, and request correlation. Memo text, proof/call/calldata, nullifiers,
+private recipient material, credentials, provider URLs/output, raw exceptions,
+viewing/private keys, and internal store/connection details are forbidden from
+HTTP responses and frontend state. These surfaces are locally implemented and
+integrated at X2 only; no external receipt, deployment, funding, signing, or
+broadcast evidence is claimed.
