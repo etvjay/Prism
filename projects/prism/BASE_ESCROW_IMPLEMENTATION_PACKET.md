@@ -1,299 +1,47 @@
 # Base escrow implementation packet
 
-**Status:** `BLOCKED_BY_OWNER_SPECIFICATION`
-
-**Assessment commit:** `4eee0be88fc95db2efc44d146f344c9c2ee5fdc3`
-
+**Status:** `IMPLEMENTED_LOCAL_NOT_DEPLOYED`
 **Target:** Base Sepolia (`chainId 84532`) only. No deployment, funding, signing,
 broadcast, provider call, mainnet action, or secret handling is authorized by this
 packet.
 
-## 1. Decision and evidence boundary
+## Accepted v1 contract decisions
 
-Prism's canonical product state defines Base as an ordinary public execution venue
-and a Base account as an external execution-identity proof. The canonical payment
-and claim slice defines local request/gift aggregates and narrow effect ports, but it
-does **not** define a reviewed Base escrow contract, ABI, deployed address, event
-selectors, custody model, proof verifier, or trust model. Foundry is now available
-locally, but that only removes the former compiler/toolchain blocker. It does not
-authorize inventing the financial contract interface. Therefore this workstream
-cannot honestly implement Solidity, an EVM adapter, or contract tests against a
-canonical interface.
+- `EthEscrow` and `ERC20Escrow` are separate immutable contracts. ERC-20 token
+  address is immutable per deployment; ETH asset is `address(0)`.
+- Terms creation and funding are separate. The payer signs a typed funding approval;
+  a relayer may submit it. ETH requires exact `msg.value`; ERC-20 requires payer
+  allowance and exact `transferFrom` amount.
+- Claim is public execution authorized by the recipient's EIP-712 signature. The
+  recipient signer is the payout recipient. Commitment is consumed once globally.
+- EIP-712 domain: name `Prism Base Escrow`, version `1`, chain ID, verifying
+  contract. FundingApproval binds claimId, payer, refundDestination, asset, amount,
+  expiry, commitment, nonce, action. ClaimAuthorization additionally binds recipient.
+  Actions are `keccak256("FUND")` and `keccak256("CLAIM")`.
+- Lifecycle: `Unfunded -> Funded -> Claimed|Refunded`. Claim is strictly before
+  expiry (`timestamp < expiry`); refund is at/after expiry (`timestamp >= expiry`)
+  and only the immutable refund destination may call it.
+- No admin, upgrade, arbitrary call, beneficiary override, or backend-only terminal
+  transition exists. State is committed before external payout and all mutations are
+  protected by a reentrancy guard. Duplicate IDs/actions and signature/commitment
+  replays revert.
+- ERC-20 false-return/revert and fee-on-transfer/rebasing behavior are rejected;
+  funding and payout balance deltas must equal the requested amount.
 
-The correct deliverable is this packet plus the existing blocked report, not a
-simulated contract or guessed calldata. Local aggregate behavior is not ledger
-settlement evidence.
+## Implementation and tests
 
-Evidence levels remain separate:
+- `foundry/escrow/src/BaseEscrow.sol` — self-contained core, ETH variant, and
+  immutable-token ERC-20 variant; canonical events and reconciliation reads.
+- `foundry/escrow/test/BaseEscrow.t.sol` — local EIP-712 signing and tests for happy
+  paths, wrong signatures/terms, replay, boundary/race behavior, refund authority,
+  ETH accounting, exact ERC-20 funding, and fee-on-transfer rejection.
 
-- `X2`: source-level/domain tests and local controlled adapters only;
-- `X3`: Base Sepolia receipt/event/readback evidence, including an independent read;
-- no X4/X5 or mainnet claim is possible from this workstream.
+## Evidence ceiling and remaining gates
 
-## 2. Existing architecture inspected
-
-The existing boundary is intentionally narrow:
-
-- `src/features/prism-payments/domain/payment-request.ts` owns payer approval,
-  immutable terms, expiry/cancellation, receipt matching, and the distinction
-  between `submitted`, `processing`, `confirmed`, `unknown`, and terminal failures.
-- `src/features/prism-payments/domain/claimable-gift.ts` owns the claimable-gift
-  state machine, immutable sender/refund destination, expiry, recipient binding,
-  nullifier matching, claim receipt checks, and terminal claim/refund states.
-- `src/features/prism-payments/domain/ports.ts` exposes
-  `PublicBaseSepoliaEscrowPort` with only create, claim, refund, funding observation;
-  it deliberately has no arbitrary call, beneficiary override, admin withdrawal,
-  upgrade, or generic execute method.
-- `src/features/prism-payments/application/claimable-gift-service.ts` reserves a
-  nullifier before claim submission.
-- `src/features/prism-payments/application/http-runtime.ts` uses fail-closed
-  unavailable implementations when live escrow/runtime dependencies are absent.
-- `projects/prism/PRISM_V0_PAYMENT_CLAIM_BACKEND.md` explicitly states that these
-  routes do not imply escrow, signing, funding, broadcast, or a live receipt.
-- `ops/target-network/manifest.yaml` accepts Base Sepolia `84532`, but contains no
-  escrow address or ABI.
-
-No tracked Solidity source, `foundry.toml`, Hardhat configuration, escrow ABI, or
-contract address was found. Existing `viem` usage is for other identity,
-permission, and utility boundaries; it is not an escrow implementation.
-
-## 3. Exact owner decisions still missing (unblock gate)
-
-The repository encodes the local lifecycle, but not the on-chain agreement. Before
-writing a contract, adapter, or ABI fixture, the owner and reviewer must record a
-versioned decision for every item below. These are the exact unresolved decisions,
-not implementation suggestions. Names and encodings remain placeholders until that
-record exists.
-
-### Economic object and authority
-
-1. Exact asset model: native ETH, one explicitly identified ERC-20, or a separately
-   reviewed multi-asset design. Native and token paths must not be silently merged.
-2. Exact amount semantics and decimals; zero amount behavior; fee behavior; and
-   whether fee-on-transfer/rebasing/non-standard ERC-20s are rejected.
-3. The sender/refund principal, recipient authority, and whether the contract is
-   immutable or governed/upgradable. If governed, enumerate every privileged
-   transition and timelock/emergency assumption.
-4. Whether creation is one transaction or create-then-fund, and the unique
-   correlation key connecting the off-chain claim ID to on-chain state.
-5. Exact claim authorization model: public proof verifier, recipient signature,
-   nullifier commitment, or another reviewed mechanism. A backend boolean is not
-   sufficient ledger authority.
-
-6. Exact trust boundary for the phrase “noncustodial”: who may authorize a claim,
-   whether any backend/operator can block or redirect it, and whether a verifier,
-   relayer, or wallet provider is trusted only for liveness or also for correctness.
-7. Exact payer-approval binding: the typed-data/domain or other authorization
-   encoding, signer address semantics, replay scope, approval expiry, and whether
-   creation and funding are separate transactions.
-8. Exact claim payload encoding: claim ID width/encoding, nullifier versus
-   nullifier-commitment relation, recipient binding, chain/domain separation, and
-   whether proof verification is onchain, offchain with an attested result, or
-   intentionally absent.
-9. Exact native/token policy: supported token interface, transfer return-value
-   handling, fee-on-transfer/rebasing policy, balance-delta checks, and whether
-   one contract supports both native ETH and ERC-20 or they are separate versions.
-10. Exact time and finality policy: timestamp versus block expiry, boundary rule,
-    accepted reorg/finality depth, and treatment of pending/unknown provider state.
-11. Exact ABI/event/read schema and immutable version identifier, including field
-    widths/order, indexed fields, state enum values, funding correlation, and all
-    reads needed for independent reconciliation.
-12. Exact deployment authority and lifecycle: immutable versus governed code,
-    privileged roles, upgrade/timelock/emergency paths, deployment owner, and the
-    separately approved Base Sepolia address/bytecode evidence process.
-
-### State and terminality
-
-The reviewed spec must define a one-way lifecycle equivalent in coverage to:
-
-```text
-absent -> created/unfunded -> funded -> claimable -> claimed
-                                  |       |
-                                  v       v
-                               expired -> refunded
-```
-
-The actual contract states may differ, but it must explicitly define:
-
-- which transition makes funds custodially locked;
-- whether expiry is timestamp- or block-based and the boundary (`>=` versus `>`);
-- whether an unfunded record can expire/cancel and whether that leaves storage;
-- whether claim is allowed before/after expiry at the exact boundary;
-- whether expiry is an explicit call or a predicate checked by refund;
-- terminal-state behavior and idempotency/revert behavior for duplicate actions;
-- what happens if a provider reports a transaction as pending or unknown.
-
-The off-chain aggregate must not be promoted to `claimed`, `refunded`, or
-`confirmed` from HTTP success or a submitted hash alone.
-
-### Events and reads
-
-The reviewed ABI must define canonical event names, indexed fields, data fields,
-argument types/order, and emission points for at least:
-
-- escrow created (claim correlation, sender/refund destination, asset, amount,
-  expiry, commitment);
-- funding accepted (exact amount/asset and transaction correlation);
-- claim accepted (claim correlation, recipient, nullifier identity);
-- expiry recognized;
-- refund accepted (sender/refund destination and amount);
-- failure/invalid-attempt observability if the contract emits it.
-
-It must also define read methods sufficient to independently check, for one claim:
-existence, immutable terms, current state, funded amount, commitment/nullifier
-consumption, recipient (where public by design), refund destination, and the
-contract's native asset/token balance. Event logs cannot substitute for current
-state reads.
-
-### Security invariants
-
-The specification and implementation review must prove:
-
-- **Replay:** a claim authorization/nullifier is consumed exactly once, is bound to
-  the claim and exact terms, and cannot be reused for another claim, recipient,
-  chain, contract, or asset. Duplicate create keys cannot create two liabilities.
-- **Race safety:** claim versus expiry/refund has one canonical winner; duplicate
-  funding and duplicate refund cannot double-account; off-chain CAS/version fences
-  cannot cause a second broadcast after an ambiguous provider result.
-- **Reentrancy:** all state marking and nullifier consumption precede external ETH/
-  token transfer; a reentrant receiver cannot claim/refund twice or alter the
-  destination. Use a reviewed pull-payment/transfer pattern, not an invented
-  assumption about receiver behavior.
-- **Refund:** no caller-supplied beneficiary; refund goes only to the immutable
-  sender/refund destination; refund is unavailable before expiry and after claim;
-  failed delivery is represented without falsely marking funds paid.
-- **Expiry:** expiry cannot strand funds; expiry cannot make a claimed escrow
-  refundable; timestamp/block manipulation tolerance and finality policy are
-  documented.
-- **Asset accounting:** exact-value transfer checks are enforced; token return
-  values and fee-on-transfer behavior are handled by an explicit reviewed policy.
-- **Authority:** no arbitrary call, arbitrary recipient, unrestricted admin sweep,
-  hidden upgrade path, or backend-only success transition.
-
-## 4. Smallest future implementation shape
-
-Once the reviewed ABI/address/toolchain exist, implement only:
-
-1. a pinned read-only Base Sepolia client for chain ID and exact contract address;
-2. an adapter implementing the existing `PublicBaseSepoliaEscrowPort` only;
-3. strict encoding/decoding against the supplied ABI (no handcrafted selectors);
-4. receipt/event/read reconciliation that keeps `submitted`, `pending`, `unknown`,
-   `reverted`, and terminal success distinct;
-5. local contract tests against the reviewed implementation plus adapter tests for
-   malformed receipts, wrong chain, wrong contract, duplicate observations, and
-   ambiguous submission.
-
-Do not expand the port into a generic EVM executor. Do not add signing authority to
-this repository. A future wallet/provider boundary must be injected and must be
-owned by the user or an explicitly reviewed custody component.
-
-## 5. Adversarial test matrix required before X2 contract acceptance
-
-The future suite must include, at minimum:
-
-| Case | Required assertion |
-|---|---|
-| create exact terms | Stored sender, immutable refund destination, asset, amount, expiry, claim key, and commitment match input |
-| duplicate create | Same key is idempotent only if exact terms match; otherwise rejected; no second liability |
-| wrong chain/address | Adapter fails closed before submission or read promotion |
-| wrong funding asset/amount/sender | Funding is rejected or remains non-funded; no local `funded` promotion |
-| funding replay | Same transaction/event cannot credit twice |
-| claim before claimable/funding | Rejected and state unchanged |
-| claim after expiry boundary | Rejected; no recipient payout |
-| valid claim | Nullifier consumed once; exact recipient paid; terminal state emitted/read |
-| altered claim terms | Rejected: claim ID, commitment, recipient, asset, amount, expiry, or domain mismatch |
-| nullifier replay/cross-claim replay | Rejected globally and state/payout unchanged |
-| claim vs expiry/refund race | At most one terminal outcome; loser cannot transfer funds |
-| refund before expiry | Rejected |
-| refund by non-sender | Rejected even with a beneficiary argument or valid-looking proof |
-| refund after claim | Rejected |
-| refund replay | Rejected; exactly one payout |
-| reentrant recipient/sender | No double claim/refund and no state corruption |
-| token transfer anomaly | Explicit policy for false return, fee-on-transfer, revert, and non-standard token |
-| provider pending/unknown/reverted | Local state remains non-terminal/attention/reverted as appropriate; no guessed retry |
-| restart/reconciliation | Exact tx hash is polled; duplicate events are idempotent; no blind rebroadcast |
-
-## 6. Exact future Base Sepolia readback predicates (X3)
-
-A future run may claim `X3` only if every predicate below is captured in a
-machine-readable evidence envelope and independently re-read from a distinct
-provider/source. Values must come from the reviewed ABI/spec; no placeholder
-selector or address may be filled by inference.
-
-For a fresh `claimId`, with reviewed `ESCROW_ADDRESS`, `ASSET`, `SENDER`, `AMOUNT`,
-`EXPIRY`, and `COMMITMENT`:
-
-1. `eth_chainId == 84532` on the submission provider and independent provider.
-2. `eth_getCode(ESCROW_ADDRESS)` is non-empty on both providers and the address
-   equals the reviewed address byte-for-byte after canonical hex normalization.
-3. Create/fund receipt has the expected transaction hash, `status == 1`, non-null
-   block number, and the reviewed funding event whose decoded claim key and exact
-   terms equal the requested values.
-4. A fresh contract read at the receipt's canonical block returns the same claim
-   key, sender/refund destination, asset, amount, expiry, commitment, and funded
-   state; the independent provider returns the same values.
-5. A valid claim receipt has `status == 1`, a non-null block, and exactly one
-   reviewed claim event for the key. The post-claim read returns the reviewed
-   claimed terminal state, the exact recipient, and consumed nullifier/claim
-   authorization state.
-6. A second claim attempt using the same authorization produces a reverted receipt
-   or a deterministic preflight rejection, and a post-attempt read proves no second
-   payout/state transition occurred.
-7. For an expired unclaimed fresh escrow, the expiry/refund receipt has
-   `status == 1`, a non-null block, exactly one reviewed refund event, and a
-   post-refund read proves the terminal refunded state and immutable sender as the
-   only destination. A second refund attempt proves no second payout.
-8. Claim and expiry/refund race evidence records both transaction hashes and their
-   receipt outcomes; exactly one terminal transition is reflected by the canonical
-   read. A reverted loser must not be presented as a successful payout.
-9. Native/token balance deltas, where the reviewed spec makes them observable, are
-   reconciled against the exact amount and any explicitly specified fee. No sender
-   attribution or privacy property is inferred from a transaction sender alone.
-10. The envelope records the contract address, ABI/spec version, chain ID, tx hash,
-    receipt block, decoded event identity, canonical read block, independent source,
-    and limitations. Missing any field means `NOT_PROMOTABLE`, not partial X3.
-
-These predicates prove only the reviewed escrow lifecycle and its ledger evidence;
-they do not prove Prism identity continuity, privacy, Base account ownership, or
-mainnet readiness.
-
-## 7. Toolchain readiness report
-
-- Disk check at assessment time: root filesystem `/dev/root`, `29G` total,
-  `28G` used, `528M` available (`99%`).
-- `forge` is installed and available for an isolated future implementation. No
-  deployment or network action was performed. The presence of Foundry does not
-  supply the missing reviewed contract specification, ABI, address, or authority.
-- `scarb` and `snforge`: installed, but they are Starknet tooling and do not make
-  an EVM escrow toolchain available.
-- Repository dependencies include pinned `viem 2.55.19`, which is usable for a
-  future client adapter but is not a Solidity compiler, local EVM, or reviewed
-  contract interface.
-- Existing `/home/ubuntu/.foundry` occupies about `446M`; no install was attempted.
-  With only about `528M` free, installing Foundry or disposable EVM artifacts is
-  unsafe and outside this lane's needs.
-
-**Readiness:** `NOT_READY_FOR_CONTRACT_IMPLEMENTATION` because the owner
-specification is incomplete, not because Solidity tooling is unavailable. The safe
-next prerequisite is the signed/versioned decision record above, followed by an
-isolated Foundry implementation and tests. No deployment, funding, signing,
-broadcast, or provider call is implied.
-
-## 8. Current verification record
-
-Run at the assessment commit:
-
-- `npm test -- --reporter=dot` → **1288 passed, 38 skipped, 0 failed**;
-  130 files passed and 6 skipped.
-- `npm run typecheck` → **PASS**.
-- Static inventory confirms no tracked Solidity source, escrow ABI, or address.
-- `forge --version` resolves to Foundry `1.7.1`; no contract was created because
-  the missing decisions above are material to authority, asset safety, and ABI.
-
-The existing `projects/prism/BASE_ESCROW_BLOCKED_REPORT.md` remains the concise
-blocker record. This packet adds the missing owner-decision list and retains the
-lifecycle, event, race, replay, reentrancy, refund, expiry, and exact future
-readback requirements without claiming that any financial contract is implemented
-or observed. The local HTTP payment/gift routes remain the frontend-ready X2
-surface: explicit operations, public-safe projections, decimal-string amounts,
-stable lifecycle states, correlation headers, and fail-closed unavailable effects.
+Local source/build/tests establish implementation evidence only. This package is not
+audited, deployed, funded, signed, broadcast, or observed on Base Sepolia.
+Remaining gates are independent security review; ABI/backend-port review; authorized
+Base Sepolia deployment with bytecode/receipt readback; independent provider
+reconciliation; and backend integration tests. Existing local payment/gift routes and
+`PublicBaseSepoliaEscrowPort` remain the backend boundary; this lane adds no signer,
+provider, or live adapter.
