@@ -13,10 +13,13 @@ let runtime: PaymentHttpRuntime | null = null;
 export async function getPaymentHttpRuntime(): Promise<PaymentHttpRuntime> {
  if(runtime) return runtime;
  let ps:PaymentRequestStore, gs:ClaimableGiftStore, ns:ClaimNullifierStore;
+ const mode = process.env.PRISM_RUNTIME_MODE;
+ const explicitLocalRuntime = mode === "test" || mode === "development";
+ const durableRuntime = !explicitLocalRuntime && (process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || mode === "production" || mode === "rehearsal");
  const url=(process.env.PRISM_POSTGRES_TEST_URL??process.env.PRISM_POSTGRES_URL??"").trim();
  if(url && !/^postgres(ql)?:\/\//i.test(url)) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.ESCROW_UNAVAILABLE,"invalid_postgres_url_format");
  if(url){ const pool=new Pool({connectionString:url}); await pool.query(PAYMENT_CLAIM_MIGRATION_SQL); ps=new PostgresPaymentRequestStore(pool); gs=new PostgresClaimableGiftStore(pool); ns=new PostgresClaimNullifierStore(pool); }
- else { const durableRuntime = process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production" || process.env.PRISM_RUNTIME_MODE === "rehearsal"; if(durableRuntime) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.ESCROW_UNAVAILABLE,"durable_store_required"); ps=new InMemoryPaymentRequestStore(); gs=new InMemoryClaimableGiftStore(); ns=new InMemoryClaimNullifierStore(); }
+ else { if(durableRuntime) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.ESCROW_UNAVAILABLE,"durable_store_required"); ps=new InMemoryPaymentRequestStore(); gs=new InMemoryClaimableGiftStore(); ns=new InMemoryClaimNullifierStore(); }
  runtime={payments:new RequestPaymentService({store:ps}), gifts:new ClaimableGiftService({store:gs,nullifierStore:ns,escrow:unavailable,claimProofVerifier:verifier})}; return runtime;
 }
 export function resetPaymentHttpRuntime(){ runtime=null; }

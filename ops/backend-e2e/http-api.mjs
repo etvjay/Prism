@@ -1,13 +1,20 @@
+import { createHmac } from "node:crypto";
 import { chromium } from "@playwright/test";
 
 const baseURL = process.env.BACKEND_E2E_BASE_URL ?? "http://127.0.0.1:4173";
+const secret = process.env.PRISM_APP_SESSION_SECRET;
+if (!secret || secret.length < 32) throw new Error("PRISM_APP_SESSION_SECRET must be provided for signed-session E2E");
+const now = Math.floor(Date.now() / 1000);
+const claims = { sid: "e2e-session-0001", sub: "e2e-user", iat: now - 10, exp: now + 3600, iss: "prism", aud: "prism-api" };
+const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
+const signature = createHmac("sha256", secret).update(`v1.${encoded}`).digest().toString("base64url");
+const sessionToken = `v1.${encoded}.${signature}`;
 const hash = `0x${"a".repeat(64)}`;
 const sessionHeaders = {
   "content-type": "application/json",
   "idempotency-key": `e2e-${Date.now()}`,
   "x-request-id": "backend-e2e",
-  "x-session-id": "e2e-session-0001",
-  "x-session-user": "e2e-user",
+  authorization: `Bearer ${sessionToken}`,
 };
 
 const browser = await chromium.launch({

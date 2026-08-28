@@ -273,7 +273,9 @@ export function isPostgresUrlValid(url: string): boolean {
 }
 
 export function isProductionRuntime(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production" || process.env.PRISM_RUNTIME_MODE === "rehearsal";
+  const mode = process.env.PRISM_RUNTIME_MODE;
+  if (mode === "test" || mode === "development") return false;
+  return process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || mode === "production" || mode === "rehearsal";
 }
 
 export function getRuntimeMode(): FactoryRuntimeMode {
