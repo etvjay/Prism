@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "purpose": "Read-only inventory for the Prism SN_SEPOLIA/Base Sepolia rehearsal. This is a source-and-spec inventory, not a deployment manifest and not an evidence envelope.",
   "inspection_basis": {
-    "baseline_commit": "fbced69e20067f18d6b80ab8b8eb80711e99a51a",
-    "worktree": "/home/ubuntu/prism-work/prism-v0-backend-remediation",
-    "source_scope": "exact candidate SHA and isolated remediation worktree; tracked source routes only",
+    "baseline_commit": "f0ff32bd2b79b90f4edd38c4236f0fb7a157d4c2",
+    "worktree": "/home/ubuntu/prism-work/prism-v0-backend",
+    "source_scope": "exact backend candidate implementation commit; tracked source routes only",
     "protected_paths_untouched_by_artifact": [
       "src/",
       "frontend files",
