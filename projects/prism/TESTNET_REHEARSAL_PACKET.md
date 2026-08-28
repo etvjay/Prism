@@ -1,7 +1,7 @@
 # Prism Testnet Rehearsal Packet
 
 **Status:** `PREPARATION — READ-ONLY DRY-RUN ONLY; NO DEPLOYMENT OR BROADCAST`
-**Candidate baseline:** local `HEAD 7df9efc8b268f4bf2993a9c1bf19b978b3bc884b` in `/home/ubuntu/prism-work/prism-v0-backend`
+**Candidate baseline:** local `HEAD fd08d8f5198f6e87c254ccbee116968b5439ce22` in `/home/ubuntu/prism-work/prism-v0-backend`
 **Target:** `SN_SEPOLIA` + `BASE_SEPOLIA` (`Base chain_id 84532`)
 **Harness:** `ops/testnet-rehearsal/dry-run.mjs`
 **Machine inventory:** `ops/testnet-rehearsal/endpoint-inventory.json`
