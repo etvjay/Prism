@@ -1,0 +1,51 @@
+import { Pool, type PoolConfig } from "pg";
+import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "../domain/errors";
+import type { ClaimableGiftStore, ClaimNullifierStore, PaymentRequestStore } from "../domain/ports";
+import type { ClaimableGift } from "../domain/claimable-gift";
+import type { PaymentRequest } from "../domain/payment-request";
+
+/** Durable v0 payment/claim persistence. Raw proofs/memos are not columns. */
+export const PAYMENT_CLAIM_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS prism_payment_requests (
+ request_id TEXT PRIMARY KEY, requester_ref TEXT NOT NULL, recipient_kind TEXT NOT NULL,
+ recipient_commitment TEXT NOT NULL, asset TEXT NOT NULL, amount NUMERIC NOT NULL,
+ chain_id INTEGER NOT NULL, expires_at BIGINT NOT NULL, state TEXT NOT NULL, version INTEGER NOT NULL,
+ created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, approval JSONB, transaction_hash TEXT,
+ operation_id TEXT, submission_attempted BOOLEAN NOT NULL, viewed_at BIGINT, rejected_at BIGINT,
+ rejection_reason TEXT, confirmed_at BIGINT, confirmation_block_number BIGINT, error_code TEXT, error_detail TEXT,
+ idempotency_key TEXT NOT NULL UNIQUE, request_fingerprint TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS prism_claimable_gifts (
+ claim_id TEXT PRIMARY KEY, protocol_version TEXT NOT NULL, schema_version INTEGER NOT NULL,
+ network TEXT NOT NULL, chain_id INTEGER NOT NULL, sender TEXT NOT NULL, refund_recipient TEXT NOT NULL,
+ asset TEXT NOT NULL, amount NUMERIC NOT NULL, expires_at BIGINT NOT NULL, nullifier_commitment TEXT NOT NULL,
+ state TEXT NOT NULL, version INTEGER NOT NULL, created_at BIGINT NOT NULL, funded_at BIGINT,
+ claimable_at BIGINT, claimed_at BIGINT, expired_at BIGINT, refunded_at BIGINT, funding_transaction_hash TEXT,
+ funding_block_number BIGINT, claim_transaction_hash TEXT, refund_transaction_hash TEXT, refund_block_number BIGINT,
+ recipient JSONB
+);
+CREATE TABLE IF NOT EXISTS prism_claim_nullifiers (nullifier TEXT PRIMARY KEY, claim_id TEXT NOT NULL, reserved_at TIMESTAMPTZ NOT NULL DEFAULT now());
+`;
+
+type Queryable = { query<T = any>(sql: string, values?: readonly unknown[]): Promise<{ rows: T[]; rowCount: number | null }> };
+function clone<T>(v: T): T { return structuredClone(v); }
+function paymentRow(row: any): PaymentRequest { return { ...row, amount: BigInt(row.amount), chainId: Number(row.chainId), approval: row.approval ?? null, recipient: { kind: row.recipientKind, commitment: row.recipientCommitment }, expiresAt:Number(row.expiresAt), version:Number(row.version), createdAt:Number(row.createdAt), updatedAt:Number(row.updatedAt), operationId:row.operationId ?? null, submissionAttempted:Boolean(row.submissionAttempted), viewedAt:row.viewedAt === null ? null : Number(row.viewedAt), rejectedAt:row.rejectedAt === null ? null : Number(row.rejectedAt), confirmedAt:row.confirmedAt === null ? null : Number(row.confirmedAt), confirmationBlockNumber:row.confirmationBlockNumber === null ? null : Number(row.confirmationBlockNumber) } as PaymentRequest; }
+function giftRow(row:any): ClaimableGift { return { ...row, amount:BigInt(row.amount), chainId:Number(row.chainId), version:Number(row.version), createdAt:Number(row.createdAt), expiresAt:Number(row.expiresAt), fundedAt:row.fundedAt===null?null:Number(row.fundedAt), claimableAt:row.claimableAt===null?null:Number(row.claimableAt), claimedAt:row.claimedAt===null?null:Number(row.claimedAt), expiredAt:row.expiredAt===null?null:Number(row.expiredAt), refundedAt:row.refundedAt===null?null:Number(row.refundedAt), fundingBlockNumber:row.fundingBlockNumber===null?null:Number(row.fundingBlockNumber), refundBlockNumber:row.refundBlockNumber===null?null:Number(row.refundBlockNumber), recipient:row.recipient??null } as ClaimableGift; }
+
+export class PostgresPaymentRequestStore implements PaymentRequestStore {
+ constructor(private readonly pool: Queryable) {}
+ static async create(config: PoolConfig): Promise<PostgresPaymentRequestStore> { const pool=new Pool(config); await pool.query(PAYMENT_CLAIM_MIGRATION_SQL); return new PostgresPaymentRequestStore(pool); }
+ async create(i:any):Promise<PaymentRequest>{ const p=i.payment; const prior=await this.getByIdempotencyKey(i.idempotencyKey); if(prior){ if(i.requestFingerprint!==this.fingerprint(prior)) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.REPLAY_DETECTED,"idempotency_key_conflict"); return clone(prior); } try { await this.pool.query(`INSERT INTO prism_payment_requests (request_id,requester_ref,recipient_kind,recipient_commitment,asset,amount,chain_id,expires_at,state,version,created_at,updated_at,approval,transaction_hash,operation_id,submission_attempted,viewed_at,rejected_at,rejection_reason,confirmed_at,confirmation_block_number,error_code,error_detail,idempotency_key,request_fingerprint) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,[p.requestId,p.requesterRef,p.recipient.kind,p.recipient.commitment,p.asset,p.amount.toString(),p.chainId,p.expiresAt,p.state,p.version,p.createdAt,p.updatedAt,p.approval,p.transactionHash,p.operationId,p.submissionAttempted,p.viewedAt,p.rejectedAt,p.rejectionReason,p.confirmedAt,p.confirmationBlockNumber,p.errorCode,p.errorDetail,i.idempotencyKey,i.requestFingerprint]); return clone(p); } catch(e){ if((e as any).code==='23505') throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.REPLAY_DETECTED,"duplicate_payment_request"); throw e; } }
+ private fingerprint(p:PaymentRequest){ return JSON.stringify({requestId:p.requestId,requesterRef:p.requesterRef,recipient:p.recipient,asset:p.asset,amount:p.amount.toString(),chainId:p.chainId,expiresAt:p.expiresAt}); }
+ async getById(id:string){ const r=await this.pool.query<any>(`SELECT request_id as "requestId",requester_ref as "requesterRef",recipient_kind as "recipientKind",recipient_commitment as "recipientCommitment",asset,amount,chain_id as "chainId",expires_at as "expiresAt",state,version,created_at as "createdAt",updated_at as "updatedAt",approval,transaction_hash as "transactionHash",operation_id as "operationId",submission_attempted as "submissionAttempted",viewed_at as "viewedAt",rejected_at as "rejectedAt",rejection_reason as "rejectionReason",confirmed_at as "confirmedAt",confirmation_block_number as "confirmationBlockNumber",error_code as "errorCode",error_detail as "errorDetail" FROM prism_payment_requests WHERE request_id=$1`,[id]); return r.rowCount ? paymentRow(r.rows[0]) : undefined; }
+ async getByIdempotencyKey(k:string){ const r=await this.pool.query<any>(`SELECT request_id as "requestId" FROM prism_payment_requests WHERE idempotency_key=$1`,[k]); return r.rowCount ? this.getById(r.rows[0].requestId) : undefined; }
+ async update(id:string,v:number,fn:(p:PaymentRequest)=>PaymentRequest){ const p=await this.getById(id); if(!p) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.PAYMENT_NOT_FOUND,"unknown_payment"); if(p.version!==v) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.VERSION_CONFLICT,"stale_version"); const n=fn(p); const r=await this.pool.query(`UPDATE prism_payment_requests SET state=$2,version=$3,updated_at=$4,approval=$5,transaction_hash=$6,submission_attempted=$7,viewed_at=$8,rejected_at=$9,rejection_reason=$10,confirmed_at=$11,confirmation_block_number=$12,error_code=$13,error_detail=$14 WHERE request_id=$1 AND version=$15`,[id,n.state,n.version,n.updatedAt,n.approval,n.transactionHash,n.submissionAttempted,n.viewedAt,n.rejectedAt,n.rejectionReason,n.confirmedAt,n.confirmationBlockNumber,n.errorCode,n.errorDetail,v]); if(r.rowCount!==1) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.VERSION_CONFLICT,"stale_version"); return (await this.getById(id))!; }
+}
+
+export class PostgresClaimableGiftStore implements ClaimableGiftStore {
+ constructor(private readonly pool: Queryable) {}
+ async create(g:ClaimableGift){ try { await this.pool.query(`INSERT INTO prism_claimable_gifts (claim_id,protocol_version,schema_version,network,chain_id,sender,refund_recipient,asset,amount,expires_at,nullifier_commitment,state,version,created_at,funded_at,claimable_at,claimed_at,expired_at,refunded_at,funding_transaction_hash,funding_block_number,claim_transaction_hash,refund_transaction_hash,refund_block_number,recipient) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,[g.claimId,g.protocolVersion,g.schemaVersion,g.network,g.chainId,g.sender,g.refundRecipient,g.asset,g.amount.toString(),g.expiresAt,g.nullifierCommitment,g.state,g.version,g.createdAt,g.fundedAt,g.claimableAt,g.claimedAt,g.expiredAt,g.refundedAt,g.fundingTransactionHash,g.fundingBlockNumber,g.claimTransactionHash,g.refundTransactionHash,g.refundBlockNumber,g.recipient]); return clone(g); } catch(e){ if((e as any).code==='23505') throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.REPLAY_DETECTED,"duplicate_claim_id"); throw e; } }
+ async getById(id:string){ const r=await this.pool.query<any>(`SELECT * FROM prism_claimable_gifts WHERE claim_id=$1`,[id]); return r.rowCount?giftRow(r.rows[0]):undefined; }
+ async update(id:string,v:number,fn:(g:ClaimableGift)=>ClaimableGift){ const g=await this.getById(id); if(!g) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.CLAIM_NOT_FOUND,"unknown_claim"); if(g.version!==v) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.VERSION_CONFLICT,"stale_version"); const n=fn(g); await this.pool.query(`UPDATE prism_claimable_gifts SET state=$2,version=$3,recipient=$4,claimed_at=$5,expired_at=$6,refunded_at=$7,funding_transaction_hash=$8,funding_block_number=$9,claim_transaction_hash=$10,refund_transaction_hash=$11,refund_block_number=$12,funded_at=$13,claimable_at=$14 WHERE claim_id=$1 AND version=$15`,[id,n.state,n.version,n.recipient,n.claimedAt,n.expiredAt,n.refundedAt,n.fundingTransactionHash,n.fundingBlockNumber,n.claimTransactionHash,n.refundTransactionHash,n.refundBlockNumber,n.fundedAt,n.claimableAt,v]); return (await this.getById(id))!; }
+}
+export class PostgresClaimNullifierStore implements ClaimNullifierStore { constructor(private readonly pool:Queryable){} async reserve(n:`0x${string}`,claimId:string){ const r=await this.pool.query(`INSERT INTO prism_claim_nullifiers(nullifier,claim_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[n.toLowerCase(),claimId]); return r.rowCount===1?'reserved':'already_reserved'; } }
