@@ -17,6 +17,7 @@ import {
   type GiftClaimAuthorization,
   type GiftHex,
   type GiftRefundInput,
+  type GiftReceipt,
 } from "../domain/claimable-gift";
 import type {
   ClaimNullifierStore,
@@ -36,6 +37,8 @@ export interface RecordFundingInput {
   readonly now: number;
 }
 
+export interface FundGiftInput { readonly now: number; readonly payerApproval: `0x${string}`; }
+
 export interface MarkClaimableInput {
   readonly now: number;
 }
@@ -45,6 +48,11 @@ export interface ClaimGiftInput {
   /** Opaque proof is passed to the verifier and never stored or projected. */
   readonly proof: unknown;
   readonly recipientAddress: GiftHex;
+  readonly recipientSignature?: `0x${string}`;
+}
+
+function validSignature(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{130}$/.test(value);
 }
 
 export class ClaimableGiftService {
@@ -55,7 +63,19 @@ export class ClaimableGiftService {
   }
 
   async create(input: CreateClaimableGiftInput): Promise<ClaimableGift> {
-    return this.deps.store.create(createClaimableGift(input));
+    const gift = await this.deps.store.create(createClaimableGift(input));
+    if (this.deps.escrow.createTerms) await this.deps.escrow.createTerms({ claimId: gift.claimId, refundDestination: gift.refundRecipient, commitment: gift.nullifierCommitment, amount: gift.amount, expiry: gift.expiresAt, nonce: 0 });
+    return gift;
+  }
+
+  async fund(claimId: string, input: FundGiftInput): Promise<ClaimableGift> {
+    const gift = await this.require(claimId);
+    if (gift.state !== "created") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_STATE_TRANSITION, `fund_requires_created:${gift.state}`);
+    if (!validSignature(input.payerApproval)) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.WALLET_APPROVAL_REQUIRED, "payer_signature_required");
+    if (!this.deps.escrow.fundEscrow) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.ESCROW_UNAVAILABLE, "funding_adapter_unavailable");
+    try { await this.deps.escrow.fundEscrow({ claimId, payerApproval: input.payerApproval }); }
+    catch (cause) { if ((cause as { kind?: string }).kind === "unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN, "poll_funding_transaction"); throw cause; }
+    return this.recordFunding(claimId, { now: input.now });
   }
 
   async recordFunding(claimId: string, input: RecordFundingInput): Promise<ClaimableGift> {
@@ -90,22 +110,45 @@ export class ClaimableGiftService {
     if (authorization.claimId !== gift.claimId || authorization.nullifier !== gift.nullifierCommitment) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.CLAIM_PROOF_INVALID, "claim_authorization_mismatch");
     }
+    const signature = authorization.signature ?? input.recipientSignature;
+    if (!validSignature(signature)) {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.CLAIM_PROOF_INVALID, "recipient_signature_required");
+    }
     const reserved = await this.deps.nullifierStore.reserve(authorization.nullifier, gift.claimId);
     if (reserved === "already_reserved") {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.NULLIFIER_REPLAY, "claim_nullifier_already_reserved");
     }
-    const submitted = await this.deps.escrow.claimEscrow({
-      claimId: gift.claimId,
-      recipientAddress: authorization.recipientAddress,
-      nullifier: authorization.nullifier,
-    });
+    let submitted;
+    try {
+      submitted = await this.deps.escrow.claimEscrow({
+        claimId: gift.claimId,
+        recipientAddress: authorization.recipientAddress,
+        nullifier: authorization.nullifier,
+        authorization: signature,
+      });
+    } catch (cause) {
+      if ((cause as { kind?: string }).kind === "unknown") {
+        throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN, "claim_submission_unknown");
+      }
+      await this.deps.nullifierStore.release?.(authorization.nullifier, gift.claimId);
+      throw cause;
+    }
+    if (submitted.status === "unknown" || (submitted.status === "submitted" && submitted.blockNumber === null)) {
+      const state = submitted.status === "unknown" ? "claim_unknown" : "claim_submitted";
+      return this.deps.store.update(claimId, gift.version, (current) => ({ ...current, state, version: current.version + 1, claimSubmissionHash: submitted.transactionHash }));
+    }
+    if (!submitted.transactionHash || submitted.blockNumber === null) {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN, "claim_submission_missing_receipt");
+    }
+    const claimTransactionHash = submitted.transactionHash;
+    const claimBlockNumber = submitted.blockNumber;
     try {
       return await this.deps.store.update(claimId, gift.version, (current) =>
         claimClaimableGift(current, {
           now: input.now,
-          authorization,
-          transactionHash: submitted.transactionHash,
-          blockNumber: submitted.blockNumber,
+          authorization: { ...authorization, signature },
+          transactionHash: claimTransactionHash,
+          blockNumber: claimBlockNumber,
         }),
       );
     } catch (cause) {
@@ -128,15 +171,39 @@ export class ClaimableGiftService {
     if (input.actor.toLowerCase() !== gift.sender.toLowerCase()) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED, "sender_refund_authority_required");
     }
-    const submitted = await this.deps.escrow.refundEscrow({ claimId: gift.claimId });
+    let submitted;
+    try { submitted = await this.deps.escrow.refundEscrow({ claimId: gift.claimId }); }
+    catch (cause) {
+      if ((cause as { kind?: string }).kind === "unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN, "refund_submission_unknown");
+      throw cause;
+    }
+    if (submitted.status === "unknown" || (submitted.status === "submitted" && submitted.blockNumber === null)) {
+      const state = submitted.status === "unknown" ? "refund_unknown" : "refund_submitted";
+      return this.deps.store.update(claimId, gift.version, (current) => ({ ...current, state, version: current.version + 1, refundSubmissionHash: submitted.transactionHash }));
+    }
+    if (!submitted.transactionHash || submitted.blockNumber === null) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_submission_missing_receipt");
+    const refundTransactionHash = submitted.transactionHash;
+    const refundBlockNumber = submitted.blockNumber;
     return this.deps.store.update(claimId, gift.version, (current) =>
       refundClaimableGift(current, {
         now: input.now,
         actor: input.actor,
-        transactionHash: submitted.transactionHash,
-        blockNumber: submitted.blockNumber,
+        transactionHash: refundTransactionHash,
+        blockNumber: refundBlockNumber,
       }),
     );
+  }
+
+  async reconcileClaim(claimId: string, now: number, authorization: GiftClaimAuthorization, receipt: GiftReceipt): Promise<ClaimableGift> {
+    const gift = await this.require(claimId);
+    if (receipt.claimId !== claimId || receipt.status !== "succeeded") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "claim_receipt_mismatch");
+    return this.deps.store.update(claimId, gift.version, (current) => claimClaimableGift(current, { now, authorization, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }));
+  }
+
+  async reconcileRefund(claimId: string, now: number, actor: GiftHex, receipt: GiftReceipt): Promise<ClaimableGift> {
+    const gift = await this.require(claimId);
+    if (receipt.claimId !== claimId || receipt.status !== "succeeded") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_receipt_mismatch");
+    return this.deps.store.update(claimId, gift.version, (current) => refundClaimableGift(current, { now, actor, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }));
   }
 
   async get(claimId: string): Promise<ClaimableGift | undefined> {

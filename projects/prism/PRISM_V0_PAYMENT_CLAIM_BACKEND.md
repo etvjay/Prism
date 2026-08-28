@@ -32,9 +32,4 @@ exception text, viewing/private keys, connection strings, and internal store
 diagnostics are forbidden fields. Local memory adapters are test/development
 only; configured Postgres is required for the durable runtime.
 
-Base escrow is not implemented in this slice and remains blocked by the absent
-reviewed on-chain specification, ABI, address, and authority decisions. Foundry
-availability does not change that boundary. No escrow contract, signing adapter,
-funding flow, broadcast, or live receipt is implied. These mounted routes are X2
-local implementation and integration evidence only; unavailable dependencies fail
-closed with typed `ERR-062`/`ERR-063` responses.
+Base escrow has a locally reviewed Foundry specification in `foundry/escrow`, but this backend exposes only the narrow typed boundary: `createTerms`, `fund(bytes payerApproval)`, `claim(bytes recipientAuthorization)`, and contract-authorized `refund`. No live adapter is instantiated by default; missing adapters are explicit `ERR-062` unavailable. Claim/refund become terminal only after exact successful receipt reconciliation; submitted and unknown remain non-terminal.

@@ -46,7 +46,7 @@ packet.
 ## Implementation and tests
 
 - `foundry/escrow/src/BaseEscrow.sol` — remediation and immutable core.
-- `foundry/escrow/test/BaseEscrow.t.sol` — adversarial regression suite (9 tests).
+- `foundry/escrow/test/BaseEscrow.t.sol` — adversarial regression suite (10 tests).
 
 ## Evidence ceiling and remaining gates
 

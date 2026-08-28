@@ -8,6 +8,7 @@ import type {
   GiftClaimAuthorization,
   GiftHex,
   GiftFundingObservation,
+  GiftSignature,
 } from "./claimable-gift";
 import type {
   PaymentApproval,
@@ -44,6 +45,8 @@ export interface ClaimableGiftStore {
 /** Global nullifier fence; reserve is atomic and never implicitly released. */
 export interface ClaimNullifierStore {
   reserve(nullifier: GiftHex, claimId: string): Promise<"reserved" | "already_reserved">;
+  /** Release is legal only after the provider has definitively rejected/reverted. */
+  release?(nullifier: GiftHex, claimId: string): Promise<void>;
 }
 
 /** Payer wallet authority. Calling this port is the only submit path. */
@@ -83,12 +86,28 @@ export interface PublicBaseSepoliaEscrowPort {
     readonly expiresAt: number;
     readonly nullifierCommitment: GiftHex;
   }): Promise<{ readonly transactionHash: GiftHex }>;
+  createTerms?(input: {
+    readonly claimId: string;
+    readonly refundDestination: GiftHex;
+    readonly commitment: GiftHex;
+    readonly amount: bigint;
+    readonly expiry: number;
+    readonly nonce: number;
+  }): Promise<EscrowSubmission>;
+  fundEscrow?(input: { readonly claimId: string; readonly payerApproval: GiftSignature }): Promise<EscrowSubmission>;
   claimEscrow(input: {
     readonly claimId: string;
     readonly recipientAddress: GiftHex;
     readonly nullifier: GiftHex;
-  }): Promise<{ readonly transactionHash: GiftHex; readonly blockNumber: number }>;
+    readonly authorization?: GiftSignature;
+  }): Promise<EscrowSubmission>;
   /** Refund destination is contract-stored sender; no beneficiary argument. */
-  refundEscrow(input: { readonly claimId: string }): Promise<{ readonly transactionHash: GiftHex; readonly blockNumber: number }>;
+  refundEscrow(input: { readonly claimId: string }): Promise<EscrowSubmission>;
   observeFunding(claimId: string): Promise<GiftFundingObservation | null>;
+}
+
+export interface EscrowSubmission {
+  readonly status?: "submitted" | "unknown";
+  readonly transactionHash: GiftHex | null;
+  readonly blockNumber: number | null;
 }

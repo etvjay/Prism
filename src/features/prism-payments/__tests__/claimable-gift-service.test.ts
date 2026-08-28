@@ -14,18 +14,20 @@ const NULLIFIER = `0x${"c".repeat(64)}` as `0x${string}`;
 const TOKEN = `0x${"d".repeat(40)}` as `0x${string}`;
 const SENDER = `0x${"e".repeat(40)}` as `0x${string}`;
 const RECIPIENT = `0x${"f".repeat(40)}` as `0x${string}`;
+const SIGNATURE = `0x${"1".repeat(130)}` as `0x${string}`;
 
 class RecordingEscrow implements PublicBaseSepoliaEscrowPort {
   readonly chainId = 84532 as const;
   claimCalls = 0;
   refundCalls = 0;
+  lastClaimInput: unknown = null;
 
   async createEscrow(): Promise<{ transactionHash: `0x${string}` }> {
     return { transactionHash: FUND_TX };
   }
 
   async claimEscrow(input: { claimId: string; recipientAddress: `0x${string}`; nullifier: `0x${string}` }): Promise<{ transactionHash: `0x${string}`; blockNumber: number }> {
-    void input;
+    this.lastClaimInput = input;
     this.claimCalls += 1;
     return { transactionHash: CLAIM_TX, blockNumber: 20 };
   }
@@ -57,6 +59,7 @@ class FixedClaimProofVerifier implements ClaimProofVerifier {
       claimId: input.claimId,
       nullifier: input.nullifierCommitment,
       recipientAddress: input.recipientAddress,
+      signature: SIGNATURE,
     };
   }
 }
@@ -94,6 +97,7 @@ describe("public claimable-gift application boundary", () => {
     expect(claimed.recipient?.address).toBe(RECIPIENT);
     expect(JSON.stringify(claimed, (_key, value) => typeof value === "bigint" ? value.toString() : value)).not.toContain("raw-secret-proof");
     expect(escrow.claimCalls).toBe(1);
+    expect(escrow.lastClaimInput).toMatchObject({ claimId: claimable.claimId, recipientAddress: RECIPIENT, nullifier: NULLIFIER, authorization: SIGNATURE });
 
     let replayFailure: unknown;
     try {

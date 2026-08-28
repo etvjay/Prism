@@ -24,7 +24,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ claimId: strin
     const id = (await ctx.params).claimId;
     const operation = String(body.operation ?? "mark_claimable");
     let data;
-    if (operation === "fund") data = await runtime.gifts.recordFunding(id, { now: Number(body.now ?? nowSeconds()) });
+    if (operation === "fund") data = await runtime.gifts.fund(id, { now: Number(body.now ?? nowSeconds()), payerApproval: String(body.payerApproval ?? "") as `0x${string}` });
     else if (operation === "mark_claimable") data = await runtime.gifts.markClaimable(id, { now: Number(body.now ?? nowSeconds()) });
     else if (operation === "expire") data = await runtime.gifts.expire(id, { now: Number(body.now ?? nowSeconds()) });
     else if (operation === "refund") data = await runtime.gifts.refund(id, { now: Number(body.now ?? nowSeconds()), actor: sessionOrErr.userId as `0x${string}` });
@@ -33,7 +33,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ claimId: strin
       if (recipientAddress.toLowerCase() !== sessionOrErr.userId.toLowerCase()) {
         throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED, "authenticated_recipient_required");
       }
-      data = await runtime.gifts.claim(id, { now: Number(body.now ?? nowSeconds()), proof: body.proof, recipientAddress: sessionOrErr.userId as `0x${string}` });
+      data = await runtime.gifts.claim(id, { now: Number(body.now ?? nowSeconds()), proof: body.proof, recipientAddress: sessionOrErr.userId as `0x${string}`, recipientSignature: body.recipientSignature as `0x${string}` });
     } else throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_REQUEST, "unsupported_operation");
     return jsonData(publicGift(data), parsed);
   } catch (error) {

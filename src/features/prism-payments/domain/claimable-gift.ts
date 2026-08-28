@@ -9,9 +9,11 @@ export { BASE_SEPOLIA_CHAIN_ID } from "./payment-request";
 
 export const CLAIMABLE_GIFT_SCHEMA_VERSION = 1 as const;
 export const BASE_SEPOLIA_NETWORK = "BASE_SEPOLIA" as const;
-export const CLAIMABLE_GIFT_STATES = ["created", "funded", "claimable", "claimed", "expired", "refunded"] as const;
+export const CLAIMABLE_GIFT_STATES = ["created", "funded", "claimable", "claim_submitted", "claim_unknown", "claimed", "expired", "refund_submitted", "refund_unknown", "refunded"] as const;
 export type ClaimableGiftState = (typeof CLAIMABLE_GIFT_STATES)[number];
 export type GiftHex = PaymentHex;
+/** Opaque 65-byte EIP-712 signature; never returned in public projections. */
+export type GiftSignature = `0x${string}`;
 export type GiftAsset = "native" | GiftHex;
 
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
@@ -55,6 +57,8 @@ export interface ClaimableGift {
   readonly claimTransactionHash: GiftHex | null;
   readonly refundTransactionHash: GiftHex | null;
   readonly refundBlockNumber: number | null;
+  readonly claimSubmissionHash: GiftHex | null;
+  readonly refundSubmissionHash: GiftHex | null;
   readonly recipient: GiftRecipientBinding | null;
 }
 
@@ -113,6 +117,8 @@ export function createClaimableGift(input: CreateClaimableGiftInput): ClaimableG
     claimTransactionHash: null,
     refundTransactionHash: null,
     refundBlockNumber: null,
+    claimSubmissionHash: null,
+    refundSubmissionHash: null,
     recipient: null,
   };
 }
@@ -205,6 +211,13 @@ export interface GiftRefundInput {
   readonly blockNumber: number;
 }
 
+export interface GiftReceipt {
+  readonly claimId: string;
+  readonly transactionHash: GiftHex;
+  readonly blockNumber: number;
+  readonly status: "succeeded";
+}
+
 export function refundClaimableGift(gift: ClaimableGift, input: GiftRefundInput): ClaimableGift {
   if (gift.state !== "expired") {
     throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.REFUND_NOT_AVAILABLE, `refund_requires_expired:${gift.state}`);
@@ -230,6 +243,8 @@ export interface GiftClaimAuthorization {
   /** Public nullifier value returned by a verifier; raw proof is not stored. */
   readonly nullifier: GiftHex;
   readonly recipientAddress: GiftHex;
+  /** Recipient EIP-712 authorization passed unchanged to claim(). */
+  readonly signature?: GiftSignature;
 }
 
 export interface ClaimClaimableGiftInput {

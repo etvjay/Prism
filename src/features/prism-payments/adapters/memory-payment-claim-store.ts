@@ -92,8 +92,14 @@ export class InMemoryClaimNullifierStore implements ClaimNullifierStore {
 
   async reserve(nullifier: `0x${string}`, claimId: string): Promise<"reserved" | "already_reserved"> {
     const key = nullifier.toLowerCase();
-    if (this.claimsByNullifier.has(key)) return "already_reserved";
+    const owner = this.claimsByNullifier.get(key);
+    if (owner) return "already_reserved";
     this.claimsByNullifier.set(key, claimId);
     return "reserved";
+  }
+
+  async release(nullifier: `0x${string}`, claimId: string): Promise<void> {
+    const key = nullifier.toLowerCase();
+    if (this.claimsByNullifier.get(key) === claimId) this.claimsByNullifier.delete(key);
   }
 }
