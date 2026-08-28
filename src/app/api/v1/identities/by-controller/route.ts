@@ -1,7 +1,7 @@
 import { getAppFactory } from "@/application/factory";
 import { parseHeaders } from "@/application/http-helpers";
 import { normalizeRegistryEventScope } from "@/features/prism-operations/domain/event-indexer";
-import { discoverControllerIdentities, normalizeControllerAddress, type DiscoveryResult } from "@/features/product/controllerDiscovery";
+import { discoverControllerIdentities, normalizeControllerAddress, type DiscoveryResult } from "@/application/controller-discovery";
 
 const PROJECTION_SOURCE = "scoped_public_event_projection+canonical_starknet_read";
 const CANONICAL_SOURCE = "canonical_by_controller+canonical_starknet_read";
