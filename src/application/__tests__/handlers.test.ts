@@ -50,11 +50,11 @@ function buildHandlers(start = 1_789_000_000) {
 }
 
 describe("PrismApiHandlers — transport-neutral contracts", () => {
-  it("API_CONTRACTS table covers command, canonical, public-list, owner/private, and operation routes", () => {
+  it("API_CONTRACTS table covers command, canonical, public-list, owner/private, resolution, and operation routes", () => {
     expect(API_CONTRACTS.map((c) => c.handler)).toEqual(
-      expect.arrayContaining(["issue", "verify", "createIdentity", "bind", "revoke", "listPublicBindings", "listOwnerPrivateBindings", "getIdentity", "resolve", "getOperation"]),
+      expect.arrayContaining(["issue", "verify", "createIdentity", "bind", "revoke", "listPublicBindings", "listOwnerPrivateBindings", "getIdentity", "resolve", "lookupAlias", "assessContinuity", "getOperation"]),
     );
-    expect(API_CONTRACTS).toHaveLength(10);
+    expect(API_CONTRACTS).toHaveLength(12);
   });
 
   it("chain-touching handlers fail closed when the factory guard reports TEST_DOUBLE_X2", async () => {
