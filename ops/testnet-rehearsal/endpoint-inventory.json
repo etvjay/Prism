@@ -5,7 +5,7 @@
   "inspection_basis": {
     "baseline_commit": "9b4d3877219fab1d16ff0bb6b92a2a065dc6a9e3",
     "worktree": "/home/ubuntu/prism-work/prism-v0-backend",
-    "source_scope": "exact backend candidate implementation commit; tracked rehearsal-required source routes only; portfolio route is covered by the application route inventory but is outside this 31-entry rehearsal surface",
+    "source_scope": "exact backend candidate implementation commit; tracked rehearsal-required source routes only; the 32nd application route method, the portfolio route, is intentionally excluded from this 31-entry rehearsal surface and covered by the application route inventory",
     "protected_paths_untouched_by_artifact": [
       "src/",
       "frontend files",

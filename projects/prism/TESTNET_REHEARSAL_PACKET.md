@@ -8,8 +8,8 @@
 **Evidence ceiling:** **X2 for this packet**. No new external receipt, readback, deployment, wallet, or provider observation was performed. Existing repository records are not re-verified or promoted here.
 
 This packet is an executable rehearsal contract for the separate backend and
-frontend teams. It inventories the current dirty snapshot without adopting the
-snapshot's unrelated changes. It does not change application behavior, frontend
+frontend teams. It inventories the clean backend candidate snapshot and excludes
+unrelated work in separate lanes. It does not change application behavior, frontend
 files, contracts, `strk20.json`, `projects/prism/EVIDENCE_LEDGER.md`,
 `projects/prism/DECISIONS.md`, Linear, or Notion.
 
@@ -117,7 +117,9 @@ requirements, response shapes/statuses, audience, authority, side effects,
 source state, and the seven maturity booleans. The abbreviated map below is the
 route-level handoff.
 
-### 4.1 Present local routes (31 candidate method entries)
+The rehearsal surface intentionally contains 31 entries; the 32nd application
+route method, the portfolio route, is excluded from this rehearsal inventory and
+covered by the separate application route inventory.
 
 | ID | Method and path | Local source state | Local wiring/evidence boundary |
 |---|---|---|---|
