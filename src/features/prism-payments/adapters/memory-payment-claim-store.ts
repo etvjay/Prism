@@ -85,6 +85,13 @@ export class InMemoryClaimableGiftStore implements ClaimableGiftStore {
     this.byId.set(claimId, cloneGift(next));
     return cloneGift(next);
   }
+  async beginClaimSubmission(claimId: string, expectedVersion: number, fence: string): Promise<ClaimableGift> {
+    return this.update(claimId, expectedVersion, current => ({ ...current, state: "claim_submitting", version: current.version + 1, claimSubmissionFence: fence }));
+  }
+
+  async beginRefundSubmission(claimId: string, expectedVersion: number, fence: string): Promise<ClaimableGift> {
+    return this.update(claimId, expectedVersion, current => ({ ...current, state: "refund_submitting", version: current.version + 1, refundSubmissionFence: fence }));
+  }
 }
 
 export class InMemoryClaimNullifierStore implements ClaimNullifierStore {

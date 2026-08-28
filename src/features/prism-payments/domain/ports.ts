@@ -40,6 +40,9 @@ export interface ClaimableGiftStore {
     expectedVersion: number,
     updater: (current: ClaimableGift) => ClaimableGift,
   ): Promise<ClaimableGift>;
+  /** Atomically records the pre-submit intent and returns the fence token. */
+  beginClaimSubmission?(claimId: string, expectedVersion: number, fence: string): Promise<ClaimableGift>;
+  beginRefundSubmission?(claimId: string, expectedVersion: number, fence: string): Promise<ClaimableGift>;
 }
 
 /** Global nullifier fence; reserve is atomic and never implicitly released. */
@@ -86,6 +89,8 @@ export interface EscrowClaimAuthorization {
 
 export interface PublicBaseSepoliaEscrowPort {
   readonly chainId: 84_532;
+  /** Explicit provider contract identity; adapters should set this. */
+  readonly escrowContractAddress?: GiftHex;
   readonly isTestDouble?: boolean;
   createEscrow(input: {
     readonly claimId: string;

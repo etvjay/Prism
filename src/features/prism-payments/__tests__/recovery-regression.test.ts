@@ -40,13 +40,13 @@ describe("claim/refund recovery regressions", () => {
     const submitted = await service.claim(claimId, { now: 4, proof: {}, recipientAddress: recipient });
     expect(submitted.state).toBe("claim_submitted");
     expect(submitted.claimSubmissionHash).toBe(H("b"));
-    const unknown = await service.reconcileClaim(claimId, 5, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "unknown", transactionHash: H("b"), blockNumber: null });
+    const unknown = await service.reconcileClaim(claimId, 5, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "unknown", transactionHash: H("b"), blockNumber: null, chainId: 84532, escrowContractAddress: A("1"), operationId: claimId, action: "claim", providerVerification: { kind: "provider_verified", provider: "test", verifiedAt: 5 } });
     expect(unknown.state).toBe("claim_unknown");
     expect(unknown.state).not.toBe("claimed");
-    const failed = await service.reconcileClaim(claimId, 6, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "reverted", transactionHash: H("b"), blockNumber: null });
+    const failed = await service.reconcileClaim(claimId, 6, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "reverted", transactionHash: H("b"), blockNumber: null, chainId: 84532, escrowContractAddress: A("1"), operationId: claimId, action: "claim", providerVerification: { kind: "provider_verified", provider: "test", verifiedAt: 6 } });
     expect(failed.state).toBe("claimable");
     expect(await nullifiers.reserve(nullifier, claimId)).toBe("reserved");
-    const completed = await service.reconcileClaim(claimId, 7, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "succeeded", transactionHash: H("e"), blockNumber: 9 });
+    const completed = await service.reconcileClaim(claimId, 7, { claimId, nullifier, recipientAddress: recipient, signature }, { claimId, status: "succeeded", transactionHash: H("b"), blockNumber: 9, chainId: 84532, escrowContractAddress: A("1"), operationId: claimId, action: "claim", providerVerification: { kind: "provider_verified", provider: "test", verifiedAt: 7 } });
     expect(completed.state).toBe("claimed");
   });
 
@@ -55,9 +55,9 @@ describe("claim/refund recovery regressions", () => {
     await service.expire(claimId, { now: 101 });
     const submitted = await service.refund(claimId, { now: 102, actor: sender });
     expect(submitted.state).toBe("refund_submitted");
-    const unknown = await service.reconcileRefund(claimId, 103, sender, { claimId, status: "unknown", transactionHash: H("d"), blockNumber: null });
+    const unknown = await service.reconcileRefund(claimId, 103, sender, { claimId, status: "unknown", transactionHash: H("d"), blockNumber: null, chainId: 84532, escrowContractAddress: A("1"), operationId: claimId, action: "refund", providerVerification: { kind: "provider_verified", provider: "test", verifiedAt: 103 } });
     expect(unknown.state).toBe("refund_unknown");
-    const completed = await service.reconcileRefund(claimId, 104, sender, { claimId, status: "succeeded", transactionHash: H("f"), blockNumber: 11 });
+    const completed = await service.reconcileRefund(claimId, 104, sender, { claimId, status: "succeeded", transactionHash: H("d"), blockNumber: 11, chainId: 84532, escrowContractAddress: A("1"), operationId: claimId, action: "refund", providerVerification: { kind: "provider_verified", provider: "test", verifiedAt: 104 } });
     expect(completed.state).toBe("refunded");
   });
 });

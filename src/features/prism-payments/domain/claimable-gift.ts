@@ -9,7 +9,7 @@ export { BASE_SEPOLIA_CHAIN_ID } from "./payment-request";
 
 export const CLAIMABLE_GIFT_SCHEMA_VERSION = 1 as const;
 export const BASE_SEPOLIA_NETWORK = "BASE_SEPOLIA" as const;
-export const CLAIMABLE_GIFT_STATES = ["created", "funded", "claimable", "claim_submitted", "claim_unknown", "claimed", "expired", "refund_submitted", "refund_unknown", "refunded"] as const;
+export const CLAIMABLE_GIFT_STATES = ["created", "funded", "claimable", "claim_submitting", "claim_submitted", "claim_unknown", "claimed", "expired", "refund_submitting", "refund_submitted", "refund_unknown", "refunded"] as const;
 export type ClaimableGiftState = (typeof CLAIMABLE_GIFT_STATES)[number];
 export type GiftHex = PaymentHex;
 /** Opaque 65-byte EIP-712 signature; never returned in public projections. */
@@ -59,6 +59,9 @@ export interface ClaimableGift {
   readonly refundBlockNumber: number | null;
   readonly claimSubmissionHash: GiftHex | null;
   readonly refundSubmissionHash: GiftHex | null;
+  /** Durable pre-submit fences survive a crash between intent and provider call. */
+  readonly claimSubmissionFence: string | null;
+  readonly refundSubmissionFence: string | null;
   readonly recipient: GiftRecipientBinding | null;
 }
 
@@ -119,6 +122,8 @@ export function createClaimableGift(input: CreateClaimableGiftInput): ClaimableG
     refundBlockNumber: null,
     claimSubmissionHash: null,
     refundSubmissionHash: null,
+    claimSubmissionFence: null,
+    refundSubmissionFence: null,
     recipient: null,
   };
 }
@@ -211,12 +216,22 @@ export interface GiftRefundInput {
   readonly blockNumber: number;
 }
 
+export type GiftReceiptAction = "claim" | "refund";
+export type GiftProviderVerification =
+  | { readonly kind: "provider_verified"; readonly provider: string; readonly verifiedAt: number }
+  | { readonly kind: "provider_unverified"; readonly reason: string };
+
+/** A receipt is admissible only when its provenance binds it to this operation. */
 export interface GiftReceipt {
   readonly claimId: string;
-  /** Status is an independently verified provider observation, never a submission result. */
   readonly status: "succeeded" | "reverted" | "pending" | "unknown";
   readonly transactionHash: GiftHex | null;
   readonly blockNumber: number | null;
+  readonly chainId?: typeof BASE_SEPOLIA_CHAIN_ID;
+  readonly escrowContractAddress?: GiftHex;
+  readonly operationId?: string;
+  readonly action?: GiftReceiptAction;
+  readonly providerVerification?: GiftProviderVerification;
 }
 
 export function refundClaimableGift(gift: ClaimableGift, input: GiftRefundInput): ClaimableGift {
@@ -235,6 +250,7 @@ export function refundClaimableGift(gift: ClaimableGift, input: GiftRefundInput)
     version: gift.version + 1,
     refundedAt: input.now,
     refundTransactionHash: input.transactionHash,
+    refundSubmissionHash: input.transactionHash,
     refundBlockNumber: input.blockNumber,
   };
 }
@@ -281,6 +297,7 @@ export function claimClaimableGift(gift: ClaimableGift, input: ClaimClaimableGif
     version: gift.version + 1,
     claimedAt: input.now,
     claimTransactionHash: input.transactionHash,
+    claimSubmissionHash: input.transactionHash,
     recipient: {
       address: authorization.recipientAddress,
       boundAt: input.now,
@@ -289,40 +306,55 @@ export function claimClaimableGift(gift: ClaimableGift, input: ClaimClaimableGif
   };
 }
 
-/** Apply an independently verified provider observation during recovery. */
-export function reconcileClaimableGift(gift: ClaimableGift, input: {
-  readonly now: number;
-  readonly authorization: GiftClaimAuthorization;
-  readonly receipt: GiftReceipt;
-}): ClaimableGift {
-  const { receipt } = input;
-  if (receipt.status === "succeeded") {
-    if (!receipt.transactionHash || receipt.blockNumber === null) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "claim_receipt_missing_finality");
-    if (gift.state === "claimed" && gift.claimTransactionHash === receipt.transactionHash) return gift;
-    const base = gift.state === "claim_submitted" || gift.state === "claim_unknown" ? { ...gift, state: "claimable" as const } : gift;
-    return claimClaimableGift(base, { now: input.now, authorization: input.authorization, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber });
+/** Validate provenance before any state transition. */
+function validateReceipt(gift: ClaimableGift, receipt: GiftReceipt, action: GiftReceiptAction): void {
+  const expectedHash = action === "claim" ? gift.claimSubmissionHash : gift.refundSubmissionHash;
+  if (receipt.claimId !== gift.claimId || receipt.operationId !== gift.claimId || receipt.action !== action || receipt.chainId !== gift.chainId || !receipt.escrowContractAddress || receipt.providerVerification?.kind !== "provider_verified") {
+    throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, `${action}_receipt_provenance_mismatch`);
   }
-  if (gift.state !== "claimable" && gift.state !== "claim_submitted" && gift.state !== "claim_unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_STATE_TRANSITION, `claim_recovery_not_allowed:${gift.state}`);
-  if (receipt.status === "reverted") return { ...gift, state: "claimable", version: gift.version + 1, claimSubmissionHash: receipt.transactionHash };
+  if (receipt.status === "succeeded" || receipt.status === "reverted") {
+    if (!receipt.transactionHash || receipt.transactionHash.toLowerCase() !== expectedHash?.toLowerCase()) {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, `${action}_receipt_submission_hash_mismatch`);
+    }
+  }
+  if (receipt.status === "succeeded" && (!Number.isSafeInteger(receipt.blockNumber) || (receipt.blockNumber as number) < 0)) {
+    throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, `${action}_receipt_missing_finality`);
+  }
+}
+
+function sameObservation(gift: ClaimableGift, receipt: GiftReceipt, action: GiftReceiptAction): boolean {
+  const hash = action === "claim" ? gift.claimSubmissionHash : gift.refundSubmissionHash;
+  const finalHash = action === "claim" ? gift.claimTransactionHash : gift.refundTransactionHash;
+  return (receipt.status === "succeeded" && gift.state === (action === "claim" ? "claimed" : "refunded") && finalHash?.toLowerCase() === receipt.transactionHash?.toLowerCase())
+    || (receipt.status !== "succeeded" && hash?.toLowerCase() === receipt.transactionHash?.toLowerCase() && ((action === "claim" && ((receipt.status === "pending" && gift.state === "claim_submitted") || (receipt.status === "unknown" && gift.state === "claim_unknown") || (receipt.status === "reverted" && gift.state === "claimable"))) || (action === "refund" && ((receipt.status === "pending" && gift.state === "refund_submitted") || (receipt.status === "unknown" && gift.state === "refund_unknown") || (receipt.status === "reverted" && gift.state === "expired")))));
+}
+
+/** Apply an independently verified provider observation during recovery. */
+export function reconcileClaimableGift(gift: ClaimableGift, input: { readonly now: number; readonly authorization: GiftClaimAuthorization; readonly receipt: GiftReceipt }): ClaimableGift {
+  validateReceipt(gift, input.receipt, "claim");
+  if (sameObservation(gift, input.receipt, "claim")) return gift;
+  const receipt = input.receipt;
+  if (receipt.status === "succeeded") {
+    const base = gift.state === "claim_submitted" || gift.state === "claim_unknown" ? { ...gift, state: "claimable" as const } : gift;
+    return claimClaimableGift(base, { now: input.now, authorization: input.authorization, transactionHash: receipt.transactionHash!, blockNumber: receipt.blockNumber! });
+  }
+  if (gift.state !== "claimable" && gift.state !== "claim_submitting" && gift.state !== "claim_submitted" && gift.state !== "claim_unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_STATE_TRANSITION, `claim_recovery_not_allowed:${gift.state}`);
+  if (receipt.status === "reverted") return { ...gift, state: "claimable", version: gift.version + 1 };
   const state = receipt.status === "pending" ? "claim_submitted" : "claim_unknown";
-  return { ...gift, state, version: gift.version + 1, claimSubmissionHash: receipt.transactionHash ?? gift.claimSubmissionHash };
+  return { ...gift, state, version: gift.version + 1 };
 }
 
 /** Apply an independently verified provider observation during refund recovery. */
-export function reconcileRefundableGift(gift: ClaimableGift, input: {
-  readonly now: number;
-  readonly actor: GiftHex;
-  readonly receipt: GiftReceipt;
-}): ClaimableGift {
-  const { receipt } = input;
+export function reconcileRefundableGift(gift: ClaimableGift, input: { readonly now: number; readonly actor: GiftHex; readonly receipt: GiftReceipt }): ClaimableGift {
+  validateReceipt(gift, input.receipt, "refund");
+  if (sameObservation(gift, input.receipt, "refund")) return gift;
+  const receipt = input.receipt;
   if (receipt.status === "succeeded") {
-    if (!receipt.transactionHash || receipt.blockNumber === null) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_receipt_missing_finality");
-    if (gift.state === "refunded" && gift.refundTransactionHash === receipt.transactionHash) return gift;
     const base = gift.state === "refund_submitted" || gift.state === "refund_unknown" ? { ...gift, state: "expired" as const } : gift;
-    return refundClaimableGift(base, { now: input.now, actor: input.actor, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber });
+    return refundClaimableGift(base, { now: input.now, actor: input.actor, transactionHash: receipt.transactionHash!, blockNumber: receipt.blockNumber! });
   }
-  if (gift.state !== "expired" && gift.state !== "refund_submitted" && gift.state !== "refund_unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_STATE_TRANSITION, `refund_recovery_not_allowed:${gift.state}`);
-  if (receipt.status === "reverted") return { ...gift, state: "expired", version: gift.version + 1, refundSubmissionHash: receipt.transactionHash };
+  if (gift.state !== "expired" && gift.state !== "refund_submitting" && gift.state !== "refund_submitted" && gift.state !== "refund_unknown") throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_STATE_TRANSITION, `refund_recovery_not_allowed:${gift.state}`);
+  if (receipt.status === "reverted") return { ...gift, state: "expired", version: gift.version + 1 };
   const state = receipt.status === "pending" ? "refund_submitted" : "refund_unknown";
-  return { ...gift, state, version: gift.version + 1, refundSubmissionHash: receipt.transactionHash ?? gift.refundSubmissionHash };
+  return { ...gift, state, version: gift.version + 1 };
 }

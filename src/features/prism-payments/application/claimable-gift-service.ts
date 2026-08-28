@@ -2,6 +2,7 @@
 // domain transitions with narrow storage, proof, nullifier, and escrow ports;
 // it never resolves a claim token/address/alias to a Prism ID.
 
+import { randomUUID } from "node:crypto";
 import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "../domain/errors";
 import {
   claimClaimableGift,
@@ -120,6 +121,10 @@ export class ClaimableGiftService {
     if (reserved === "already_reserved") {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.NULLIFIER_REPLAY, "claim_nullifier_already_reserved");
     }
+    const fence = randomUUID();
+    const fencedGift = this.deps.store.beginClaimSubmission
+      ? await this.deps.store.beginClaimSubmission(claimId, gift.version, fence)
+      : gift;
     let submitted;
     try {
       submitted = await this.deps.escrow.claimEscrow({
@@ -137,7 +142,7 @@ export class ClaimableGiftService {
     }
     if (submitted.status === "unknown" || (submitted.status === "submitted" && submitted.blockNumber === null)) {
       const state = submitted.status === "unknown" ? "claim_unknown" : "claim_submitted";
-      return this.deps.store.update(claimId, gift.version, (current) => ({ ...current, state, version: current.version + 1, claimSubmissionHash: submitted.transactionHash }));
+      return this.deps.store.update(claimId, fencedGift.version, (current) => ({ ...current, state, version: current.version + 1, claimSubmissionHash: submitted.transactionHash }));
     }
     if (!submitted.transactionHash || submitted.blockNumber === null) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN, "claim_submission_missing_receipt");
@@ -145,8 +150,8 @@ export class ClaimableGiftService {
     const claimTransactionHash = submitted.transactionHash;
     const claimBlockNumber = submitted.blockNumber;
     try {
-      return await this.deps.store.update(claimId, gift.version, (current) =>
-        claimClaimableGift(current, {
+      return await this.deps.store.update(claimId, fencedGift.version, (current) =>
+        claimClaimableGift(current.state === "claim_submitting" ? { ...current, state: "claimable" } : current, {
           now: input.now,
           authorization: { ...authorization, signature },
           transactionHash: claimTransactionHash,
@@ -154,6 +159,12 @@ export class ClaimableGiftService {
         }),
       );
     } catch (cause) {
+      // The durable fence remains the recovery anchor. Best-effort persistence of
+      // the returned hash makes restart polling exact; if it fails, the
+      // claim_submitting row explicitly requires operator/recovery attention.
+      try {
+        await this.deps.store.update(claimId, fencedGift.version, current => ({ ...current, state: "claim_submitted", version: current.version + 1, claimSubmissionHash: claimTransactionHash }));
+      } catch { /* retain claim_submitting + fence */ }
       throw cause instanceof PaymentClaimError
         ? cause
         : new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "claim_state_persistence_failed_after_submission");
@@ -173,6 +184,10 @@ export class ClaimableGiftService {
     if (input.actor.toLowerCase() !== gift.sender.toLowerCase()) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED, "sender_refund_authority_required");
     }
+    const refundFence = randomUUID();
+    const fencedGift = this.deps.store.beginRefundSubmission
+      ? await this.deps.store.beginRefundSubmission(claimId, gift.version, refundFence)
+      : gift;
     let submitted;
     try { submitted = await this.deps.escrow.refundEscrow({ claimId: gift.claimId }); }
     catch (cause) {
@@ -181,13 +196,13 @@ export class ClaimableGiftService {
     }
     if (submitted.status === "unknown" || (submitted.status === "submitted" && submitted.blockNumber === null)) {
       const state = submitted.status === "unknown" ? "refund_unknown" : "refund_submitted";
-      return this.deps.store.update(claimId, gift.version, (current) => ({ ...current, state, version: current.version + 1, refundSubmissionHash: submitted.transactionHash }));
+      return this.deps.store.update(claimId, fencedGift.version, (current) => ({ ...current, state, version: current.version + 1, refundSubmissionHash: submitted.transactionHash }));
     }
     if (!submitted.transactionHash || submitted.blockNumber === null) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.RECEIPT_MISMATCH, "refund_submission_missing_receipt");
     const refundTransactionHash = submitted.transactionHash;
     const refundBlockNumber = submitted.blockNumber;
-    return this.deps.store.update(claimId, gift.version, (current) =>
-      refundClaimableGift(current, {
+    return this.deps.store.update(claimId, fencedGift.version, (current) =>
+      refundClaimableGift(current.state === "refund_submitting" ? { ...current, state: "expired" } : current, {
         now: input.now,
         actor: input.actor,
         transactionHash: refundTransactionHash,
