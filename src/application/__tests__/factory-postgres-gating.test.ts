@@ -68,10 +68,10 @@ describe("Factory — Postgres environment gating", () => {
   });
 
   it("isProductionRuntime respects NODE_ENV and flags", async () => {
-    await withEnv({ NODE_ENV: "production", PRISM_POSTGRES_TEST_URL: undefined }, async () => {
+    await withEnv({ NODE_ENV: "production", PRISM_RUNTIME_MODE: undefined, PRISM_POSTGRES_TEST_URL: undefined }, async () => {
       expect(isProductionRuntime()).toBe(true);
     });
-    await withEnv({ NODE_ENV: "development", PRISM_REQUIRE_POSTGRES: "1" }, async () => {
+    await withEnv({ NODE_ENV: "development", PRISM_RUNTIME_MODE: undefined, PRISM_REQUIRE_POSTGRES: "1" }, async () => {
       expect(isProductionRuntime()).toBe(true);
     });
     await withEnv({ NODE_ENV: "test", PRISM_REQUIRE_POSTGRES: undefined, PRISM_RUNTIME_MODE: undefined }, async () => {

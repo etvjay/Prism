@@ -28,8 +28,8 @@ const pauseService = {
 const session = {
   sessionId: "session-m7",
   userId: "user-m7",
-  issuedAt: 1_000,
-  expiresAt: 2_000,
+  issuedAt: Math.floor(Date.now() / 1000) - 10,
+  expiresAt: Math.floor(Date.now() / 1000) + 3600,
 };
 
 function request(body: Record<string, unknown>, headers: Record<string, string> = {}) {
