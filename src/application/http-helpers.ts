@@ -4,7 +4,7 @@
 
 import type { AppResponse } from "./schemas";
 import { APP_ERROR_CODE } from "./errors";
-import { assertValidAppSession, isAppAuthError, type AppSession } from "./auth";
+import { assertValidAppSession, isAppAuthError, verifySignedAppSession, type AppSession } from "./auth";
 
 export interface ParsedHeaders {
   requestId: string | null;
@@ -185,18 +185,22 @@ export function requireSession(req: Request, body: Record<string, unknown> | nul
 }
 
 // Strict authority boundary for writes with caller-derived identity.
-// A trusted session verifier is not wired into this candidate, so unverified
-// body/Bearer material is accepted only in explicit test mode.
 export function requireAuthenticatedSession(req: Request, body: Record<string, unknown> | null): AppSession | { error: Response } {
   const parsedHeaders = parseHeaders(req);
   const mode = process.env.PRISM_RUNTIME_MODE;
   const testMode = mode === "test" || (mode === undefined && process.env.NODE_ENV === "test");
-  if (!testMode) return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
-  // Fixture sessions are deliberately opt-in and only exist for isolated tests.
-  // There is no production/rehearsal override for this switch.
-  if (process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES !== "1") {
-    return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_fixture_opt_in_required") };
+  const bearer = req.headers.get("authorization");
+  const token = bearer && /^Bearer\s+/i.test(bearer) ? bearer.replace(/^Bearer\s+/i, "").trim() : (req.headers.get("x-prism-session-token") ?? req.headers.get("x-session-token"));
+  if (token) {
+    try { return verifySignedAppSession(token); }
+    catch (error) {
+      if (isAppAuthError(error) && error.detail === "session_secret_unavailable") return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, error.detail) };
+      return { error: jsonError(parsedHeaders.requestId, isAppAuthError(error) ? error.code : "ERR-023", 401, isAppAuthError(error) ? error.detail : "invalid_app_session") };
+    }
   }
+  if (!testMode) return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
+  if (process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES !== "1") return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_fixture_opt_in_required") };
+  // Fixtures are intentionally body/header-only and cannot be used outside test mode.
   const fromBody = (body?.session ?? body?.appSession ?? null) as unknown as AppSession | null;
   const parsed = parseSession(req, fromBody);
   if (!parsed) return { error: jsonError(parsedHeaders.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 401, "missing_app_session") };
