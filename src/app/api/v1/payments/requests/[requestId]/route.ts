@@ -1,6 +1,52 @@
 import { getPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
-import { parseHeaders, readJson, jsonData, jsonPaymentError, nowSeconds, safeJson, publicPayment } from "@/features/prism-payments/application/http-helpers";
+import { parseHeaders, readJson, requireSession, jsonData, jsonPaymentError, nowSeconds, publicPayment } from "@/features/prism-payments/application/http-helpers";
 import { BASE_SEPOLIA_CHAIN_ID } from "@/features/prism-payments/domain/payment-request";
+import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "@/features/prism-payments/domain/errors";
 
-export async function GET(req:Request,ctx:{params:Promise<{requestId:string}>}){const p=parseHeaders(req);try{const rt=await getPaymentHttpRuntime();const d=await rt.payments.get((await ctx.params).requestId);if(!d)return jsonPaymentError(new (await import('@/features/prism-payments/domain/errors')).PaymentClaimError('ERR-060' as any,'payment_not_found'),p);return jsonData(publicPayment(d),p);}catch(e){return jsonPaymentError(e,p)}}
-export async function POST(req:Request,ctx:{params:Promise<{requestId:string}>}){const p=parseHeaders(req);const body=await readJson(req);if(body===null)return jsonPaymentError(new Error('bad'),p);try{const rt=await getPaymentHttpRuntime();const id=(await ctx.params).requestId;const op=String(body.operation??'view');let d:any;if(op==='view')d=await rt.payments.view(id,Number(body.now??nowSeconds()));else if(op==='approve'){const a=(body.approval&&typeof body.approval==='object'?body.approval:{} ) as Record<string,unknown>; d=await rt.payments.approve(id,{now:Number(body.now??nowSeconds()),approval:{...a,requestId:id,chainId:Number(a.chainId??BASE_SEPOLIA_CHAIN_ID),amount:BigInt(String(a.amount))}} as any);}else if(op==='submit')d=await rt.payments.submit(id);else throw new Error('unsupported_operation');return jsonData(publicPayment(d),p);}catch(e){return jsonPaymentError(e,p)}}
+export async function GET(req: Request, ctx: { params: Promise<{ requestId: string }> }): Promise<Response> {
+  const parsed = parseHeaders(req);
+  try {
+    const runtime = await getPaymentHttpRuntime();
+    const data = await runtime.payments.get((await ctx.params).requestId);
+    if (!data) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.PAYMENT_NOT_FOUND, "payment_not_found");
+    return jsonData(publicPayment(data), parsed);
+  } catch (error) {
+    return jsonPaymentError(error, parsed);
+  }
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ requestId: string }> }): Promise<Response> {
+  const parsed = parseHeaders(req);
+  const body = await readJson(req);
+  if (body === null) return jsonPaymentError(new Error("bad"), parsed);
+  const sessionOrErr = requireSession(req, body);
+  if ("error" in sessionOrErr) return sessionOrErr.error;
+  try {
+    const runtime = await getPaymentHttpRuntime();
+    const id = (await ctx.params).requestId;
+    const operation = String(body.operation ?? "view");
+    let data;
+    if (operation === "view") {
+      data = await runtime.payments.view(id, Number(body.now ?? nowSeconds()));
+    } else if (operation === "approve") {
+      const approval = (body.approval && typeof body.approval === "object" ? body.approval : {}) as Record<string, unknown>;
+      data = await runtime.payments.approve(id, {
+        now: Number(body.now ?? nowSeconds()),
+        approval: {
+          ...approval,
+          requestId: id,
+          walletAddress: sessionOrErr.userId,
+          chainId: Number(approval.chainId ?? BASE_SEPOLIA_CHAIN_ID),
+          amount: BigInt(String(approval.amount)),
+        },
+      } as never);
+    } else if (operation === "submit") {
+      data = await runtime.payments.submit(id);
+    } else {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_REQUEST, "unsupported_operation");
+    }
+    return jsonData(publicPayment(data), parsed);
+  } catch (error) {
+    return jsonPaymentError(error, parsed);
+  }
+}

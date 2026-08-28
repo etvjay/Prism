@@ -21,7 +21,6 @@ export interface PublicGiftProjection {
   readonly expiresAt: number;
   readonly sender: GiftHex;
   readonly refundRecipient: GiftHex;
-  readonly nullifierCommitment: GiftHex;
   readonly recipientBound: boolean;
   readonly createdAt: number;
   readonly fundedAt: number | null;
@@ -48,7 +47,6 @@ export interface PublicGiftEvent {
   readonly expiresAt: number;
   readonly sender: GiftHex;
   readonly refundRecipient: GiftHex;
-  readonly nullifierCommitment: GiftHex;
   readonly occurredAt: number;
   readonly transactionHash: GiftHex | null;
   readonly blockNumber: number | null;
@@ -68,7 +66,6 @@ export function toPublicGiftProjection(gift: ClaimableGift): PublicGiftProjectio
     expiresAt: gift.expiresAt,
     sender: gift.sender,
     refundRecipient: gift.refundRecipient,
-    nullifierCommitment: gift.nullifierCommitment,
     recipientBound: gift.recipient !== null,
     createdAt: gift.createdAt,
     fundedAt: gift.fundedAt,
@@ -124,7 +121,6 @@ function eventFor(gift: ClaimableGift, type: PublicGiftEventType): PublicGiftEve
     expiresAt: gift.expiresAt,
     sender: gift.sender,
     refundRecipient: gift.refundRecipient,
-    nullifierCommitment: gift.nullifierCommitment,
     occurredAt,
     transactionHash,
     blockNumber,

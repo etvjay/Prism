@@ -4,6 +4,7 @@ import { PostgresClaimNullifierStore, PostgresClaimableGiftStore, PostgresPaymen
 import { ClaimableGiftService } from "./claimable-gift-service";
 import { RequestPaymentService } from "./request-payment-service";
 import type { ClaimableGiftStore, ClaimNullifierStore, PublicBaseSepoliaEscrowPort, ClaimProofVerifier, PaymentRequestStore } from "../domain/ports";
+import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "../domain/errors";
 
 export interface PaymentHttpRuntime { payments: RequestPaymentService; gifts: ClaimableGiftService; }
 const unavailable: PublicBaseSepoliaEscrowPort = { chainId: 84532, async createEscrow(){ throw new Error("escrow_unavailable"); }, async claimEscrow(){ throw new Error("escrow_unavailable"); }, async refundEscrow(){ throw new Error("escrow_unavailable"); }, async observeFunding(){ return null; } };
@@ -14,7 +15,7 @@ export async function getPaymentHttpRuntime(): Promise<PaymentHttpRuntime> {
  let ps:PaymentRequestStore, gs:ClaimableGiftStore, ns:ClaimNullifierStore;
  const url=(process.env.PRISM_POSTGRES_TEST_URL??process.env.PRISM_POSTGRES_URL??"").trim();
  if(url){ const pool=new Pool({connectionString:url}); await pool.query(PAYMENT_CLAIM_MIGRATION_SQL); ps=new PostgresPaymentRequestStore(pool); gs=new PostgresClaimableGiftStore(pool); ns=new PostgresClaimNullifierStore(pool); }
- else { ps=new InMemoryPaymentRequestStore(); gs=new InMemoryClaimableGiftStore(); ns=new InMemoryClaimNullifierStore(); }
+ else { const production = process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production"; if(production) throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.ESCROW_UNAVAILABLE,"durable_store_required"); ps=new InMemoryPaymentRequestStore(); gs=new InMemoryClaimableGiftStore(); ns=new InMemoryClaimNullifierStore(); }
  runtime={payments:new RequestPaymentService({store:ps}), gifts:new ClaimableGiftService({store:gs,nullifierStore:ns,escrow:unavailable,claimProofVerifier:verifier})}; return runtime;
 }
 export function resetPaymentHttpRuntime(){ runtime=null; }

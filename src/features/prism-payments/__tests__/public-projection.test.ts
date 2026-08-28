@@ -34,6 +34,7 @@ describe("public claimable-gift projection", () => {
     });
     expect(projection).not.toHaveProperty("proof");
     expect(projection).not.toHaveProperty("viewingKey");
+    expect(projection).not.toHaveProperty("nullifierCommitment");
     expect(JSON.stringify(projection)).not.toMatch(/memo|private|proof|viewing/i);
   });
 
@@ -64,5 +65,6 @@ describe("public claimable-gift projection", () => {
     });
     expect(events[0]).not.toHaveProperty("proof");
     expect(events[0]).not.toHaveProperty("recipientAddress");
+    expect(events[0]).not.toHaveProperty("nullifierCommitment");
   });
 });

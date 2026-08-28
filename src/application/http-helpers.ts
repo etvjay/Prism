@@ -18,6 +18,8 @@ const DEPENDENCY_ERROR_CODES = new Set(["ERR-021", "ERR-022"]);
 /** Keep client diagnostics useful without exposing provider output or secrets. */
 export function sanitizeExternalDetail(code: string | undefined, detail: unknown): string | undefined {
   if (detail === undefined || detail === null) return undefined;
+  if (code === "ERR-062") return "dependency_unavailable";
+  if (code === "ERR-063") return "claim_proof_invalid";
   if (code && DEPENDENCY_ERROR_CODES.has(code)) {
     if (code === "ERR-022") return "submission_status_unknown";
     return detail === "store_unavailable" ? "store_unavailable" : "dependency_unavailable";

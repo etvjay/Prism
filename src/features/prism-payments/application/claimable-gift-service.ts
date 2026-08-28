@@ -84,7 +84,7 @@ export class ClaimableGiftService {
       recipientAddress: input.recipientAddress,
     });
     if ("valid" in verified && verified.valid === false) {
-      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.CLAIM_PROOF_INVALID, verified.reason ?? "claim_proof_invalid");
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.CLAIM_PROOF_INVALID, "claim_proof_invalid");
     }
     const authorization = verified as GiftClaimAuthorization;
     if (authorization.claimId !== gift.claimId || authorization.nullifier !== gift.nullifierCommitment) {

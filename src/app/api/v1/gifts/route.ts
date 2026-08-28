@@ -1,4 +1,32 @@
 import { getPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
-import { parseHeaders, readJson, jsonData, jsonPaymentError, nowSeconds, safeJson, publicGift } from "@/features/prism-payments/application/http-helpers";
+import { parseHeaders, readJson, requireSession, jsonData, jsonPaymentError, nowSeconds, publicGift } from "@/features/prism-payments/application/http-helpers";
 import { BASE_SEPOLIA_CHAIN_ID } from "@/features/prism-payments/domain/claimable-gift";
-export async function POST(req:Request){const p=parseHeaders(req);const b=await readJson(req);if(b===null)return jsonPaymentError(new Error('bad'),p);try{const rt=await getPaymentHttpRuntime();const d=await rt.gifts.create({claimId:String(b.claimId??crypto.randomUUID()),sender:String(b.sender) as `0x${string}`,asset:b.asset as `0x${string}`,amount:BigInt(String(b.amount)),chainId:Number(b.chainId??BASE_SEPOLIA_CHAIN_ID) as typeof BASE_SEPOLIA_CHAIN_ID,expiresAt:Number(b.expiresAt),nullifierCommitment:String(b.nullifierCommitment) as `0x${string}`,now:Number(b.now??nowSeconds())});return jsonData(publicGift(d),p,201)}catch(e){return jsonPaymentError(e,p)}}
+import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "@/features/prism-payments/domain/errors";
+
+export async function POST(req: Request): Promise<Response> {
+  const parsed = parseHeaders(req);
+  const body = await readJson(req);
+  if (body === null) return jsonPaymentError(new Error("bad"), parsed);
+  const sessionOrErr = requireSession(req, body);
+  if ("error" in sessionOrErr) return sessionOrErr.error;
+  try {
+    const sender = String(body.sender ?? "");
+    if (sender.toLowerCase() !== sessionOrErr.userId.toLowerCase()) {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED, "authenticated_sender_required");
+    }
+    const runtime = await getPaymentHttpRuntime();
+    const data = await runtime.gifts.create({
+      claimId: String(body.claimId ?? crypto.randomUUID()),
+      sender: sessionOrErr.userId as `0x${string}`,
+      asset: body.asset as `0x${string}`,
+      amount: BigInt(String(body.amount)),
+      chainId: Number(body.chainId ?? BASE_SEPOLIA_CHAIN_ID) as typeof BASE_SEPOLIA_CHAIN_ID,
+      expiresAt: Number(body.expiresAt),
+      nullifierCommitment: String(body.nullifierCommitment) as `0x${string}`,
+      now: Number(body.now ?? nowSeconds()),
+    });
+    return jsonData(publicGift(data), parsed, 201);
+  } catch (error) {
+    return jsonPaymentError(error, parsed);
+  }
+}
