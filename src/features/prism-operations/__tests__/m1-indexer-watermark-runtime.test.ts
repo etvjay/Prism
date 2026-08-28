@@ -23,6 +23,7 @@ function fakeRegistry(overrides: Partial<RegistryReadPort> = {}): RegistryReadPo
     async getIdentity() { return { controller: "0x1111", createdAtBlock: 1, version: 0 }; },
     async resolve() { return { executionAccount: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", watermark: 100 }; },
     async getBinding() { return { status: "ACTIVE" }; },
+    async listByController() { return []; },
     async isDigestConsumed() { return false; },
     ...overrides,
   };

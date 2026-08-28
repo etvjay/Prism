@@ -146,6 +146,7 @@ describe("application, event projection, and M3 Starknet boundaries", () => {
       operationStore: new InMemoryOperationStore(),
       registry: {
         async getIdentity() { return { controller: CONTROLLER_CANONICAL, createdAtBlock: 1, version: 0 }; },
+        async listByController() { return []; },
         async resolve() { return { executionAccount: null, watermark: 0 }; },
         async getBinding() { return { status: null }; },
         async isDigestConsumed() { return false; },

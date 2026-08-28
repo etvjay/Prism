@@ -20,6 +20,9 @@ function fakeRegistry(overrides: Partial<RegistryReadPort> = {}): RegistryReadPo
     async getBinding() {
       return { status: "ACTIVE" };
     },
+    async listByController() {
+      return [];
+    },
     async isDigestConsumed() {
       return false;
     },

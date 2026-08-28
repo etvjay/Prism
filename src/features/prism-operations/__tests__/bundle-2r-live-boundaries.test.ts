@@ -375,6 +375,7 @@ describe("Bundle 2R Live — stale watermark fail-closed (INV-SYS-007, T12, SC-0
       async getIdentity() { return { controller: "0x1111", createdAtBlock: 1, version: 0 }; },
       async resolve() { return { executionAccount, watermark: watermark as number }; },
       async getBinding() { return { status: "ACTIVE" }; },
+      async listByController() { return []; },
       async isDigestConsumed() { return false; },
     } as unknown as RegistryReadPort;
   }
