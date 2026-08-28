@@ -8,7 +8,6 @@ export type ChainNamespace = (typeof CHAIN_NAMESPACES)[number];
 export const ENDPOINT_KINDS = [
   "ACCOUNT",
   "STRK20_PRIVATE_CONTEXT",
-  "STRK20_SHADOW_ACCOUNT",
 ] as const;
 export type EndpointKind = (typeof ENDPOINT_KINDS)[number];
 

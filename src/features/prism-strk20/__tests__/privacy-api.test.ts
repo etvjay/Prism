@@ -260,7 +260,7 @@ describe("policy-filtered privacy receipt projection", () => {
     expect(shield.mechanism).toBe("NONE");
     expect(shield.limitations).toContain("shield_deposit_is_public");
     expect(shield.publicProperties).toContain("amount");
-    expect(projectPrivacyReceipt(baseView({ kind: "application" })).publicProperties).not.toContain("amount");
+    expect(projectPrivacyReceipt(baseView({ kind: "application" })).publicProperties).toContain("amount");
     const text = JSON.stringify(projectPrivacyReceipt(baseView({ errorDetail: "providerResponse privateNote viewingKey 9n" })));
     expect(text).not.toMatch(/providerResponse|privateNote|viewingKey|9n/);
   });

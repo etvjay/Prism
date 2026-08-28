@@ -52,11 +52,14 @@ import {
   validateM5Actions,
   validateM5Receipt,
   validateM5TransactionObservation,
+  validateM5Conservation,
+  validateM5OpenNoteObservation,
   validateVesuDepositObservation,
   type M5ReceiptObservation,
 } from "./validation";
 import { createM5Operation, markM5SubmissionStarted, markM5Submitted, recoverM5Operation, type M5Operation } from "./operation";
 import { evaluateM5Maturity } from "./maturity";
+import { isShadowAccountObservationSupported, normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
 // ---------------------------------------------------------------------------
 
 export interface M5RunnerConfig {
@@ -68,6 +71,8 @@ export interface M5RunnerConfig {
   chainIdExpected?: string; // SN_SEPOLIA
   // Amount to lend (u128, in STRK base units, e.g. 1e18 for 1 STRK)
   inAmount: bigint;
+  /** Optional fee quote captured before the run; live fee must still match. */
+  quotedFee?: bigint | null;
   // Polling
   receiptTimeoutMs?: number;
   receiptIntervalMs?: number;
@@ -111,6 +116,8 @@ export interface M5LivePredicates {
   noStrandedBalance: boolean;
   independentReadbackOk: boolean;
   validatorMineOk: boolean | null; // null when not configured
+  /** Optional provider observation only; never an M5 completion predicate. */
+  shadowAccountObserved: boolean;
 }
 
 export interface M5Success {
@@ -136,6 +143,7 @@ export interface M5Success {
     conservation: { inAmount: string; vTokenDeltaShares?: string; helperStrkBalance: string; helperVTokenBalance: string };
     note?: { noteId: string; token: string; amount: string };
     validator?: unknown;
+    shadowAccountObservation?: ShadowAccountObservation;
     commit?: string;
   };
 }
@@ -168,8 +176,14 @@ function assertConfiguredAddress(value: string, name: string): void {
 
 function safeErrorMessage(error: unknown): string {
   const raw = String((error as Error)?.message ?? error ?? "unknown_error");
-  if (/viewing.?key|private.?key|seed.?phrase|mnemonic/i.test(raw)) return "provider_error_redacted";
+  if (/viewing.?key|private.?key|private.?note|private.?balance|seed.?phrase|mnemonic|calldata|proof|raw|provider.?response|secret|password/i.test(raw)) return "provider_error_redacted";
   return raw.slice(0, 160);
+}
+
+function normalizeSourceId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length === 0 ? null : normalized;
 }
 
 function isExpectedSepoliaChainId(chainId: string): boolean {
@@ -238,6 +252,11 @@ function isPrivacyLeakError(e: unknown): boolean {
   return msg.includes("privacy_leak");
 }
 
+function isUserRejectedError(e: unknown): boolean {
+  const msg = String((e as Error)?.message ?? "").toLowerCase();
+  return msg.includes("user_refused") || msg.includes("user refused") || msg.includes("user rejected") || msg.includes("user denied");
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -254,11 +273,12 @@ export class M5VesuRunner {
       privacyPool: cfg.privacyPool ?? PRIVACY_POOL_SEPOLIA,
       chainIdExpected: cfg.chainIdExpected ?? "SN_SEPOLIA",
       inAmount: cfg.inAmount,
+      quotedFee: cfg.quotedFee ?? null,
       receiptTimeoutMs: cfg.receiptTimeoutMs ?? 60_000,
       receiptIntervalMs: cfg.receiptIntervalMs ?? 2_000,
       independentRpc: (cfg.independentRpc ?? null) as IndependentRpcReader | null,
-      independentSourceId: cfg.independentSourceId ?? cfg.independentRpc?.sourceId ?? null,
-      primarySourceId: cfg.primarySourceId ?? null,
+      independentSourceId: normalizeSourceId(cfg.independentSourceId ?? cfg.independentRpc?.sourceId),
+      primarySourceId: normalizeSourceId(cfg.primarySourceId),
       operationId: cfg.operationId ?? "m5-vesu-local",
       validator: (cfg.validator ?? null) as ValidatorPort | null,
       commit: cfg.commit ?? "",
@@ -287,6 +307,9 @@ export class M5VesuRunner {
     if (cfg.inAmount < 0n) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount negative");
     if (!isU128(cfg.inAmount)) throw new M5Error(M5_ERROR_CODE.AMOUNT_OVERFLOW, `in_amount ${cfg.inAmount} exceeds u128 max`);
     if (cfg.inAmount < MIN_AMOUNT) throw new M5Error(M5_ERROR_CODE.INVALID_AMOUNT, "in_amount zero");
+    if (cfg.quotedFee !== undefined && cfg.quotedFee !== null && (typeof cfg.quotedFee !== "bigint" || cfg.quotedFee < 0n)) {
+      throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, "quoted_fee_invalid");
+    }
   }
 
   // Main entry — provider-injected
@@ -326,6 +349,7 @@ export class M5VesuRunner {
       noStrandedBalance: false,
       independentReadbackOk: false,
       validatorMineOk: null,
+      shadowAccountObserved: false,
     };
 
     // 1. Capability check — via supportedWalletApi/supportedSpecs, not balances
@@ -349,7 +373,7 @@ export class M5VesuRunner {
       return {
         verdict: M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE,
         reason: "CAPABILITY_UNAVAILABLE",
-        detail: `Capability query failed: ${(e as Error).message}`,
+        detail: `Capability query failed: ${safeErrorMessage(e)}`,
         commit: this.cfg.commit,
       };
     }
@@ -368,11 +392,31 @@ export class M5VesuRunner {
       throw new M5Error(M5_ERROR_CODE.NETWORK_MISMATCH, `expected ${expected} got ${chainId}`);
     }
 
+    // Shadow accounts are an optional provider observation from the supplied
+    // SDK/anonymizer research. They are not a route, note, receipt, binding,
+    // or prerequisite for the canonical wallet-mediated action.
+    let shadowAccount: ShadowAccountObservation | undefined;
+    if (typeof provider.observeShadowAccountCapability === "function") {
+      try {
+        const observed = await provider.observeShadowAccountCapability();
+        assertViewingKeyFree(observed, "shadow_account_observation");
+        shadowAccount = normalizeShadowAccountObservation(observed);
+      } catch {
+        shadowAccount = normalizeShadowAccountObservation(null);
+      }
+      predicates.shadowAccountObserved = isShadowAccountObservationSupported(shadowAccount);
+    }
+
     // 2. Fee/registration preflight
     try {
       const f = await provider.getFeeAmount();
       assertViewingKeyFree(f, "fee_observation");
-      if (f.fee < 0n) throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, "negative_fee");
+      if (!f || typeof f !== "object" || typeof f.fee !== "bigint" || f.fee < 0n || (f.blockNumber !== null && (!Number.isSafeInteger(f.blockNumber) || f.blockNumber < 0))) {
+        throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, "invalid_fee_observation");
+      }
+      if (this.cfg.quotedFee !== null && this.cfg.quotedFee !== f.fee) {
+        throw new M5Error(M5_ERROR_CODE.FEE_CHANGED, `quoted_${String(this.cfg.quotedFee)}_observed_${String(f.fee)}`);
+      }
       predicates.feeObserved = true;
     } catch (e) {
       if (e instanceof M5Error) throw e;
@@ -382,6 +426,9 @@ export class M5VesuRunner {
     // Registration — if wallet exposes isRegistered, check; else infer via prepare error
     try {
       const registered = await provider.isRegistered();
+      if (registered !== true && registered !== false && registered !== null) {
+        throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, "registration_observation_malformed");
+      }
       predicates.registrationObserved = registered !== null;
       if (registered === false) {
         throw new M5Error(M5_ERROR_CODE.NOT_REGISTERED, "wallet not registered into privacy pool; viewing key not set");
@@ -438,6 +485,7 @@ export class M5VesuRunner {
     let simResult: Strk20CallAndProof | null = null;
     try {
       simResult = await provider.strk20PrepareInvoke(actions, true);
+      assertViewingKeyFree(simResult, "simulation_result");
       // Simulate must return empty proof (not submittable)
       if (
         !simResult ||
@@ -491,6 +539,7 @@ export class M5VesuRunner {
       this.operation = operation;
       try {
         const res = await provider.strk20InvokeTransaction(actions);
+        assertViewingKeyFree(res, "submission_result");
         if (!res.transaction_hash || !/^0x[0-9a-fA-F]+$/.test(res.transaction_hash)) {
           throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `invalid tx hash from wallet: ${res.transaction_hash}`);
         }
@@ -506,6 +555,9 @@ export class M5VesuRunner {
           throw new M5Error(M5_ERROR_CODE.SCREENING_REJECTED, safeErrorMessage(e));
         if (msg.toLowerCase().includes("screening") && msg.toLowerCase().includes("unavailable"))
           throw new M5Error(M5_ERROR_CODE.SCREENING_UNAVAILABLE, safeErrorMessage(e));
+        if (isUserRejectedError(e)) {
+          throw new M5Error(M5_ERROR_CODE.USER_REJECTED, "wallet_user_rejected");
+        }
         if (msg.toLowerCase().includes("user_refused") || msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("denied")) {
           throw new M5Error(M5_ERROR_CODE.WALLET_UNAVAILABLE, `user refused: ${safeErrorMessage(e)}`);
         }
@@ -567,14 +619,16 @@ export class M5VesuRunner {
       try {
         candidate = await readPrimaryReceipt();
       } catch (e) {
-        throw e instanceof M5Error
-          ? e
-          : new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt read failed: ${safeErrorMessage(e)}`);
+        // Malformed/mismatched facts are terminal observation failures. A
+        // transport outage is retryable and must not turn a temporary RPC
+        // error into a false terminal receipt state.
+        if (e instanceof M5Error) throw e;
       }
       if (!candidate && this.cfg.independentRpc) {
         try {
           candidate = await readIndependentReceipt();
-        } catch {
+        } catch (e) {
+          if (e instanceof M5Error) throw e;
           // A supplementary independent path may be unavailable while the
           // wallet provider continues polling. It cannot create evidence.
         }
@@ -587,7 +641,11 @@ export class M5VesuRunner {
         });
         operation = recovered.operation;
         this.operation = operation;
-        if (candidate.executionStatus === "REVERTED" || candidate.executionStatus === "SUCCEEDED") {
+        // A reverted label without a block is not terminal chain evidence;
+        // continue polling for a final receipt. Successful observations retain
+        // the historical strict finality checks below.
+        const terminalRevert = candidate.executionStatus === "REVERTED" && candidate.blockNumber !== null;
+        if (terminalRevert || candidate.executionStatus === "SUCCEEDED") {
           receipt = candidate;
           break;
         }
@@ -620,10 +678,12 @@ export class M5VesuRunner {
     }
     predicates.executionSucceeded = true;
 
-    // 8. Independent public readback. A source label is required before the
-    // result can satisfy the X3 independent-read predicate; an injected test
-    // double still remains useful for X2 shape tests.
+    // Independent X3 requires the receipt plus the public transaction and
+    // balance reads from the explicitly labelled second source. A second
+    // receipt alone is useful for diagnostics but cannot promote evidence.
     let independent: M5ReceiptObservation | null = null;
+    let independentTransactionRead = false;
+    let independentBalanceRead = false;
     if (this.cfg.independentRpc) {
       try {
         independent = await readIndependentReceipt();
@@ -633,14 +693,10 @@ export class M5VesuRunner {
               (independent.blockNumber !== null && receipt.blockNumber !== null && independent.blockNumber !== receipt.blockNumber)) {
             throw new M5Error(M5_ERROR_CODE.INDEPENDENT_READ_MISMATCH, "independent_receipt_facts_mismatch");
           }
-          predicates.independentReadbackOk = Boolean(
-            this.cfg.independentSourceId &&
-            (!this.cfg.primarySourceId || this.cfg.independentSourceId !== this.cfg.primarySourceId),
-          );
         }
       } catch (e) {
         if (e instanceof M5Error) throw e;
-        predicates.independentReadbackOk = false;
+        independent = null;
       }
     }
 
@@ -659,7 +715,8 @@ export class M5VesuRunner {
     // an explicit transaction reader may establish helper involvement; receipt
     // events or vToken addresses cannot stand in for calldata.
     let rawCalldata: string[] | null = null;
-    const transactionReader = this.cfg.independentRpc?.getTransaction ?? provider.getTransaction;
+    const independentTransactionReader = this.cfg.independentRpc?.getTransaction;
+    const transactionReader = independentTransactionReader ?? provider.getTransaction;
     if (transactionReader) {
       try {
         const transaction = await transactionReader(txHash);
@@ -667,6 +724,9 @@ export class M5VesuRunner {
           const validatedTransaction = validateM5TransactionObservation(transaction, txHash);
           rawCalldata = validatedTransaction.calldata;
           predicates.helperCalldataInReceipt = containsAddressInCalldata(rawCalldata, this.cfg.helperAddress!);
+          if (independentTransactionReader && transactionReader === independentTransactionReader) {
+            independentTransactionRead = true;
+          }
         }
       } catch (e) {
         if (e instanceof M5Error) throw e;
@@ -692,11 +752,13 @@ export class M5VesuRunner {
     // open-note amount is wallet-owned and remains a separate proof.
     let helperStrkBalance: bigint | null = null;
     let helperVTokenBalance: bigint | null = null;
-    const balanceReader = this.cfg.independentRpc?.getBalance ?? provider.callBalance?.bind(provider);
+    const independentBalanceReader = this.cfg.independentRpc?.getBalance;
+    const balanceReader = independentBalanceReader ?? provider.callBalance?.bind(provider);
     if (balanceReader) {
       try {
         helperStrkBalance = await balanceReader(this.cfg.strkToken!, this.cfg.helperAddress!);
         helperVTokenBalance = await balanceReader(this.cfg.vToken!, this.cfg.helperAddress!);
+        if (independentBalanceReader && balanceReader === independentBalanceReader) independentBalanceRead = true;
         if (typeof helperStrkBalance !== "bigint" || typeof helperVTokenBalance !== "bigint" || helperStrkBalance < 0n || helperVTokenBalance < 0n) {
           throw new M5Error(M5_ERROR_CODE.RECEIPT_INVALID, "helper_balance_observation_malformed");
         }
@@ -710,8 +772,18 @@ export class M5VesuRunner {
         helperStrkBalance = null;
         helperVTokenBalance = null;
         predicates.noStrandedBalance = false;
+        independentBalanceRead = false;
       }
     }
+
+    predicates.independentReadbackOk = Boolean(
+      independent
+      && this.cfg.primarySourceId
+      && this.cfg.independentSourceId
+      && this.cfg.primarySourceId !== this.cfg.independentSourceId
+      && independentTransactionRead
+      && independentBalanceRead
+    );
 
     // 12. Explicit wallet/session facts may close the remaining local
     // contracts, but the default WalletAccountV6 adapter intentionally does
@@ -722,10 +794,7 @@ export class M5VesuRunner {
     if (provider.observeOpenNote) {
       const observed = await provider.observeOpenNote(txHash);
       assertViewingKeyFree(observed, "open_note_observation");
-      if (observed && (typeof observed.noteId !== "string" || typeof observed.amount !== "bigint" || observed.amount < 0n)) {
-        throw new M5Error(M5_ERROR_CODE.RECEIPT_INVALID, "open_note_observation_malformed");
-      }
-      if (observed && addressesEqual(observed.token, this.cfg.vToken!) && observed.amount > 0n) {
+      if (observed && validateM5OpenNoteObservation(observed, { token: this.cfg.vToken! })) {
         note = { noteId: observed.noteId, token: observed.token, amount: observed.amount.toString() };
         predicates.noteReadbackObserved = true;
       }
@@ -763,6 +832,14 @@ export class M5VesuRunner {
           ? (vesuDeposit as { shares: bigint }).shares
           : null;
         const observedNoteAmount = note ? BigInt(note.amount) : null;
+        const hasPositiveOutput = observed.vTokenShares > 0n || observed.noteAmount > 0n;
+        if (hasPositiveOutput) {
+          validateM5Conservation(observed, {
+            expectedInput: this.cfg.inAmount,
+            ...(observedVesuShares === null ? {} : { expectedShares: observedVesuShares }),
+            ...(observedNoteAmount === null ? {} : { expectedNoteAmount: observedNoteAmount }),
+          });
+        }
         predicates.conservationOk =
           predicates.vesuDepositObserved &&
           predicates.noteReadbackObserved &&
@@ -783,6 +860,12 @@ export class M5VesuRunner {
     if (this.cfg.validator) {
       try {
         validatorRes = await this.cfg.validator.validate(txHash);
+        if (!validatorRes
+          || typeof validatorRes.ok !== "boolean"
+          || typeof validatorRes.pool !== "boolean"
+          || typeof validatorRes.mine !== "boolean") {
+          throw new M5Error(M5_ERROR_CODE.VALIDATOR_MINE_FALSE, "validator_response_malformed");
+        }
         if (!validatorRes.ok || !validatorRes.pool || !validatorRes.mine) {
           throw new M5Error(M5_ERROR_CODE.VALIDATOR_MINE_FALSE, `validator failed ok=${validatorRes.ok} pool=${validatorRes.pool} mine=${validatorRes.mine}: ${validatorRes.reason ?? ""}`);
         }
@@ -845,6 +928,7 @@ export class M5VesuRunner {
           helperVTokenBalance: helperVTokenBalance?.toString() ?? "unknown",
         },
         validator: validatorRes,
+        ...(shadowAccount === undefined ? {} : { shadowAccountObservation: shadowAccount }),
         commit: this.cfg.commit,
       },
     };

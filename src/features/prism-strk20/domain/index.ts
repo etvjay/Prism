@@ -2,6 +2,7 @@ export * from "./errors";
 export { supportsStrk20, classifyStrk20Capability, detectCapability, classifyWalletEnvironment, getExpectedWalletEnvironment } from "./wallet-capability";
 export type { WalletEnvironment, ExpectedWalletEnvironment, CapabilityDetectionInput, CapabilityResult, Strk20CapabilityStatus } from "./wallet-capability";
 export * from "./privacy-guard";
+export * from "./shadow-account";
 export * from "./fee-policy";
 export { buildShieldReceipt, buildPrivateTransferReceipt, assertNotSenderAttribution, assertReceiptPrivacyHonesty, normalizeHex as receiptNormalizeHex } from "./receipt";
 export type { Hex as ReceiptHex, Strk20Receipt, PoolDepositEvent, TxReceiptLike } from "./receipt";

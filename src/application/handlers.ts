@@ -608,9 +608,9 @@ export const STRK20_API_CONTRACTS = [
     path: "/v1/strk20/actions",
     handler: "createStrk20Action",
     systemOp: "STRK20-ACTION-LIFECYCLE",
-    errors: ["STRK20-001", "STRK20-002", "STRK20-003", "STRK20-004", "STRK20-008", "STRK20-013", "STRK20-018", "STRK20-019"],
+    errors: ["STRK20-001", "STRK20-002", "STRK20-003", "STRK20-004", "STRK20-005", "STRK20-006", "STRK20-007", "STRK20-008", "STRK20-009", "STRK20-013", "STRK20-018", "STRK20-019", "STRK20-020", "STRK20-021"],
     idempotency: "actionId create fence; provider submission is poll-only after submissionAttempted",
-    notes: "wallet-mediated only; raw proof/calldata/keys/notes/provider responses rejected; submitted != completed",
+    notes: "wallet-mediated only; raw proof/calldata/keys/notes/provider responses rejected; optional shadow-account readiness is metadata-only and never a route; submitted != completed",
   },
   {
     method: "GET",

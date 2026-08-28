@@ -113,6 +113,17 @@ BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER
 This document does not promote any evidence ledger row, deployment, receipt,
 privacy claim, or `strk20.json` entry.
 
+## Optional shadow-account observation
+
+The supplied `shadow-accounts_overview.pdf` is incorporated only as a
+provider-capability observation: a privacy-pool/anonymizer may create
+disposable Starknet execution accounts for private DeFi actions such as Vesu or
+Endur. The typed `observeShadowAccountCapability()` hook is optional and
+metadata-only. It is not a STRK20 note, memo, claim, receipt, binding, or M5
+route; it carries no account/key/proof/private-balance material and no
+unlinkability claim. Its absence or failure cannot block the normal Wallet API
+route, and it is not included in the X3 completion predicate.
+
 ## Verification commands
 
 Focused local verification was run with the M5 Vitest files and the pinned

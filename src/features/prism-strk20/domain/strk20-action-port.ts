@@ -6,6 +6,7 @@
 import { Strk20Error, STRK20_ERROR_CODE } from "./errors";
 import { assertNoViewingKey } from "./privacy-guard";
 import { classifyStrk20Capability, classifyWalletEnvironment, getExpectedWalletEnvironment } from "./wallet-capability";
+import { normalizeShadowAccountObservation, type ShadowAccountObservation } from "./shadow-account";
 import {
   assertCallAndProofShape,
   assertNotEmptyProofForSubmission,
@@ -37,6 +38,8 @@ export interface CapabilityResult {
   environment: "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
   mismatch: boolean;
   expected: "SN_MAIN" | "SN_SEPOLIA";
+  /** Optional provider observation; it is never an action prerequisite. */
+  shadowAccount?: ShadowAccountObservation;
 }
 
 export interface PoolFeeObservation {

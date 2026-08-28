@@ -5,6 +5,7 @@
 import type { M5Provider, Strk20Action, Strk20CallAndProof, M5TransactionObservation } from "./ports";
 import type { Hex } from "../domain/receipt";
 import { assertNoViewingKey } from "../domain/privacy-guard";
+import { normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
 
 // Minimal WalletAccountV6 shape we depend on — matches starknet 10.4.0 WalletAccountV6
 export interface WalletAccountV6Like {
@@ -40,6 +41,8 @@ export interface WalletV6AdapterDeps {
     getBalance?(token: string, account: string): Promise<bigint>;
     getTransaction?(txHash: Hex): Promise<{ transactionHash?: string; calldata: string[] } | null>;
   };
+  /** Optional metadata-only observation supplied by a provider integration. */
+  shadowAccountObservation?: () => Promise<unknown>;
 }
 
 export class WalletV6M5Adapter implements M5Provider {
@@ -62,6 +65,16 @@ export class WalletV6M5Adapter implements M5Provider {
       return await this.deps.capabilityProvider.requestChainId(this.deps.walletFeatures);
     } catch {
       return this.deps.wallet.provider.getChainId();
+    }
+  }
+  async observeShadowAccountCapability(): Promise<ShadowAccountObservation | undefined> {
+    if (!this.deps.shadowAccountObservation) return undefined;
+    try {
+      const observation = await this.deps.shadowAccountObservation();
+      assertNoViewingKey(observation, "shadow_account_observation");
+      return normalizeShadowAccountObservation(observation);
+    } catch {
+      return normalizeShadowAccountObservation(null);
     }
   }
   async isRegistered(): Promise<boolean | null> {

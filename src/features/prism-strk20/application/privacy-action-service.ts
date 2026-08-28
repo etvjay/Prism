@@ -35,6 +35,7 @@ import {
   getExpectedWalletEnvironment,
   type ExpectedWalletEnvironment,
 } from "../domain/wallet-capability";
+import { normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
 import {
   normalizeHex,
   STRK20_POOL_ADDRESS,
@@ -113,6 +114,8 @@ export interface PrivacyCapabilityObservation {
   readonly environment: "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
   readonly mismatch: boolean;
   readonly expected: ExpectedWalletEnvironment;
+  /** Optional provider metadata; not an action route or receipt mechanism. */
+  readonly shadowAccount?: ShadowAccountObservation;
 }
 
 export interface PrivacyFeeObservation {
@@ -284,7 +287,19 @@ function capabilityFromAction(
   ) {
     throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "malformed_capability_observation");
   }
+  const computedStatus = classifyStrk20Capability(observation.apiVersions, observation.specs);
+  const declaredStatus = observation.capabilityStatus;
+  if (declaredStatus !== "supported" && declaredStatus !== "unsupported" && declaredStatus !== "unknown") {
+    throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "malformed_capability_status");
+  }
+  if (declaredStatus !== computedStatus || observation.capable !== (computedStatus === "supported")) {
+    throw new Strk20Error(
+      computedStatus === "unsupported" ? STRK20_ERROR_CODE.UNSUPPORTED_WALLET : STRK20_ERROR_CODE.CAPABILITY_UNKNOWN,
+      "capability_observation_inconsistent",
+    );
+  }
   const expected = getExpectedWalletEnvironment(expectedOverride ?? observation.expected);
+  const shadowAccount = normalizeShadowAccountObservation(observation.shadowAccount);
   return {
     capable: observation.capable,
     status: observation.capabilityStatus,
@@ -294,6 +309,7 @@ function capabilityFromAction(
     environment: observation.environment,
     mismatch: observation.environment !== expected,
     expected,
+    ...(shadowAccount === undefined ? {} : { shadowAccount }),
   };
 }
 
@@ -319,6 +335,7 @@ function capabilityFromWallet(
     mainnet: "SN_MAIN",
     sepolia: "SN_SEPOLIA",
   });
+  const shadowAccount = normalizeShadowAccountObservation(observation.shadowAccount);
   return {
     capable: status === "supported",
     status,
@@ -328,6 +345,7 @@ function capabilityFromWallet(
     environment,
     mismatch: environment !== expected,
     expected,
+    ...(shadowAccount === undefined ? {} : { shadowAccount }),
   };
 }
 
@@ -751,6 +769,25 @@ export class PrivacyActionService {
       && walletCapability.chainId.trim().toUpperCase() !== actionCapability.chainId.trim().toUpperCase()
     ) {
       throw new Strk20Error(STRK20_ERROR_CODE.NETWORK_MISMATCH, "wallet_ports_observed_different_chain");
+    }
+    if (walletCapability && actionCapability) {
+      if (walletCapability.status === "unsupported" || actionCapability.status === "unsupported") {
+        throw new Strk20Error(STRK20_ERROR_CODE.UNSUPPORTED_WALLET, "wallet_ports_capability_disagreement");
+      }
+      if (
+        walletCapability.status !== actionCapability.status
+        || walletCapability.capable !== actionCapability.capable
+      ) {
+        throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "wallet_ports_capability_disagreement");
+      }
+      if (
+        walletCapability.environment !== actionCapability.environment
+        || walletCapability.environment === "UNKNOWN"
+        || walletCapability.mismatch
+        || actionCapability.mismatch
+      ) {
+        throw new Strk20Error(STRK20_ERROR_CODE.NETWORK_MISMATCH, "wallet_ports_environment_disagreement");
+      }
     }
     if (capability.status === "unknown") throw new Strk20Error(STRK20_ERROR_CODE.CAPABILITY_UNKNOWN, "wallet_capability_unknown");
     if (!capability.capable) throw new Strk20Error(STRK20_ERROR_CODE.UNSUPPORTED_WALLET, "wallet_api_below_0_10_3");

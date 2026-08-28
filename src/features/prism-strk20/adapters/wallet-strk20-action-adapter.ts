@@ -5,6 +5,7 @@
 import { Strk20Error, STRK20_ERROR_CODE } from "../domain/errors";
 import { assertNoViewingKey } from "../domain/privacy-guard";
 import { classifyStrk20Capability, classifyWalletEnvironment, getExpectedWalletEnvironment, type ExpectedWalletEnvironment } from "../domain/wallet-capability";
+import { normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
 import {
   normalizeReceipt,
   normalizeHex,
@@ -30,6 +31,8 @@ export interface WalletStrk20ActionProvider {
   supportedWalletApi(): Promise<string[]>;
   supportedSpecs(): Promise<string[]>;
   requestChainId(): Promise<string>;
+  /** Optional metadata-only observation; no account/key/note material is accepted. */
+  observeShadowAccountCapability?(): Promise<unknown>;
   // STRK20 methods — raw provider responses are validated before use.
   strk20PrepareInvoke?(actions: Strk20Action[], simulate?: boolean): Promise<unknown>;
   strk20InvokeTransaction?(actions: Strk20Action[]): Promise<{ transaction_hash: string } | { transactionHash: string }>;
@@ -115,7 +118,27 @@ export class WalletStrk20ActionAdapter implements Strk20ActionPort {
     }
     const env = classifyWalletEnvironment(chainId, { mainnet: "SN_MAIN", sepolia: "SN_SEPOLIA" });
     const mismatch = env !== this.expectedChainId;
-    return { capable: capabilityStatus === "supported", capabilityStatus, apiVersions, specs, chainId, environment: env, mismatch, expected: this.expectedChainId };
+    let shadowAccount: ShadowAccountObservation | undefined;
+    if (typeof this.provider.observeShadowAccountCapability === "function") {
+      try {
+        shadowAccount = normalizeShadowAccountObservation(await this.provider.observeShadowAccountCapability());
+      } catch {
+        // Shadow-account support is optional. A failed observation is recorded
+        // as unknown and never blocks the ordinary Wallet API route.
+        shadowAccount = normalizeShadowAccountObservation(null);
+      }
+    }
+    return {
+      capable: capabilityStatus === "supported",
+      capabilityStatus,
+      apiVersions,
+      specs,
+      chainId,
+      environment: env,
+      mismatch,
+      expected: this.expectedChainId,
+      ...(shadowAccount === undefined ? {} : { shadowAccount }),
+    };
   }
 
   async isSupported(): Promise<boolean> {

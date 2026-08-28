@@ -38,7 +38,7 @@ export type BindingId = string;
 export type BindingVisibility = "PUBLIC" | "PRIVATE";
 export type BindingStatus = "ACTIVE" | "REVOKED";
 export type BindingChain = "STARKNET" | "BASE";
-export type BindingEndpointKind = "ACCOUNT" | "STRK20_PRIVATE_CONTEXT" | "STRK20_SHADOW_ACCOUNT";
+export type BindingEndpointKind = "ACCOUNT" | "STRK20_PRIVATE_CONTEXT";
 
 export interface ExecutionEndpoint {
   readonly id: string;
@@ -263,7 +263,7 @@ export function assertValidExecutionEndpoint(endpoint: ExecutionEndpoint): void 
   if (typeof endpoint.id !== "string" || endpoint.id.trim().length === 0) throw new BindingDisclosureError(BINDING_ERROR_CODE.INVALID_BINDING, "endpoint_id_required");
   if (endpoint.chain !== "STARKNET" && endpoint.chain !== "BASE") throw new BindingDisclosureError(BINDING_ERROR_CODE.INVALID_BINDING, "unsupported_endpoint_chain");
   if (typeof endpoint.chainId !== "string" || endpoint.chainId.trim().length === 0) throw new BindingDisclosureError(BINDING_ERROR_CODE.INVALID_BINDING, "endpoint_chain_id_required");
-  if (!["ACCOUNT", "STRK20_PRIVATE_CONTEXT", "STRK20_SHADOW_ACCOUNT"].includes(endpoint.kind)) {
+  if (!["ACCOUNT", "STRK20_PRIVATE_CONTEXT"].includes(endpoint.kind)) {
     throw new BindingDisclosureError(BINDING_ERROR_CODE.INVALID_BINDING, "unsupported_endpoint_kind");
   }
   if (endpoint.kind === "ACCOUNT" && (typeof endpoint.address !== "string" || endpoint.address.trim().length === 0)) {

@@ -130,6 +130,13 @@ export function recoverM5Operation(
   }
 
   if (receipt.executionStatus === "REVERTED") {
+    // A provider may expose a pre-confirmation/retryable label as REVERTED
+    // before the receipt has a block. Without a block there is no terminal
+    // chain fact to reconcile, so keep polling instead of treating it as an
+    // irreversible pool rollback.
+    if (receipt.blockNumber === null || !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0) {
+      return { operation, advanced: false, reason: "reverted_receipt_missing_block" };
+    }
     return {
       operation: next(operation, { state: "reverted", updatedAt: options.now, blockNumber: receipt.blockNumber, errorCode: M5_ERROR_CODE.POOL_ROLLBACK }),
       advanced: true,

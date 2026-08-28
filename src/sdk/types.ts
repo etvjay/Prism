@@ -60,7 +60,7 @@ export interface BindingEndpointData {
   readonly id: string;
   readonly chain: "STARKNET" | "BASE";
   readonly chainId: string;
-  readonly kind: "ACCOUNT" | "STRK20_PRIVATE_CONTEXT" | "STRK20_SHADOW_ACCOUNT";
+  readonly kind: "ACCOUNT" | "STRK20_PRIVATE_CONTEXT";
   readonly address?: string;
 }
 

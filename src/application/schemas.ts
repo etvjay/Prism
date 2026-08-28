@@ -309,6 +309,14 @@ export interface Strk20CapabilityData {
   readonly environment: "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
   readonly mismatch: boolean;
   readonly expected: "SN_MAIN" | "SN_SEPOLIA";
+  /** Optional provider observation only; not a route, receipt, or binding. */
+  readonly shadowAccount?: {
+    readonly status: "supported" | "unsupported" | "unknown";
+    readonly source: "provider_observation";
+    readonly disposableExecutionAccounts: boolean;
+    readonly supportedProtocols: readonly string[];
+    readonly privacyClaim: "not_claimed";
+  };
 }
 
 export interface Strk20FeeData {
@@ -360,8 +368,7 @@ export type PrivacyReceiptMechanism =
   | "NONE"
   | "PRISM_DISCLOSURE_CONTROL"
   | "STRK20_PRIVATE_TRANSFER"
-  | "STRK20_PRIVATE_INVOKE"
-  | "STRK20_SHADOW_ACCOUNT";
+  | "STRK20_PRIVATE_INVOKE";
 
 export type PrivacyReceiptObservationStatus = "UNOBSERVED" | "PENDING" | "OBSERVED" | "UNAVAILABLE";
 export type PrivacyReceiptEvidenceSource = "NONE" | "WALLET_DECLARED_API" | "PROVIDER_RECEIPT" | "CANONICAL_CHAIN_READBACK";

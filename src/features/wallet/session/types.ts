@@ -7,6 +7,7 @@ import type { Strk20ActionPort } from "../../prism-strk20/adapters/wallet-strk20
 import type { Strk20CallAndProof, Strk20Proof } from "../../prism-strk20/domain/strk20-proof";
 import type { Strk20State } from "../../prism-strk20/domain/strk20-state";
 import type { ExpectedWalletEnvironment, WalletEnvironment } from "../../prism-strk20/domain/wallet-capability";
+import type { ShadowAccountObservation } from "../../prism-strk20/domain/shadow-account";
 import type { WalletSessionErrorCode } from "./errors";
 
 export type WalletVenue = "starknet" | "base" | "privacy";
@@ -57,6 +58,8 @@ export interface CapabilityState {
   readonly supportsApproval: boolean;
   readonly supportsSubmission: boolean;
   readonly reason: string | null;
+  /** Optional provider observation; not a session grant, binding, or route. */
+  readonly shadowAccount?: ShadowAccountObservation;
 }
 
 export type NetworkStatus = "unknown" | "expected" | "mismatch";

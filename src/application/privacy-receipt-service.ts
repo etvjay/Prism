@@ -15,7 +15,21 @@ function mechanismFor(view: PrivacyActionView): PrivacyReceiptData["mechanism"] 
   return "NONE";
 }
 
+function normalizedHash(value: unknown): string | null {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value.trim())) return null;
+  return `0x${value.trim().slice(2).toLowerCase().padStart(64, "0")}`;
+}
+
+function receiptActionMismatch(view: PrivacyActionView): boolean {
+  if (!view.receipt) return false;
+  const submitted = normalizedHash(view.transactionHash);
+  const observed = normalizedHash(view.receipt.transactionHash);
+  return submitted === null || observed === null || submitted !== observed;
+}
+
 function statusFor(view: PrivacyActionView): PrivacyReceiptData["observationStatus"] {
+  if (view.transactionHash !== null && normalizedHash(view.transactionHash) === null) return "UNAVAILABLE";
+  if (receiptActionMismatch(view)) return "UNAVAILABLE";
   if (!view.receipt) {
     if (view.submissionAttempted && view.transactionHash === null) return "UNAVAILABLE";
     if (view.state === "dependency_failure" || view.state === "mismatch" || view.state === "fee_pending") return "UNAVAILABLE";
@@ -36,6 +50,7 @@ function statusFor(view: PrivacyActionView): PrivacyReceiptData["observationStat
 }
 
 function evidenceFor(view: PrivacyActionView, status: PrivacyReceiptData["observationStatus"]): PrivacyReceiptData["evidenceSource"] {
+  if (receiptActionMismatch(view)) return "NONE";
   if (view.receipt) return "PROVIDER_RECEIPT";
   if (status === "UNOBSERVED" && view.capability?.status === "supported") return "WALLET_DECLARED_API";
   return "NONE";
@@ -57,11 +72,11 @@ function policyFor(view: PrivacyActionView): Pick<PrivacyReceiptData, "protected
     };
   }
   return {
-    // Private invoke output exposes only mechanism labels, never private
-    // action values. Correlation through target/timing remains a limitation.
-    protectedProperties: ["direct_user_identity", "private_note_relation", "amount", "timing"],
-    publicProperties: ["target_protocol", "action_type"],
-    limitations: ["target_action_amount_and_timing_may_be_correlatable", "raw_calldata_is_not_projected", "historical_unlinkability_not_claimed"],
+    // Private invoke can hide direct user linkage when the supported route is
+    // used, but public downstream execution can expose amount and timing.
+    protectedProperties: ["direct_user_identity", "private_note_relation"],
+    publicProperties: ["target_protocol", "action_type", "amount", "timing", "open_note_amount"],
+    limitations: ["target_action_amount_and_timing_may_be_correlatable", "open_note_amount_may_be_public", "raw_calldata_is_not_projected", "historical_unlinkability_not_claimed"],
   };
 }
 
@@ -76,11 +91,13 @@ export function projectPrivacyReceipt(view: PrivacyActionView, receiptId = view.
   const limitations = [...policy.limitations];
   if (observationStatus === "PENDING") limitations.push("receipt_pending_or_missing_finality");
   if (observationStatus === "UNAVAILABLE") limitations.push("provider_or_receipt_observation_unavailable");
+  if (view.transactionHash !== null && normalizedHash(view.transactionHash) === null) limitations.push("malformed_transaction_hash");
+  if (receiptActionMismatch(view)) limitations.push("receipt_action_mismatch");
   if (view.receipt && !view.receipt.poolEventFound) limitations.push("pinned_pool_event_required");
   if (view.receipt && view.receipt.finalityStatus !== "ACCEPTED_ON_L1" && view.receipt.finalityStatus !== "ACCEPTED_ON_L2") limitations.push("accepted_finality_required");
 
-  const transactionHash = typeof view.transactionHash === "string" ? view.transactionHash : undefined;
-  const blockNumber = view.receipt?.blockNumber !== null && view.receipt?.blockNumber !== undefined
+  const transactionHash = normalizedHash(view.transactionHash) ?? undefined;
+  const blockNumber = !receiptActionMismatch(view) && view.receipt?.blockNumber !== null && view.receipt?.blockNumber !== undefined
     ? view.receipt.blockNumber
     : undefined;
   return {

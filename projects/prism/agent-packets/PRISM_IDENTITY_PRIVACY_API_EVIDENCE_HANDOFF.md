@@ -238,7 +238,8 @@ This is a derived, policy-filtered projection, not a second ledger. It must carr
 ```ts
 mechanism:
   NONE | PRISM_DISCLOSURE_CONTROL | STRK20_PRIVATE_TRANSFER |
-  STRK20_PRIVATE_INVOKE | STRK20_SHADOW_ACCOUNT
+  STRK20_PRIVATE_INVOKE
+# shadow-account support is an optional provider observation, not a receipt mechanism
 observationStatus: UNOBSERVED | PENDING | OBSERVED | UNAVAILABLE
 evidenceSource: NONE | WALLET_DECLARED_API | PROVIDER_RECEIPT | CANONICAL_CHAIN_READBACK
 protectedProperties: string[]

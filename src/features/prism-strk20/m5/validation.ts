@@ -12,7 +12,7 @@ import {
   STARKNET_ADDRESS_LIMIT,
 } from "./constants";
 import { M5_ERROR_CODE, M5Error } from "./errors";
-import type { M5TransactionObservation } from "./ports";
+import type { M5TransactionObservation, M5ConservationObservation, M5OpenNoteObservation } from "./ports";
 
 const STARKNET_FIELD_PRIME = (1n << 251n) + (17n << 192n) + 1n;
 const HASH_RE = /^0x[0-9a-fA-F]{1,64}$/;
@@ -309,4 +309,71 @@ export function validateVesuDepositObservation(
   if (!addressesEqual(observation.contractAddress, expected.vToken) || !addressesEqual(observation.receiver, expected.helperAddress)) return false;
   if (typeof observation.assets !== "bigint" || observation.assets !== expected.inAmount) return false;
   return observation.shares === undefined || (typeof observation.shares === "bigint" && observation.shares > 0n);
+}
+
+/**
+ * Validate the minimum wallet-owned open-note facts needed by M5. A missing
+ * observation is an unproven optional fact (`false`), never a mature note.
+ */
+export function validateM5OpenNoteObservation(
+  observation: M5OpenNoteObservation | null | undefined,
+  expected: { token: string },
+): boolean {
+  if (observation === null || observation === undefined) return false;
+  assertNoViewingKey(observation as unknown as Record<string, unknown>, "validateM5OpenNoteObservation");
+  if (!observation || typeof observation !== "object") return false;
+  if (typeof observation.noteId !== "string" || observation.noteId.trim().length === 0) return false;
+  if (!isValidStarknetAddress(observation.token) || !addressesEqual(observation.token, expected.token)) return false;
+  if (typeof observation.amount !== "bigint" || observation.amount <= 0n) return false;
+  return true;
+}
+
+export interface M5ConservationExpectation {
+  readonly expectedInput: bigint;
+  readonly expectedShares?: bigint;
+  readonly expectedNoteAmount?: bigint;
+}
+
+/**
+ * Validate value conservation across helper input, measured Vesu shares, and
+ * wallet open-note credit. Contradictory explicit facts fail closed; callers
+ * may keep an absent/zero observation at the X2 "not proven" ceiling.
+ */
+export function validateM5Conservation(
+  observation: M5ConservationObservation,
+  expected: M5ConservationExpectation,
+): true {
+  assertNoViewingKey({ observation, expected }, "validateM5Conservation");
+  if (!observation || typeof observation !== "object" || !expected || typeof expected !== "object") {
+    fail(M5_ERROR_CODE.RECEIPT_INVALID, "conservation_observation_malformed");
+  }
+  const values = [
+    observation.inputDelivered,
+    observation.vTokenShares,
+    observation.noteAmount,
+    observation.helperStrkBalance,
+    observation.helperVTokenBalance,
+  ];
+  if (values.some((value) => typeof value !== "bigint" || value < 0n) || typeof expected.expectedInput !== "bigint" || expected.expectedInput < 0n) {
+    fail(M5_ERROR_CODE.RECEIPT_INVALID, "conservation_observation_malformed");
+  }
+  if (observation.helperStrkBalance > 0n || observation.helperVTokenBalance > 0n) {
+    fail(M5_ERROR_CODE.STRANDED_BALANCE, "conservation_helper_balance_nonzero");
+  }
+  if (observation.inputDelivered !== expected.expectedInput) {
+    fail(M5_ERROR_CODE.CONSERVATION_FAILED, "conservation_input_mismatch");
+  }
+  if (observation.vTokenShares <= 0n || observation.noteAmount <= 0n) {
+    fail(M5_ERROR_CODE.CONSERVATION_FAILED, "conservation_zero_output");
+  }
+  if (observation.vTokenShares !== observation.noteAmount) {
+    fail(M5_ERROR_CODE.CONSERVATION_FAILED, "conservation_note_share_mismatch");
+  }
+  if (expected.expectedShares !== undefined && observation.vTokenShares !== expected.expectedShares) {
+    fail(M5_ERROR_CODE.CONSERVATION_FAILED, "conservation_share_expectation_mismatch");
+  }
+  if (expected.expectedNoteAmount !== undefined && observation.noteAmount !== expected.expectedNoteAmount) {
+    fail(M5_ERROR_CODE.CONSERVATION_FAILED, "conservation_note_expectation_mismatch");
+  }
+  return true;
 }

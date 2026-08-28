@@ -252,6 +252,15 @@ export function serializePrivacyActionView(view: PrivacyActionView): Strk20Actio
           environment: view.capability.environment,
           mismatch: view.capability.mismatch,
           expected: view.capability.expected,
+          ...(view.capability.shadowAccount === undefined ? {} : {
+            shadowAccount: {
+              status: view.capability.shadowAccount.status,
+              source: view.capability.shadowAccount.source,
+              disposableExecutionAccounts: view.capability.shadowAccount.disposableExecutionAccounts,
+              supportedProtocols: [...view.capability.shadowAccount.supportedProtocols],
+              privacyClaim: view.capability.shadowAccount.privacyClaim,
+            },
+          }),
         }
       : null,
     registration: { status: view.registration.status },

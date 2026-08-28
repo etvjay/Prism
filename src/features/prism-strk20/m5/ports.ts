@@ -3,6 +3,7 @@
 // All ports are narrow, wallet-mediated, and labeled X2 when doubled.
 
 import type { Hex } from "../domain/receipt";
+import type { ShadowAccountObservation } from "../domain/shadow-account";
 import type {
   STRK20_ACTION,
   STRK20_CALL_AND_PROOF,
@@ -21,6 +22,8 @@ export interface CapabilityPort {
   supportedWalletApi(): Promise<string[]>;
   supportedSpecs(): Promise<string[]>;
   requestChainId(): Promise<string>;
+  /** Optional metadata-only provider observation; never required for M5. */
+  observeShadowAccountCapability?(): Promise<ShadowAccountObservation | null | undefined>;
 }
 
 export interface RegistrationPort {

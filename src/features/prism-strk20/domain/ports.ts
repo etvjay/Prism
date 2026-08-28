@@ -4,6 +4,7 @@
 // All I/O is injected; domain never imports starknet SDK directly.
 
 import type { Hex } from "./receipt";
+import type { ShadowAccountObservation } from "./shadow-account";
 
 export type WalletEnvironment = "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
 
@@ -11,6 +12,8 @@ export interface CapabilityObservation {
   apiVersions: string[];
   specs: string[];
   chainId: string;
+  /** Optional metadata-only provider observation; never required for STRK20. */
+  shadowAccount?: ShadowAccountObservation;
 }
 
 export interface PoolFeeObservation {

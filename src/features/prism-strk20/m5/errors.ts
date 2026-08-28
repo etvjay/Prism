@@ -29,6 +29,7 @@ export const M5_ERROR_CODE = {
   RECEIPT_INVALID: "M5-024",
   INDEPENDENT_READ_MISMATCH: "M5-025",
   OPERATION_STALE: "M5-026",
+  USER_REJECTED: "M5-027",
 } as const;
 
 export type M5ErrorCode = (typeof M5_ERROR_CODE)[keyof typeof M5_ERROR_CODE];

@@ -6,6 +6,7 @@ import {
   type WalletEnvironment,
 } from "../../prism-strk20/domain/wallet-capability";
 import { isEmptyProof, type Strk20CallAndProof } from "../../prism-strk20/domain/strk20-proof";
+import { normalizeShadowAccountObservation } from "../../prism-strk20/domain/shadow-account";
 import {
   WALLET_SESSION_ERROR_CODE,
   WalletSessionError,
@@ -71,6 +72,7 @@ function capabilityFromStatus(
     supportsApproval?: boolean;
     supportsSubmission?: boolean;
     reason?: string | null;
+    shadowAccount?: CapabilityState["shadowAccount"];
   } = {},
 ): CapabilityState {
   return {
@@ -81,6 +83,7 @@ function capabilityFromStatus(
     supportsApproval: input.supportsApproval ?? status === "supported",
     supportsSubmission: input.supportsSubmission ?? status === "supported",
     reason: input.reason ?? null,
+    ...(input.shadowAccount === undefined ? {} : { shadowAccount: input.shadowAccount }),
   };
 }
 
@@ -472,15 +475,18 @@ export function applyPrivacyObservation(
   const specs = Array.isArray(observation.specs) && observation.specs.every((value) => typeof value === "string")
     ? [...observation.specs]
     : [];
-  const status: CapabilityStatus = observation.capabilityStatus === "supported"
-    || observation.capabilityStatus === "unsupported"
-    || observation.capabilityStatus === "unknown"
-    ? observation.capabilityStatus
+  const declaredStatus = observation.capabilityStatus;
+  const derivedStatus = classifyStrk20Capability(apiVersions, specs);
+  const status: CapabilityStatus = observation.capable === (derivedStatus === "supported")
+    && declaredStatus === derivedStatus
+    && (declaredStatus === "supported" || declaredStatus === "unsupported" || declaredStatus === "unknown")
+    ? declaredStatus
     : "unknown";
   const expected = session.expectedEnvironment;
   const environment = observation.environment === "SN_MAIN" || observation.environment === "SN_SEPOLIA"
     ? observation.environment
     : "UNKNOWN";
+  const shadowAccount = normalizeShadowAccountObservation(observation.shadowAccount);
   const networkStatus = environment === "UNKNOWN"
     ? "unknown"
     : observation.mismatch === true || environment !== expected
@@ -503,6 +509,7 @@ export function applyPrivacyObservation(
       supportsApproval: observation.capable === true && status === "supported",
       supportsSubmission: observation.capable === true && status === "supported",
       reason: status === "unknown" ? "strk20_capability_unknown" : null,
+      ...(shadowAccount === undefined ? {} : { shadowAccount }),
     }),
     consent: session.consent.status === "unknown" ? emptyConsent("not-required") : session.consent,
     strk20State,
