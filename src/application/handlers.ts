@@ -499,7 +499,7 @@ export const API_CONTRACTS = [
   },
   {
     method: "POST",
-    path: "/v1/identity/:prismId/bindings/revoke",
+    path: "/v1/identity/:prismId/bindings/:bindingId/revoke",
     handler: "revoke",
     systemOp: "OP-8-03",
     errors: ["ERR-002", "ERR-004", "ERR-009", "ERR-011"],

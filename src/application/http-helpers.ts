@@ -19,7 +19,8 @@ const DEPENDENCY_ERROR_CODES = new Set(["ERR-021", "ERR-022"]);
 export function sanitizeExternalDetail(code: string | undefined, detail: unknown): string | undefined {
   if (detail === undefined || detail === null) return undefined;
   if (code && DEPENDENCY_ERROR_CODES.has(code)) {
-    return code === "ERR-022" ? "submission_status_unknown" : "store_unavailable";
+    if (code === "ERR-022") return "submission_status_unknown";
+    return detail === "store_unavailable" ? "store_unavailable" : "dependency_unavailable";
   }
   let safe = String(detail).split(/\r?\n/, 1)[0].slice(0, 240);
   safe = safe.replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, "<redacted_url>");

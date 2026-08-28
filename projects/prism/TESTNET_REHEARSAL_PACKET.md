@@ -19,8 +19,8 @@ files, contracts, `strk20.json`, `projects/prism/EVIDENCE_LEDGER.md`,
 
 ### Included
 
-- source/spec inventory of the current REST endpoints and the required but
-  unmounted alias, continuity, STRK20, and privacy-receipt surfaces;
+- source/spec inventory of the current REST endpoints, including the newly
+  mounted alias, continuity, STRK20, and privacy-receipt surfaces;
 - exact dependency order, happy path, failure path, recovery path, and evidence
   gates for backend and frontend lanes;
 - environment/provider/wallet/Postgres requirements with configuration **names
@@ -117,13 +117,13 @@ requirements, response shapes/statuses, audience, authority, side effects,
 source state, and the seven maturity booleans. The abbreviated map below is the
 route-level handoff.
 
-### 4.1 Present local routes (20 method entries)
+### 4.1 Present local routes (20 baseline method entries)
 
 | ID | Method and path | Local source state | Local wiring/evidence boundary |
 |---|---|---|---|
 | `ID_CREATE` | `POST /v1/identity` | Tracked route present | Session + idempotency; operation before chain submission; submitted is not completed. |
 | `ID_READ` | `GET /v1/identity/{prismId}` | Tracked route present | Public canonical/watermarked read; `ERR-010` for unknown. |
-| `BY_CONTROLLER` | `GET /v1/identities/by-controller?controller={controller}` | Present but untracked in dirty snapshot | Returns `NONE`, `FOUND`, `MULTIPLE`, `UNKNOWN`, or `UNAVAILABLE` shape; not in OpenAPI or canonical handler table. Separate acceptance required. |
+| `BY_CONTROLLER` | `GET /v1/identities/by-controller?controller={controller}` | Tracked route present in the integrated snapshot | Canonical/projection readback returns `NONE`, `FOUND`, `MULTIPLE`, `UNKNOWN`, or `UNAVAILABLE`; candidate status remains `UNKNOWN`, and the direct route is intentionally outside the protected OpenAPI file. |
 | `CHALLENGE_ISSUE` | `POST /v1/challenge/issue` | Tracked route present | Requires session, identity/execution account; returns schema-v2 chain-bound challenge. |
 | `CHALLENGE_VERIFY` | `POST /v1/challenge/verify` | Tracked route present | Requires exact presented echo and signature; returns `verified` only, never ACTIVE. |
 | `PUBLIC_BINDINGS_LIST` | `GET /v1/identity/{prismId}/bindings?audience=public` | Tracked route present | Public ACTIVE rows only; rejects PRIVATE/SELECTIVE/non-persistent selectors. |
@@ -148,26 +148,33 @@ headers are `X-Request-Id`, `X-Correlation-Id`, `Idempotency-Key`, `If-Match`,
 `X-Session-Id`, and `X-Session-User`; read responses may carry
 `X-Prism-Watermark` and `ETag`.
 
-### 4.2 Required but unmounted surfaces (5 method entries)
+### 4.2 Newly mounted transport surfaces (5 method entries)
 
-| ID | Required candidate path | Current truth | Do not do |
+| ID | Method and path | Integrated truth | Do not do |
 |---|---|---|---|
-| `ALIAS_LOOKUP` | `GET /v1/aliases/{provider}/{value}` | Domain alias types/provider boundary exist; no route or accepted HTTP schema. | Do not infer a Prism ID from a name or simulate provider success. |
-| `CONTINUITY` | `GET /v1/resolution/{identifier}/continuity` | Domain continuity service/snapshot/risk types exist; no route or accepted HTTP schema. | Do not claim address/alias/chain continuity or feed a risk into Pause through an unmounted route. |
-| `STRK20_ACTION_CREATE` | `POST /v1/strk20/actions` | Wallet/provider/M5 domain boundaries exist; no route or accepted REST schema. | Do not turn a local provider double or raw invoke into a privacy action. |
-| `STRK20_ACTION_READ` | `GET /v1/strk20/actions/{actionId}` | No route; generic operation read is not a privacy action read. | Do not represent a submitted hash as a privacy receipt or completed action. |
-| `PRIVACY_RECEIPT_READ` | `GET /v1/privacy/receipts/{receiptId}` | No route; `/v1/receipts/{receiptId}` is generic operation-derived state. | Do not expose viewing keys, notes, private balances, or sender attribution. |
+| `ALIAS_LOOKUP` | `GET /v1/aliases/{provider}/{value}` | Tracked route present in the integrated snapshot; provider outcomes are typed in the 200 data projection. | Do not infer a Prism ID from alias text or simulate provider success/association. |
+| `CONTINUITY` | `GET /v1/resolution/{identifier}/continuity` | Tracked route and transport schema present; snapshot/risk output is allow-listed and freshness is explicit. | Do not collapse FRESH, STALE, UNKNOWN, UNAVAILABLE, or NO_ACTIVE_DESTINATION. |
+| `STRK20_ACTION_CREATE` | `POST /v1/strk20/actions` | Tracked wallet-mediated lifecycle route; create/prepare/submit/observe_receipt are explicit and provider material is rejected/redacted. | Do not treat a local provider double, HTTP 200, or submitted hash as privacy completion. |
+| `STRK20_ACTION_READ` | `GET /v1/strk20/actions/{actionId}` | Tracked JSON-safe action projection route; proof/call material is status-only. | Do not expose proof, calldata, notes, keys, or provider responses. |
+| `PRIVACY_RECEIPT_READ` | `GET /v1/privacy/receipts/{receiptId}` | Tracked derived policy-filtered receipt route; OBSERVED remains receipt/finality/pool-event gated. | Do not expose viewing keys, notes, private balances, sender attribution, or generic-operation data as privacy evidence. |
 
-**Inventory findings to resolve before transport acceptance:**
+**Inventory findings after integration:**
 
-1. `BY_CONTROLLER` is an untracked dirty-snapshot route and is absent from
-   OpenAPI/canonical handler metadata.
-2. `API_CONTRACTS` in the application handler table names a legacy-looking
-   `/v1/identity/:prismId/bindings/revoke` path, while the actual Next route is
-   `/v1/identity/{prismId}/bindings/{bindingId}/revoke`. The route path must be
-   reconciled before a transport contract is called exact.
-3. Alias, continuity, STRK20 action, and privacy-receipt transport surfaces are
-   specified/readiness requirements, not implemented endpoints.
+1. `BY_CONTROLLER` is now tracked in the integrated backend snapshot and its
+   focused route tests cover canonical readback, projection fallback, and
+   distinct `NONE`/`UNKNOWN`/`UNAVAILABLE` outcomes. It remains outside the
+   protected OpenAPI file and is a direct route rather than an application
+   handler-table entry.
+2. The revoke-path discrepancy is resolved: `API_CONTRACTS` and the actual
+   Next route now use `/v1/identity/:prismId/bindings/:bindingId/revoke`, which
+   corresponds to `/v1/identity/{prismId}/bindings/{bindingId}/revoke` on the
+   wire. The `bindingId` path segment is preserved; request body fields remain
+   authoritative for the canonical target.
+3. Alias, continuity, STRK20 action, and privacy-receipt routes are mounted,
+   wired through the canonical factory/handler/schema/port model, and covered
+   by focused tests. Their inventory entries are integrated but not deployed
+   or externally observed; OpenAPI and other protected contract files were not
+   changed.
 4. There is no `GET /v1/intents/{intentId}` route; the current intent handoff
    relies on the create response and the subsequent pause/operation reads.
 
@@ -192,8 +199,8 @@ R0 freeze candidate and record baseline
   → R11 controller-authorized revoke operation + receipt/event reconciliation
   → R12 resolve NO_ACTIVE_DESTINATION + identity persists + independent read
   → R13 operation/receipt/restart/unknown/revert recovery rehearsal
-  → R14 alias association + continuity snapshot/risk route (currently blocked)
-  → R15 STRK20 capability/consent/proof/pool/note/maturity route (currently blocked)
+  → R14 alias association + continuity snapshot/risk route (mounted locally; external evidence remains open)
+  → R15 STRK20 capability/consent/proof/pool/note/maturity route (mounted locally; wallet/provider evidence remains open)
   → R16 intent → Pause policy/authority → settlement operation route
   → R17 evidence envelope validation and owner review; no ledger write by this packet
 ```
@@ -219,8 +226,8 @@ The command is offline and validates:
   Base chain ID `84532`, and explicit Registry V2 selection;
 - the decision mirror contains the accepted target and chain-ID records;
 - all 25 inventory entries are unique and cover every requested area;
-- 20 source-present method entries point to existing local route files;
-- 5 specified-only entries have no route source;
+- 25 source-present method entries point to existing local route files;
+- 0 specified-only entries remain unmounted in this integrated snapshot;
 - OpenAPI paths marked present are present in `docs/api/openapi.yaml`;
 - every endpoint keeps all seven maturity fields and no endpoint is promotable;
 - valid and invalid redacted configuration shapes fail/pass as expected;
@@ -361,8 +368,9 @@ and response is `VERIFIED`. `VERIFIED` has no canonical binding effect.
    capture its response watermark/ETag.
 4. If the public list is empty, contradictory, or stale, stop; do not repair it
    from UI state or an operation row.
-5. If using `GET /v1/identities/by-controller`, first close its untracked/API
-   acceptance blocker and record source/watermark semantics separately.
+5. If using `GET /v1/identities/by-controller`, record its canonical/projection
+   source, candidate status, and watermark; empty/unknown/unavailable outcomes
+   must remain distinct.
 
 ### B6 — Revoke and decisive tail (operator-signed live step, not run here)
 
@@ -426,15 +434,15 @@ or infer chain state. No frontend files are changed by this packet.
   action; retain them for the Activity/receipt view.
 - Display the selected network as `SN_SEPOLIA` + `BASE_SEPOLIA/84532`; never
   silently fall through to mainnet.
-- Do not call alias, continuity, STRK20 action, or privacy-receipt paths as if
-  they exist. Show the typed unavailable/deferred state until backend routing
-  is accepted.
+- Call the alias, continuity, STRK20 action, and privacy-receipt paths only with
+  the exact mounted schemas and typed unavailable/deferred states; a mounted
+  route still does not imply provider-backed or live evidence.
 
 ### F1 — Identity create/read UI
 
-1. Discover any existing identity only through the accepted controller route;
-   if `BY_CONTROLLER` is still untracked/unaccepted, show discovery as
-   unavailable rather than treating an empty result as proof of no identity.
+1. Discover any existing identity only through the integrated controller route;
+   preserve `NONE`, `FOUND`, `MULTIPLE`, `UNKNOWN`, and `UNAVAILABLE` exactly and
+   do not treat an empty result as proof of no identity.
 2. Submit `POST /v1/identity` and render `created`,
    `awaiting_authorization`, `ready`, or `submitted` distinctly.
 3. Poll `/v1/operations/{operationId}`. Do not show “created”/“complete” until
@@ -769,8 +777,8 @@ blocker/downgrade, not a `0x…` value.
 | `R4` durable projection | backend | Fresh Postgres + event/checkpoint/restart gates | **OPEN** — no new live projection run performed here. |
 | `R5–R12` decisive identity/bind/revoke tail | backend + wallet owners | Real receipts/events/reads/watermarks/independent source | **OPEN / not executed by this packet**. |
 | `R13` failure/recovery | backend | Unknown/revert/stale/duplicate/restart/retry traces | **X2 local contracts only; live/repeated OPEN**. |
-| `R14` alias/continuity | backend | Mounted accepted transport + provider/association/snapshot evidence | **BLOCKED** — route absent. |
-| `R15` STRK20/privacy | backend + wallet/prover | Mounted transport + capability/proof/pool/note/maturity evidence | **BLOCKED** — routes absent; full M5 live evidence remains separate. |
+| `R14` alias/continuity | backend | Mounted transport + provider/association/snapshot evidence | **X2 local route/schema/test evidence**; provider/association/live continuity evidence OPEN. |
+| `R15` STRK20/privacy | backend + wallet/prover | Mounted transport + capability/proof/pool/note/maturity evidence | **X2 local route/schema/test evidence**; wallet/provider/receipt/pool-event evidence OPEN. |
 | `R16` intent/Pause settlement | backend + frontend | Real adapter and operation reconciliation | **X2 local domain/route boundaries; live OPEN**. |
 | `R17` evidence promotion | owner/audit | Complete validator-passing envelope + independent read | **OPEN** — this packet writes no ledger. |
 
@@ -780,13 +788,16 @@ blocker/downgrade, not a `0x…` value.
 
 ### Backend team
 
-1. Keep `endpoint-inventory.json` as the route/source boundary when mounting
-   missing transports; update it only in the rehearsal lane or an explicitly
+1. Keep `endpoint-inventory.json` as the route/source boundary for the
+   integrated transports; update it only in the rehearsal lane or an explicitly
    accepted API change.
-2. Resolve the revoke-path discrepancy and add `BY_CONTROLLER` to an accepted
-   OpenAPI/handler contract before frontend transport acceptance.
-3. Mount alias/continuity/STRK20/privacy-receipt routes only with typed schemas,
-   stable errors, audience rules, and focused route tests.
+2. Keep the exact revoke path in every handoff: `/v1/identity/{prismId}/bindings/{bindingId}/revoke`.
+   `API_CONTRACTS` now carries the matching `:bindingId` segment, and the
+   by-controller route is tracked separately because it uses scoped projection
+   discovery rather than the application handler class.
+3. Consume the mounted alias/continuity/STRK20/privacy-receipt routes only with
+   their typed schemas, stable errors, audience rules, and focused route tests;
+   the protected OpenAPI/contract files remain unchanged in this integration.
 4. Preserve exact operation semantics: durable row before submit, submitted ≠
    completed, receipt ≠ reconciliation, unknown ≠ reverted, and no memory
    fallback for a required runtime.
@@ -825,13 +836,13 @@ authorize that action and contains no signer workflow capable of performing it.
 
 ```text
 Specified:          yes — canonical/system requirements and route candidates inventoried
-Implemented:        local source routes present for 20 method entries; 5 transport surfaces absent
-Integrated:         local route wiring recorded; by-controller/API contract discrepancy remains
+Implemented:        local source routes present for all 25 method entries
+Integrated:         canonical factory/handler/schema/port wiring plus direct by-controller route reconciled and route-tested
 Deployed:           not performed or asserted by this packet
 Observed:           no new external receipt/readback/provider observation
 Repeated:           no new restart/independent-read rehearsal
 Promotable:         no; evidence ledger and strk20.json untouched
-Evidence ceiling:   X2 preparation
+Evidence ceiling:   X2 local implementation/preparation
 ```
 
 The honest result of this packet is a bounded, self-tested rehearsal contract,
