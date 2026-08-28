@@ -163,7 +163,7 @@ describe("STRK20 action API application boundary", () => {
     await consent.handlers.createStrk20Action(requestEnvelope(payload("consent"), "idem-consent"));
     const consentPrepare = await consent.handlers.createStrk20Action(requestEnvelope(payload("consent", "prepare"), "idem-consent"));
     expect(consentPrepare.ok).toBe(false);
-    const consentView = await consent.handlers.getStrk20Action({ payload: { actionId: "consent" }, headers: { requestId: "req-consent" } });
+    const consentView = await consent.handlers.getStrk20Action({ payload: { actionId: "consent" }, headers: { requestId: "req-consent" }, session });
     expect(consentView.ok && consentView.data.state).toBe("consent-required");
 
     const attention = await createHandler();
@@ -174,9 +174,25 @@ describe("STRK20 action API application boundary", () => {
     await attention.handlers.createStrk20Action(requestEnvelope(payload("attention", "prepare"), "idem-attention"));
     const submit = await attention.handlers.createStrk20Action(requestEnvelope(payload("attention", "submit"), "idem-attention"));
     expect(submit.ok).toBe(false);
-    const attentionView = await attention.handlers.getStrk20Action({ payload: { actionId: "attention" }, headers: { requestId: "req-attention" } });
+    const attentionView = await attention.handlers.getStrk20Action({ payload: { actionId: "attention" }, headers: { requestId: "req-attention" }, session });
     expect(attentionView.ok && attentionView.data.state).toBe("requires-attention");
     expect(JSON.stringify(attentionView)).not.toMatch(/privateKey|provider response/);
+  });
+
+  it("does not allow another authenticated session to read or advance an action", async () => {
+    const { handlers } = await createHandler();
+    await handlers.createStrk20Action(requestEnvelope(payload("owned"), "idem-owned"));
+    const other = { ...session, sessionId: "session-2", userId: "user-2" };
+    const read = await handlers.getStrk20Action({ payload: { actionId: "owned" }, session: other });
+    expect(read.ok).toBe(false);
+    expect(read.ok ? null : read.error.httpStatusHint).toBe(404);
+    const advance = await handlers.createStrk20Action({
+      headers: { requestId: "req-1", idempotencyKey: "idem-owned" },
+      session: other,
+      payload: payload("owned", "prepare"),
+    });
+    expect(advance.ok).toBe(false);
+    expect(advance.ok ? null : advance.error.httpStatusHint).toBe(404);
   });
 
   it("redacts proof/call material and serializes BigInt fee fields as decimal strings", async () => {

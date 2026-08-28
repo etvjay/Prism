@@ -3,10 +3,25 @@ import { getAppFactory } from "@/application/factory";
 import { POST as actionPost } from "../strk20/actions/route";
 import { GET as actionGet } from "../strk20/actions/[actionId]/route";
 import { GET as privacyReceiptGet } from "../privacy/receipts/[receiptId]/route";
+import { signAppSession } from "@/application/auth";
 
 vi.mock("@/application/factory", () => ({ getAppFactory: vi.fn() }));
 
-const session = { sessionId: "session-1", userId: "user-1", issuedAt: 1_000, expiresAt: 2_000 };
+const session = {
+  sessionId: "session-1",
+  userId: "user-1",
+  issuedAt: Math.floor(Date.now() / 1000) - 10,
+  expiresAt: Math.floor(Date.now() / 1000) + 3600,
+};
+const sessionSecret = "route-test-session-secret-32-bytes-long";
+const signedSession = () => signAppSession({
+  sid: session.sessionId,
+  sub: session.userId,
+  iat: session.issuedAt,
+  exp: session.expiresAt,
+  iss: "prism",
+  aud: "prism-api",
+}, sessionSecret);
 const createStrk20Action = vi.fn();
 const getStrk20Action = vi.fn();
 const getPrivacyReceipt = vi.fn();
@@ -21,6 +36,7 @@ function post(body: Record<string, unknown>, headers: Record<string, string> = {
 
 describe("STRK20/privacy frontend-facing routes", () => {
   beforeEach(() => {
+    process.env.PRISM_APP_SESSION_SECRET = sessionSecret;
     vi.clearAllMocks();
     vi.mocked(getAppFactory).mockResolvedValue({
       handlers: { createStrk20Action, getStrk20Action, getPrivacyReceipt },
@@ -117,9 +133,20 @@ describe("STRK20/privacy frontend-facing routes", () => {
     expect(response.headers.get("x-correlation-id")).toBe("corr-1");
   });
 
+  it("requires an authenticated session for action reads", async () => {
+    const response = await actionGet(new Request("http://localhost/api/v1/strk20/actions/action-1", {
+      headers: { "x-request-id": "req-auth" },
+    }), { params: Promise.resolve({ actionId: "action-1" }) });
+    expect(response.status).toBe(401);
+    expect(getStrk20Action).not.toHaveBeenCalled();
+  });
+
   it("routes GET action and policy-filtered privacy receipt through application handlers", async () => {
     const actionResponse = await actionGet(new Request("http://localhost/api/v1/strk20/actions/action-1", {
-      headers: { "x-request-id": "req-2" },
+      headers: {
+        "x-request-id": "req-2",
+        authorization: `Bearer ${signedSession()}`,
+      },
     }), { params: Promise.resolve({ actionId: "action-1" }) });
     expect(actionResponse.status).toBe(200);
     expect(getStrk20Action).toHaveBeenCalledWith(expect.objectContaining({
@@ -128,7 +155,7 @@ describe("STRK20/privacy frontend-facing routes", () => {
     }));
 
     const receiptResponse = await privacyReceiptGet(new Request("http://localhost/api/v1/privacy/receipts/receipt-1", {
-      headers: { "x-request-id": "req-3" },
+      headers: { "x-request-id": "req-3", authorization: `Bearer ${signedSession()}` },
     }), { params: Promise.resolve({ receiptId: "receipt-1" }) });
     expect(receiptResponse.status).toBe(200);
     expect(getPrivacyReceipt).toHaveBeenCalledWith(expect.objectContaining({
@@ -143,7 +170,7 @@ describe("STRK20/privacy frontend-facing routes", () => {
   it("maps factory initialization failure without leaking provider/store details", async () => {
     vi.mocked(getAppFactory).mockRejectedValueOnce(new Error("postgres://user:password@host/db"));
     const response = await actionGet(new Request("http://localhost/api/v1/strk20/actions/action-1", {
-      headers: { "x-request-id": "req-down" },
+      headers: { "x-request-id": "req-down", authorization: `Bearer ${signedSession()}` },
     }), { params: Promise.resolve({ actionId: "action-1" }) });
     const body = await response.json() as { error: { code: string; detail: string } };
     expect(response.status).toBe(503);
