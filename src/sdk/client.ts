@@ -17,6 +17,8 @@ import type {
   IntentPurpose,
   PublicBindingData,
   OwnerPrivateBindingData,
+  PortfolioData,
+  PortfolioPrivacyConsent,
 } from "./types";
 
 export interface PrismClientConfig {
@@ -126,6 +128,31 @@ export class PrismClient {
     resolve: async (prismId: PrismId, venue: Venue = "BASE", opts?: { requestId?: string | null }): Promise<SdkResponse<ResolveData>> => {
       const headers = buildHeaders(undefined, { requestId: opts?.requestId ?? null, extra: this.defaultHeaders });
       const res = await this.doFetch(this.url(`/v1/resolve/${encodeURIComponent(prismId)}?venue=${encodeURIComponent(venue)}`), { method: "GET", headers });
+      return parseSdkResponse(res);
+    },
+  };
+
+  portfolio = {
+    /** Read source/freshness-bearing connected portfolio projection. */
+    get: async (prismId: PrismId, opts?: {
+      requestId?: string | null;
+      privacyWalletConsent?: PortfolioPrivacyConsent;
+      /** Opaque reference; never a viewing key, proof, or credential. */
+      walletSessionRef?: string | null;
+    }): Promise<SdkResponse<PortfolioData>> => {
+      const extra: Record<string, string> = { ...this.defaultHeaders };
+      if (opts?.privacyWalletConsent) extra["x-privacy-wallet-consent"] = opts.privacyWalletConsent;
+      if (opts?.privacyWalletConsent === "granted" && opts.walletSessionRef) {
+        extra["x-privacy-wallet-session-ref"] = opts.walletSessionRef;
+      }
+      const headers = buildHeaders(undefined, {
+        requestId: opts?.requestId ?? null,
+        extra,
+      });
+      const res = await this.doFetch(this.url(`/v1/portfolio/${encodeURIComponent(prismId)}`), {
+        method: "GET",
+        headers,
+      });
       return parseSdkResponse(res);
     },
   };

@@ -12,6 +12,7 @@ import type { AliasLookupResult } from "../features/prism-resolution/application
 import type { ResolutionContinuityResult } from "../features/prism-resolution/application/continuity-service";
 import type { ResolutionDiff } from "../features/prism-resolution/domain/risks";
 import type { ResolutionSnapshot } from "../features/prism-resolution/domain/snapshot";
+import type { ConnectedPortfolio, PrivacyWalletConsent } from "../features/prism-portfolio/domain";
 import type {
   ConsentStatus,
   PrivacyActionExecution,
@@ -243,6 +244,18 @@ export interface GetOperationQuery {
   readonly operationId: string;
 }
 export type GetOperationData = PersistedOperation | null;
+
+// ---------------------------------------------------------------------------
+// Connected portfolio read — derived, source/freshness-bearing projection
+// ---------------------------------------------------------------------------
+
+export interface PortfolioQuery {
+  readonly prismId: string;
+  /** Private STRK20 balances are requested only with explicit wallet consent. */
+  readonly privacyWalletConsent?: PrivacyWalletConsent | null;
+}
+
+export type PortfolioData = ConnectedPortfolio;
 
 // ---------------------------------------------------------------------------
 // STRK20 action / privacy-receipt transport

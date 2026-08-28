@@ -96,6 +96,12 @@ Error details are transport-redacted: provider URLs/output, connection strings, 
 | `GET /api/v1/operations/{operationId}` | Read a durable operation by id. No body. | Public operation projection: `{ id, kind, state, version, createdAt, updatedAt, authoritativeSource, txHash, errorCode, errorDetail, attempts, submissionAttempted, correlationId, reconciliationWatermark }`. Internal `idempotencyKey`, `requestFingerprint`, and `reconciliationMetadata` are intentionally omitted. `ETag` is the operation version. | Public read in the current route. `submitted`, `processing`, `confirming`, `confirmed`, `indexed`, `reconciled`, `completed`, `failed_retryable`, `failed_terminal`, `reverted`, `expired`, `cancelled`, and `requires_attention` remain distinct. `ERR-002`/404 unknown; `ERR-021`/503 store. |
 | `GET /api/v1/receipts/{receiptId}` | Read the receipt projection for an operation/receipt id. No body. | `data`: `{ receiptId, operationId, kind, state, txHash, createdAt, updatedAt, watermark, errorCode, errorDetail, correlationId }`; `ETag` is operation version when present and watermark is exposed as `x-prism-watermark` when present. Error detail is redacted. | Public read in the current route. Receipt is observational and does not bypass operation reconciliation. `ERR-002`/404 unknown, `ERR-021`/503 store. A receipt with `state:"submitted"` is not completion evidence. |
 
+### Connected portfolio
+
+| Method and path | Purpose / request shape | Response shape, source, freshness, and privacy boundary |
+|---|---|---|
+| `GET /api/v1/portfolio/{prismId}` | Public read. Optional `X-Privacy-Wallet-Consent: granted|denied|required` and opaque `X-Privacy-Wallet-Session-Ref` request private STRK20 projection. | `data` always carries explicit `BASE`, `STARKNET`, and `STRK20` branches. Each branch has typed `state` (`loading`, `empty`, `observed`, `stale`, `unavailable`, `partial`, `unknown`), `authoritativeSource`, `observedAt`, `freshness`, `coverage`, and `assetUnitCompatibility`. Base/Starknet accounts come only from explicit binding/resolution authority; no address/alias/graph inference. STRK20 is never read without granted wallet consent. `total` is null or a fresh valuation-backed amount; partial totals are labeled `coverage:"partial"` and list excluded assets. |
+
 ### STRK20 actions and privacy receipts
 
 || Method and path | Purpose / request shape | Response shape, lifecycle, and privacy boundary |

@@ -28,6 +28,19 @@ export const MCP_TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
     inputSchema: { type: "object", required: ["prismId"], properties: { prismId: { type: "string" } } },
   },
   {
+    name: "prism_get_portfolio",
+    description: "Read source/freshness-bearing Base, Starknet, and consent-gated STRK20 portfolio branches; totals require fresh valuation.",
+    inputSchema: {
+      type: "object",
+      required: ["prismId"],
+      properties: {
+        prismId: { type: "string" },
+        privacyWalletConsent: { type: "string", enum: ["granted", "denied", "required"] },
+        walletSessionRef: { type: "string", description: "Opaque wallet-session reference; never a key or proof." },
+      },
+    },
+  },
+  {
     name: "prism_get_connections",
     description: "Alias for resolve — lists active binding for a venue.",
     inputSchema: { type: "object", required: ["prismId", "venue"], properties: { prismId: { type: "string" }, venue: { type: "string", enum: ["BASE"] } } },
@@ -90,6 +103,11 @@ export function createMcpAdapter(client: PrismClient) {
           return client.identities.resolve(args.prismId as PrismId, (args.venue as Venue) ?? "BASE");
         case "prism_get_identity":
           return client.identities.get(args.prismId as PrismId);
+        case "prism_get_portfolio":
+          return client.portfolio.get(args.prismId as PrismId, {
+            ...(typeof args.privacyWalletConsent === "string" ? { privacyWalletConsent: args.privacyWalletConsent as "granted" | "denied" | "required" } : {}),
+            ...(typeof args.walletSessionRef === "string" && args.privacyWalletConsent === "granted" ? { walletSessionRef: args.walletSessionRef } : {}),
+          });
         case "prism_get_connections":
           return client.identities.resolve(args.prismId as PrismId, (args.venue as Venue) ?? "BASE");
         case "prism_create_intent":

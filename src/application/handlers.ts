@@ -37,6 +37,8 @@ import type {
   GetStrk20ActionQuery,
   PrivacyReceiptData,
   GetPrivacyReceiptQuery,
+  PortfolioData,
+  PortfolioQuery,
 } from "./schemas";
 import type { PersistedOperation } from "../features/prism-operations/domain/operation-store";
 import type { PrivacyReceiptApplicationPort, Strk20ActionApplicationPort } from "./ports";
@@ -49,6 +51,8 @@ import { PrivacyActionService, type PrivacyActionRequest } from "../features/pri
 import { Strk20Error, STRK20_ERROR_CODE } from "../features/prism-strk20/domain/errors";
 import { PrivacyReceiptService } from "./privacy-receipt-service";
 import { parseStrk20ActionPayload, serializePrivacyActionView } from "./strk20-transport";
+import { PortfolioAggregationError, PORTFOLIO_ERROR_CODE } from "../features/prism-portfolio/domain/errors";
+import type { PortfolioAggregationPort } from "../features/prism-portfolio/domain/ports";
 
 /** Handler is a pure async function over typed request envelope -> typed response. */
 export type Handler<TPayload, TData> = (req: AppCommandRequest<TPayload>) => Promise<AppResponse<TData>>;
@@ -125,6 +129,32 @@ function mapOwnerHandlerFailure(cause: unknown, requestId: string | null): AppRe
     return err(appError.toExternalShape(), requestId);
   }
   return unavailableBindingService(requestId);
+}
+
+function portfolioErrorShape(cause: PortfolioAggregationError): AppErrorResponse["error"] {
+  const validation = cause.code === PORTFOLIO_ERROR_CODE.INVALID_PRISM_ID;
+  const status = validation ? 422 : 503;
+  return {
+    code: cause.code,
+    name: cause.code.toLowerCase(),
+    category: validation ? "validation" : "dependency",
+    retryable: validation ? "no" : "true_backoff",
+    userAction: validation ? "correct_input" : "wait_retry",
+    httpStatusHint: status,
+    ...(cause.detail ? { detail: cause.detail } : {}),
+  };
+}
+
+function portfolioUnavailable(requestId: string | null): AppResponse<never> {
+  return err({
+    code: "PORTFOLIO_UNAVAILABLE",
+    name: "portfolio_unavailable",
+    category: "dependency",
+    retryable: "true_backoff",
+    userAction: "wait_retry",
+    httpStatusHint: 503,
+    detail: "portfolio_service_unconfigured",
+  }, requestId);
 }
 
 function strk20Unavailable(requestId: string | null): AppResponse<never> {
@@ -259,6 +289,8 @@ export interface PrismApiHandlersOptions {
   readonly privacyActionService?: PrivacyActionService | null;
   /** Optional derived privacy receipt projector; absent remains fail-closed. */
   readonly privacyReceiptService?: PrivacyReceiptService | null;
+  /** Explicit connected-portfolio projector; missing means fail closed. */
+  readonly portfolioService?: PortfolioAggregationPort | null;
 }
 
 export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyReceiptApplicationPort {
@@ -267,6 +299,7 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
   private readonly bindingDisclosureClock?: Clock;
   private readonly privacyActionService?: PrivacyActionService | null;
   private readonly privacyReceiptService?: PrivacyReceiptService | null;
+  private readonly portfolioService?: PortfolioAggregationPort | null;
   /** Process-local idempotency fences for the X2 privacy adapter. */
   private readonly strk20Idempotency = new Map<string, { fingerprint: string; actionId: string }>();
   private readonly strk20ActionFingerprints = new Map<string, string>();
@@ -278,6 +311,7 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
     this.privacyActionService = options?.privacyActionService;
     this.privacyReceiptService = options?.privacyReceiptService
       ?? (this.privacyActionService ? new PrivacyReceiptService(this.privacyActionService) : null);
+    this.portfolioService = options?.portfolioService;
   }
 
   private async runChainTouching<T>(action: () => Promise<AppResponse<T>>): Promise<AppResponse<T>> {
@@ -356,6 +390,25 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
   /** GET /v1/operations/:id — durably persisted operation read (SM-PRISM-003). */
   getOperation: QueryHandler<{ operationId: string }, PersistedOperation | null> = (req) =>
     this.app.getOperation(req);
+
+  /** GET /v1/portfolio/:prismId — derived, explicit-source portfolio read. */
+  async getPortfolio(req: { payload: PortfolioQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<PortfolioData>> {
+    const requestId = req.headers?.requestId ?? null;
+    const service = this.portfolioService;
+    if (!service) return portfolioUnavailable(requestId) as AppResponse<PortfolioData>;
+    const read = service.aggregate ?? service.getPortfolio;
+    if (!read) return portfolioUnavailable(requestId) as AppResponse<PortfolioData>;
+    try {
+      const data = await read.call(service, {
+        prismId: req.payload.prismId,
+        privacyWalletConsent: req.payload.privacyWalletConsent,
+      });
+      return ok<PortfolioData>(data, undefined, requestId);
+    } catch (cause) {
+      if (cause instanceof PortfolioAggregationError) return err(portfolioErrorShape(cause), requestId) as AppResponse<PortfolioData>;
+      return portfolioUnavailable(requestId) as AppResponse<PortfolioData>;
+    }
+  }
 
   // --- Wallet-mediated STRK20 lifecycle / policy-filtered privacy receipt ---
 
@@ -574,5 +627,18 @@ export const STRK20_API_CONTRACTS = [
     systemOp: "STRK20-PRIVACY-RECEIPT-PROJECTION",
     errors: ["ERR-002", "STRK20-013", "STRK20-019"],
     notes: "derived policy-filtered projection; OBSERVED requires matching successful final receipt and pinned pool event",
+  },
+] as const;
+
+/** Additive portfolio contract; public branches are source-bound and private
+ * STRK20 data requires an explicit wallet-consent capability. */
+export const PORTFOLIO_API_CONTRACTS = [
+  {
+    method: "GET",
+    path: "/v1/portfolio/:prismId",
+    handler: "getPortfolio",
+    systemOp: "PORTFOLIO-DERIVED-READ",
+    errors: ["PORTFOLIO_UNAVAILABLE", "PORTFOLIO_INVALID_PRISM_ID"],
+    notes: "Base/Starknet require explicit binding resolution; STRK20 balances are queried only after privacy-wallet consent; totals require fresh injected valuation.",
   },
 ] as const;

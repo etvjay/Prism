@@ -17,6 +17,8 @@ import type {
   GetStrk20ActionQuery,
   PrivacyReceiptData,
   GetPrivacyReceiptQuery,
+  PortfolioData,
+  PortfolioQuery,
 } from "./schemas";
 import { StarknetSubmitAdapter } from "../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../features/prism-operations/adapters/starknet-submit-v2";
@@ -62,6 +64,11 @@ export interface Strk20ActionApplicationPort {
 /** Derived policy-filtered privacy receipt projection. */
 export interface PrivacyReceiptApplicationPort {
   getPrivacyReceipt(req: { payload: GetPrivacyReceiptQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<PrivacyReceiptData>>;
+}
+
+/** Derived connected portfolio read; no chain or private-key bypass. */
+export interface PortfolioApplicationPort {
+  getPortfolio(req: { payload: PortfolioQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<PortfolioData>>;
 }
 
 // ---------------------------------------------------------------------------

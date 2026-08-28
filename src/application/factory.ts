@@ -41,6 +41,7 @@ import { InMemoryPauseService } from "./pause-port";
 import { InMemoryPauseMetrics } from "../features/prism-pause/ports/metrics";
 import { ReceiptService } from "./receipt-service";
 import { PrivacyReceiptService } from "./privacy-receipt-service";
+import type { PortfolioAggregationPort } from "../features/prism-portfolio/domain/ports";
 import { PrivacyActionService } from "../features/prism-strk20/application/privacy-action-service";
 import type { Strk20ActionPort } from "../features/prism-strk20/adapters/wallet-strk20-action-adapter";
 import type { Strk20WalletPort } from "../features/prism-strk20/domain/ports";
@@ -175,6 +176,8 @@ export interface FactoryStarknetOverrides {
   privacyActionService?: PrivacyActionService | null;
   /** Explicit derived receipt projector override. */
   privacyReceiptService?: PrivacyReceiptService | null;
+  /** Explicit connected portfolio projector; default factories stay unavailable. */
+  portfolioService?: PortfolioAggregationPort | null;
 }
 
 export interface AppFactory {
@@ -205,6 +208,8 @@ export interface AppFactory {
   privacyActionService: PrivacyActionService | null;
   /** Policy-filtered privacy receipt projector, null when no lifecycle source exists. */
   privacyReceiptService: PrivacyReceiptService | null;
+  /** Connected portfolio projector; null until explicit source adapters are injected. */
+  portfolioService: PortfolioAggregationPort | null;
   challengeService: PrismChallengeService;
   /** Durable PUBLIC/PRIVATE disclosure store; v0 persistence never accepts SELECTIVE. */
   bindingDisclosureStore: BindingDisclosureStore;
@@ -681,6 +686,7 @@ function createMemoryFactory(
   const privacyReceiptService = overrides?.privacyReceiptService !== undefined
     ? overrides.privacyReceiptService
     : (privacyActionService ? new PrivacyReceiptService(privacyActionService) : null);
+  const portfolioService = overrides?.portfolioService ?? null;
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
@@ -701,6 +707,7 @@ function createMemoryFactory(
     bindingDisclosureClock: clock,
     privacyActionService,
     privacyReceiptService,
+    portfolioService,
   });
   // Reconciliation worker — transport-neutral fakes when starknet not configured; real adapters when configured.
   // X2 guard: daemon must not start in tests; caller must use tickAllOnce. Worker is still constructed for startupRecovery demo.
@@ -754,6 +761,7 @@ function createMemoryFactory(
     receiptService,
     privacyActionService,
     privacyReceiptService,
+    portfolioService,
     challengeService,
     bindingDisclosureStore,
     bindingDisclosureService,
@@ -931,6 +939,7 @@ async function createPostgresFactory(
   const privacyReceiptService = overrides?.privacyReceiptService !== undefined
     ? overrides.privacyReceiptService
     : (privacyActionService ? new PrivacyReceiptService(privacyActionService) : null);
+  const portfolioService = overrides?.portfolioService ?? null;
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
@@ -951,6 +960,7 @@ async function createPostgresFactory(
     bindingDisclosureClock: clock,
     privacyActionService,
     privacyReceiptService,
+    portfolioService,
   });
   const fallbackLedger: LedgerStatusPort = ledgerStatusAdapter ?? {
     async observeChain() {
@@ -1004,6 +1014,7 @@ async function createPostgresFactory(
     receiptService,
     privacyActionService,
     privacyReceiptService,
+    portfolioService,
     challengeService,
     bindingDisclosureStore,
     bindingDisclosureService,

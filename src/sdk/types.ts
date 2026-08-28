@@ -3,6 +3,11 @@
 
 export type PrismId = string;
 export type Venue = "BASE";
+export type PortfolioData = import("../features/prism-portfolio/domain/types").ConnectedPortfolio;
+export type PortfolioBranchData = import("../features/prism-portfolio/domain/types").PortfolioBranch;
+export type PortfolioBranchState = import("../features/prism-portfolio/domain/types").PortfolioBranchState;
+export type PortfolioVenue = import("../features/prism-portfolio/domain/types").PortfolioVenue;
+export type PortfolioPrivacyConsent = import("../features/prism-portfolio/domain/types").PrivacyWalletConsentStatus;
 export type Hex = `0x${string}`;
 export type OperationState =
   | "created"
