@@ -33,7 +33,8 @@ diagnostics are forbidden fields. Local memory adapters are test/development
 only; configured Postgres is required for the durable runtime.
 
 Base escrow is not implemented in this slice and remains blocked by the absent
-EVM toolchain. No escrow contract, signing adapter, funding flow, broadcast, or
-live receipt is implied. These mounted routes are X2 local implementation and
-integration evidence only; unavailable dependencies fail closed with typed
-`ERR-062`/`ERR-063` responses.
+reviewed on-chain specification, ABI, address, and authority decisions. Foundry
+availability does not change that boundary. No escrow contract, signing adapter,
+funding flow, broadcast, or live receipt is implied. These mounted routes are X2
+local implementation and integration evidence only; unavailable dependencies fail
+closed with typed `ERR-062`/`ERR-063` responses.

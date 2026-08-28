@@ -1,6 +1,6 @@
 # Base escrow implementation packet
 
-**Status:** `BLOCKED_BY_CONTRACT_TOOLCHAIN`
+**Status:** `BLOCKED_BY_OWNER_SPECIFICATION`
 
 **Assessment commit:** `4eee0be88fc95db2efc44d146f344c9c2ee5fdc3`
 
@@ -14,9 +14,11 @@ Prism's canonical product state defines Base as an ordinary public execution ven
 and a Base account as an external execution-identity proof. The canonical payment
 and claim slice defines local request/gift aggregates and narrow effect ports, but it
 does **not** define a reviewed Base escrow contract, ABI, deployed address, event
-selectors, custody model, proof verifier, or trust model. Therefore this workstream
-cannot honestly implement Solidity, an EVM adapter, or contract tests against a real
-interface.
+selectors, custody model, proof verifier, or trust model. Foundry is now available
+locally, but that only removes the former compiler/toolchain blocker. It does not
+authorize inventing the financial contract interface. Therefore this workstream
+cannot honestly implement Solidity, an EVM adapter, or contract tests against a
+canonical interface.
 
 The correct deliverable is this packet plus the existing blocked report, not a
 simulated contract or guessed calldata. Local aggregate behavior is not ledger
@@ -55,11 +57,13 @@ No tracked Solidity source, `foundry.toml`, Hardhat configuration, escrow ABI, o
 contract address was found. Existing `viem` usage is for other identity,
 permission, and utility boundaries; it is not an escrow implementation.
 
-## 3. Required reviewed contract specification (unblock gate)
+## 3. Exact owner decisions still missing (unblock gate)
 
-Before writing an adapter or contract test, a reviewer must supply and accept a
-versioned specification that answers every item below. Names and encodings remain
-placeholders until the canonical specification supplies them.
+The repository encodes the local lifecycle, but not the on-chain agreement. Before
+writing a contract, adapter, or ABI fixture, the owner and reviewer must record a
+versioned decision for every item below. These are the exact unresolved decisions,
+not implementation suggestions. Names and encodings remain placeholders until that
+record exists.
 
 ### Economic object and authority
 
@@ -75,6 +79,28 @@ placeholders until the canonical specification supplies them.
 5. Exact claim authorization model: public proof verifier, recipient signature,
    nullifier commitment, or another reviewed mechanism. A backend boolean is not
    sufficient ledger authority.
+
+6. Exact trust boundary for the phrase “noncustodial”: who may authorize a claim,
+   whether any backend/operator can block or redirect it, and whether a verifier,
+   relayer, or wallet provider is trusted only for liveness or also for correctness.
+7. Exact payer-approval binding: the typed-data/domain or other authorization
+   encoding, signer address semantics, replay scope, approval expiry, and whether
+   creation and funding are separate transactions.
+8. Exact claim payload encoding: claim ID width/encoding, nullifier versus
+   nullifier-commitment relation, recipient binding, chain/domain separation, and
+   whether proof verification is onchain, offchain with an attested result, or
+   intentionally absent.
+9. Exact native/token policy: supported token interface, transfer return-value
+   handling, fee-on-transfer/rebasing policy, balance-delta checks, and whether
+   one contract supports both native ETH and ERC-20 or they are separate versions.
+10. Exact time and finality policy: timestamp versus block expiry, boundary rule,
+    accepted reorg/finality depth, and treatment of pending/unknown provider state.
+11. Exact ABI/event/read schema and immutable version identifier, including field
+    widths/order, indexed fields, state enum values, funding correlation, and all
+    reads needed for independent reconciliation.
+12. Exact deployment authority and lifecycle: immutable versus governed code,
+    privileged roles, upgrade/timelock/emergency paths, deployment owner, and the
+    separately approved Base Sepolia address/bytecode evidence process.
 
 ### State and terminality
 
@@ -235,7 +261,9 @@ mainnet readiness.
 
 - Disk check at assessment time: root filesystem `/dev/root`, `29G` total,
   `28G` used, `528M` available (`99%`).
-- `forge`, `anvil`, `cast`, `solc`, and `hardhat`: not installed/resolvable.
+- `forge` is installed and available for an isolated future implementation. No
+  deployment or network action was performed. The presence of Foundry does not
+  supply the missing reviewed contract specification, ABI, address, or authority.
 - `scarb` and `snforge`: installed, but they are Starknet tooling and do not make
   an EVM escrow toolchain available.
 - Repository dependencies include pinned `viem 2.55.19`, which is usable for a
@@ -245,10 +273,11 @@ mainnet readiness.
   With only about `528M` free, installing Foundry or disposable EVM artifacts is
   unsafe and outside this lane's needs.
 
-**Readiness:** `NOT_READY_FOR_CONTRACT_IMPLEMENTATION`. The safe next prerequisite
-is a reviewed contract spec/ABI/address and an explicitly approved, space-safe
-pinned toolchain plan. No toolchain installation should occur until disk is
-remediated and cleanup is explicitly scoped.
+**Readiness:** `NOT_READY_FOR_CONTRACT_IMPLEMENTATION` because the owner
+specification is incomplete, not because Solidity tooling is unavailable. The safe
+next prerequisite is the signed/versioned decision record above, followed by an
+isolated Foundry implementation and tests. No deployment, funding, signing,
+broadcast, or provider call is implied.
 
 ## 8. Current verification record
 
@@ -258,8 +287,13 @@ Run at the assessment commit:
   130 files passed and 6 skipped.
 - `npm run typecheck` → **PASS**.
 - Static inventory confirms no tracked Solidity source, escrow ABI, or address.
+- `forge --version` resolves to Foundry `1.7.1`; no contract was created because
+  the missing decisions above are material to authority, asset safety, and ABI.
 
 The existing `projects/prism/BASE_ESCROW_BLOCKED_REPORT.md` remains the concise
-blocker record. This packet adds the missing lifecycle, event, race, replay,
-reentrancy, refund, expiry, and exact future readback requirements without claiming
-that any of them are implemented or observed.
+blocker record. This packet adds the missing owner-decision list and retains the
+lifecycle, event, race, replay, reentrancy, refund, expiry, and exact future
+readback requirements without claiming that any financial contract is implemented
+or observed. The local HTTP payment/gift routes remain the frontend-ready X2
+surface: explicit operations, public-safe projections, decimal-string amounts,
+stable lifecycle states, correlation headers, and fail-closed unavailable effects.

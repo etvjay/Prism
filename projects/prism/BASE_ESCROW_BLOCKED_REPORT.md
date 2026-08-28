@@ -1,15 +1,16 @@
 # Base escrow lifecycle assessment
 
-**Status:** `BLOCKED_BY_CONTRACT_TOOLCHAIN`
+**Status:** `BLOCKED_BY_OWNER_SPECIFICATION`
 **Scope:** local Base Sepolia (`chainId 84532`) escrow/payment lifecycle only
 **Assessment target:** `prism-v0-backend` at `9b4d3877219fab1d16ff0bb6b92a2a065dc6a9e3`
 
 ## Decision
 
-No Base escrow adapter or EVM contract is implemented in this lane. The repository
-has no reviewed escrow contract, exact deployed Base address, escrow ABI, or
-supported EVM contract toolchain that could make a real `create → fund → claim /
-expire → refund` lifecycle safe to implement. Adding Solidity, guessed calldata,
+No Base escrow adapter or EVM contract is implemented in this lane. Foundry 1.7.1
+is now available locally, but the repository
+has no reviewed escrow contract, exact deployed Base address, or escrow ABI that
+could make a real `create → fund → claim / expire → refund` lifecycle safe to
+implement. Adding Solidity, guessed calldata,
 an address, a deployment, or a signing/broadcast path would invent contract
 truth and violate the payment boundary.
 
@@ -39,7 +40,8 @@ The existing payment and claim code remains a local X2 boundary:
 - `contracts/` contains only Cairo/Scarb crates for identity registry,
   allocation, and Vesu lending helper. `foundry/` contains documentation only.
 - `command -v scarb` and `command -v snforge` resolve to installed Starknet
-  tooling. `forge`, `anvil`, `hardhat`, `cast`, and `solc` resolve to nothing.
+  tooling. `forge --version` resolves to Foundry 1.7.1. Tool availability does not
+  resolve the absent reviewed ABI/specification.
 - `git ls-files` contains no `.sol`, `foundry.toml`, or `hardhat.config.*`.
 - `ops/target-network/manifest.yaml` defines Base Sepolia `84532` as the
   accepted testnet venue, but contains no escrow contract address or ABI.
@@ -85,5 +87,5 @@ reviewed:
 5. Tests against the reviewed ABI/address that preserve the existing approval,
    receipt, expiry, nullifier, redaction, and no-live-claim invariants.
 
-Until then, the correct state is `BLOCKED_BY_CONTRACT_TOOLCHAIN`, not a partial
+Until then, the correct state is `BLOCKED_BY_OWNER_SPECIFICATION`, not a partial
 or simulated escrow implementation.
