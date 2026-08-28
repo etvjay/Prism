@@ -2,7 +2,7 @@
 
 **Status:** `BLOCKED_BY_CONTRACT_TOOLCHAIN`
 **Scope:** local Base Sepolia (`chainId 84532`) escrow/payment lifecycle only
-**Assessment target:** `prism-v0-backend` at `e87f799e0861b045e000ab624899f9b7e050dcfb`
+**Assessment target:** `prism-v0-backend` at `9b4d3877219fab1d16ff0bb6b92a2a065dc6a9e3`
 
 ## Decision
 

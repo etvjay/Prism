@@ -1,7 +1,7 @@
 # Prism Testnet Rehearsal Packet
 
 **Status:** `PREPARATION — READ-ONLY DRY-RUN ONLY; NO DEPLOYMENT OR BROADCAST`
-**Candidate baseline:** local `HEAD e87f799e0861b045e000ab624899f9b7e050dcfb` in `/home/ubuntu/prism-work/prism-v0-backend`
+**Candidate baseline:** local `HEAD 9b4d3877219fab1d16ff0bb6b92a2a065dc6a9e3` in `/home/ubuntu/prism-work/prism-v0-backend`
 **Target:** `SN_SEPOLIA` + `BASE_SEPOLIA` (`Base chain_id 84532`)
 **Harness:** `ops/testnet-rehearsal/dry-run.mjs`
 **Machine inventory:** `ops/testnet-rehearsal/endpoint-inventory.json`
@@ -41,9 +41,9 @@ files, contracts, `strk20.json`, `projects/prism/EVIDENCE_LEDGER.md`,
 - fabrication of a Prism ID, transaction hash, block, receipt, class hash,
   watermark, alias association, privacy note, or maturity result.
 
-The worktree is intentionally dirty from other lanes. A future live rehearsal
-must freeze a candidate commit and re-run the scope check before using any
-endpoint or evidence packet.
+The backend candidate worktree is clean and isolated from other lanes. A future
+live rehearsal must freeze the candidate commit and re-run the scope check before
+using any endpoint or evidence packet.
 
 ---
 
@@ -281,7 +281,7 @@ value at run time; never copy a plausible value from a fixture.
 
 **Preconditions**
 
-- candidate commit is frozen and the dirty-snapshot exclusions are resolved;
+- candidate commit is frozen and the separate-lane exclusions are resolved;
 - `DEC-PRISM-OPS-001` and chain-ID decision mirror are accepted;
 - `SN_SEPOLIA` + `BASE_SEPOLIA/84532` is the only selected environment;
 - harness self-test, target-network validator, Starknet secret-free validator,
@@ -776,7 +776,7 @@ blocker/downgrade, not a `0x…` value.
 
 | Gate | Owner | Required pass | Current disposition in this packet |
 |---|---|---|---|
-| `R0` scope freeze | both teams | Candidate and protected-file boundaries verified | **OPEN** — current worktree is dirty outside this lane; packet did not clean it. |
+| `R0` scope freeze | both teams | Candidate and protected-file boundaries verified | **PASS** — backend candidate worktree is clean; frontend and other lanes remain separate. |
 | `R1` target decision | backend/owner | Accepted testnet mirror, no mainnet selection | **PASS read-only** — harness validates accepted testnet target; this does not authorize broadcast. |
 | `R2` config shape | backend | Names/shapes valid; values remain secret/outside repo | **PASS for offline validator**; actual provider config is not asserted by default. |
 | `R3` registry scope | backend/operator | Readback of exact selected deployment/version/class hash | **OPEN** — no new provider read performed here. |
@@ -842,7 +842,7 @@ authorize that action and contains no signer workflow capable of performing it.
 
 ```text
 Specified:          yes — canonical/system requirements and route candidates inventoried
-Implemented:        local source routes present for all 25 method entries
+Implemented:        local source routes present for all 31 method entries
 Integrated:         canonical factory/handler/schema/port wiring plus direct by-controller route reconciled and route-tested
 Deployed:           not performed or asserted by this packet
 Observed:           no new external receipt/readback/provider observation
