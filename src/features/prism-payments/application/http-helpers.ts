@@ -1,4 +1,4 @@
-import { parseHeaders, readJson, toHttpErrorResponse, jsonError, requireSession, type ParsedHeaders } from "@/application/http-helpers";
+import { parseHeaders, readJson, toHttpErrorResponse, jsonError, requireAuthenticatedSession, type ParsedHeaders } from "@/application/http-helpers";
 import { PaymentClaimError } from "../domain/errors";
 export function nowSeconds(){ return Math.floor(Date.now()/1000); }
 export function jsonData(data:unknown, parsed:ParsedHeaders, status=200){ const h=new Headers({'content-type':'application/json'}); if(parsed.requestId)h.set('x-request-id',parsed.requestId); if(parsed.correlationId)h.set('x-correlation-id',parsed.correlationId); return new Response(JSON.stringify({ok:true,data,requestId:parsed.requestId??null}),{status,headers:h}); }
@@ -7,4 +7,4 @@ export function safeJson(value:any):any { if(typeof value==='bigint')return valu
 import { toPublicGiftProjection } from "@/features/prism-payments/domain/public-projection";
 export function publicGift(value:any){ return toPublicGiftProjection(value); }
 export function publicPayment(value:any){ return safeJson({protocolVersion:value.protocolVersion,schemaVersion:value.schemaVersion,requestId:value.requestId,recipient:value.recipient,asset:value.asset,amount:value.amount,chainId:value.chainId,expiresAt:value.expiresAt,state:value.state,version:value.version,createdAt:value.createdAt,updatedAt:value.updatedAt,transactionHash:value.transactionHash,operationId:value.operationId,submissionAttempted:value.submissionAttempted,viewedAt:value.viewedAt,rejectedAt:value.rejectedAt,confirmedAt:value.confirmedAt,confirmationBlockNumber:value.confirmationBlockNumber,errorCode:value.errorCode}); }
-export { parseHeaders, readJson, requireSession };
+export { parseHeaders, readJson, requireAuthenticatedSession };

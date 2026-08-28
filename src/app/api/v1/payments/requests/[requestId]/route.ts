@@ -1,5 +1,5 @@
 import { getPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
-import { parseHeaders, readJson, requireSession, jsonData, jsonPaymentError, nowSeconds, publicPayment } from "@/features/prism-payments/application/http-helpers";
+import { parseHeaders, readJson, requireAuthenticatedSession, jsonData, jsonPaymentError, nowSeconds, publicPayment } from "@/features/prism-payments/application/http-helpers";
 import { BASE_SEPOLIA_CHAIN_ID } from "@/features/prism-payments/domain/payment-request";
 import { PaymentClaimError, PAYMENT_CLAIM_ERROR_CODE } from "@/features/prism-payments/domain/errors";
 
@@ -19,7 +19,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
   const parsed = parseHeaders(req);
   const body = await readJson(req);
   if (body === null) return jsonPaymentError(new Error("bad"), parsed);
-  const sessionOrErr = requireSession(req, body);
+  const sessionOrErr = requireAuthenticatedSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   try {
     const runtime = await getPaymentHttpRuntime();

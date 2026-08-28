@@ -293,7 +293,7 @@ function validateConfigShape(env) {
     if (!Number.isSafeInteger(block) || block < 0) errors.push("PRISM_STARKNET_INDEXER_START_BLOCK:invalid_nonnegative_integer");
   }
   if (nonEmpty(env.PRISM_REQUIRE_POSTGRES) && env.PRISM_REQUIRE_POSTGRES.trim() !== "1") errors.push("PRISM_REQUIRE_POSTGRES:expected_1_when_set");
-  if (nonEmpty(env.PRISM_RUNTIME_MODE) && !new Set(["test", "development", "production"]).has(env.PRISM_RUNTIME_MODE.trim())) errors.push("PRISM_RUNTIME_MODE:unsupported_value");
+  if (nonEmpty(env.PRISM_RUNTIME_MODE) && !new Set(["test", "development", "production", "rehearsal"]).has(env.PRISM_RUNTIME_MODE.trim())) errors.push("PRISM_RUNTIME_MODE:unsupported_value");
   return { present, absent, errors };
 }
 

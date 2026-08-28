@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as createPayment } from "../payments/requests/route";
 import { GET as getPayment } from "../payments/requests/[requestId]/route";
-import { resetPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
+import { getPaymentHttpRuntime, resetPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
 
 const hash = `0x${"a".repeat(64)}`;
 const sessionHeaders = {
   "content-type": "application/json",
   "Idempotency-Key": "k1",
   "X-Request-Id": "r1",
-  "x-session-id": "sess-1",
+  "x-session-id": "sess-0001",
   "x-session-user": "requester",
 };
 
@@ -29,7 +29,7 @@ function paymentBody(overrides: Record<string, unknown> = {}) {
 describe("request payment mounted route", () => {
   beforeEach(() => {
     resetPaymentHttpRuntime();
-    delete process.env.PRISM_RUNTIME_MODE;
+    process.env.PRISM_RUNTIME_MODE = "test";
     delete process.env.PRISM_REQUIRE_POSTGRES;
   });
 
@@ -42,17 +42,39 @@ describe("request payment mounted route", () => {
     expect(response.status).toBe(401);
   });
 
+  it("rejects malformed and expired test sessions", async () => {
+    const malformed = await createPayment(new Request("http://x/v1/payments/requests", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: paymentBody({ session: { sessionId: "bad", userId: "requester", issuedAt: 1, expiresAt: 9999999999 } }),
+    }));
+    expect(malformed.status).toBe(401);
+    const expired = await createPayment(new Request("http://x/v1/payments/requests", {
+      method: "POST",
+      headers: { ...sessionHeaders, "x-session-expires-at": "1" },
+      body: paymentBody({ requestId: "req-expired" }),
+    }));
+    expect(expired.status).toBe(401);
+  });
+
   it("fails closed without Postgres in production mode", async () => {
+    process.env.PRISM_RUNTIME_MODE = "production";
+    resetPaymentHttpRuntime();
+    await expect(getPaymentHttpRuntime()).rejects.toMatchObject({ code: "ERR-062" });
+    process.env.PRISM_RUNTIME_MODE = "test";
+  });
+
+  it("rejects unverified header sessions outside test mode", async () => {
     process.env.PRISM_RUNTIME_MODE = "production";
     resetPaymentHttpRuntime();
     const response = await createPayment(new Request("http://x/v1/payments/requests", {
       method: "POST",
       headers: sessionHeaders,
-      body: paymentBody({ requestId: "req-production" }),
+      body: paymentBody({ requestId: "req-unverified" }),
     }));
     expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ ok: false, error: { detail: "dependency_unavailable" } });
-    delete process.env.PRISM_RUNTIME_MODE;
+    expect(await response.json()).toMatchObject({ error: { detail: "session_verifier_unavailable" } });
+    process.env.PRISM_RUNTIME_MODE = "test";
   });
 
   it("binds the requester to the authenticated session and redacts private fields", async () => {

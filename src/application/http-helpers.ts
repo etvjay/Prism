@@ -4,7 +4,7 @@
 
 import type { AppResponse } from "./schemas";
 import { APP_ERROR_CODE } from "./errors";
-import type { AppSession } from "./auth";
+import { assertValidAppSession, isAppAuthError, type AppSession } from "./auth";
 
 export interface ParsedHeaders {
   requestId: string | null;
@@ -182,4 +182,23 @@ export function requireSession(req: Request, body: Record<string, unknown> | nul
   }
   const parsedHeaders = parseHeaders(req);
   return { error: jsonError(parsedHeaders.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 401, "missing_app_session") };
+}
+
+// Strict authority boundary for writes with caller-derived identity.
+// A trusted session verifier is not wired into this candidate, so unverified
+// body/Bearer material is accepted only in explicit test mode.
+export function requireAuthenticatedSession(req: Request, body: Record<string, unknown> | null): AppSession | { error: Response } {
+  const parsedHeaders = parseHeaders(req);
+  const mode = process.env.PRISM_RUNTIME_MODE;
+  const testMode = mode === "test" || (mode === undefined && process.env.NODE_ENV === "test");
+  if (!testMode) return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
+  const fromBody = (body?.session ?? body?.appSession ?? null) as unknown as AppSession | null;
+  const parsed = parseSession(req, fromBody);
+  if (!parsed) return { error: jsonError(parsedHeaders.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 401, "missing_app_session") };
+  try {
+    return assertValidAppSession(parsed, Math.floor(Date.now() / 1000));
+  } catch (error) {
+    if (isAppAuthError(error)) return { error: jsonError(parsedHeaders.requestId, error.code, 401, error.detail) };
+    return { error: jsonError(parsedHeaders.requestId, "ERR-023", 401, "invalid_app_session") };
+  }
 }
