@@ -70,6 +70,10 @@ export class StarknetRegistryReader implements RegistryReadPort {
     return this.delegate.getIdentity(prismId);
   }
 
+  async listByController(controller: string): Promise<readonly { prismId: string; createdAtBlock: number; version: number }[]> {
+    return this.delegate.listByController(controller);
+  }
+
   async resolve(prismId: string, venue: string): Promise<{ executionAccount: string | null; watermark: number }> {
     return this.delegate.resolve(prismId, venue);
   }
