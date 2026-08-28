@@ -1,7 +1,7 @@
 # Prism Testnet Rehearsal Packet
 
 **Status:** `PREPARATION — READ-ONLY DRY-RUN ONLY; NO DEPLOYMENT OR BROADCAST`
-**Candidate baseline:** local `HEAD 9b4d3877219fab1d16ff0bb6b92a2a065dc6a9e3` in `/home/ubuntu/prism-work/prism-v0-backend`
+**Candidate baseline:** local `HEAD be4f31e3e2a644441b53ff00e889f7f9d0c2c937` in `/home/ubuntu/prism-work/prism-v0-backend`
 **Target:** `SN_SEPOLIA` + `BASE_SEPOLIA` (`Base chain_id 84532`)
 **Harness:** `ops/testnet-rehearsal/dry-run.mjs`
 **Machine inventory:** `ops/testnet-rehearsal/endpoint-inventory.json`
@@ -162,7 +162,7 @@ headers are `X-Request-Id`, `X-Correlation-Id`, `Idempotency-Key`, `If-Match`,
 | `PAYMENT_REQUEST_CREATE` | `POST /v1/payments/requests` | Mounted local payment-request lifecycle create; public projection is redacted. | Do not infer payer, wallet, signing, funding, escrow, or settlement authority. |
 | `PAYMENT_REQUEST_READ` | `GET /v1/payments/requests/{requestId}` | Mounted public-safe lifecycle read. | Do not collapse unknown/unavailable into completed or failed. |
 | `PAYMENT_REQUEST_ACTION` | `POST /v1/payments/requests/{requestId}` | Explicit approve/submit transition; provider and domain gates remain authoritative. | HTTP 200/submitted is not settlement completion. |
-| `GIFT_CREATE` | `POST /v1/gifts` | Mounted claimable-gift create; local aggregate only. | Base escrow remains blocked by the absent EVM toolchain; do not invent a contract. |
+| `GIFT_CREATE` | `POST /v1/gifts` | Mounted claimable-gift create; local aggregate only. | Base escrow is locally implemented but remains review/deployment/readback gated; do not treat this route as live settlement. |
 | `GIFT_READ` | `GET /v1/gifts/{claimId}` | Mounted public-safe claim lifecycle read. | Never expose proof, nullifier, or private recipient material. |
 | `GIFT_ACTION` | `POST /v1/gifts/{claimId}` | Explicit fund/mark_claimable/claim/expire/refund transition with typed unavailable/unknown outcomes. | Do not treat actor/address claims as authority or claim local state as live receipt evidence. |
 
