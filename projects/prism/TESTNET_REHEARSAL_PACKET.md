@@ -1,7 +1,7 @@
 # Prism Testnet Rehearsal Packet
 
 **Status:** `PREPARATION — READ-ONLY DRY-RUN ONLY; NO DEPLOYMENT OR BROADCAST`
-**Candidate baseline:** local `HEAD fd08d8f5198f6e87c254ccbee116968b5439ce22` in `/home/ubuntu/prism-work/prism-v0-backend`
+**Candidate baseline:** local `HEAD e87f799e0861b045e000ab624899f9b7e050dcfb` in `/home/ubuntu/prism-work/prism-v0-backend`
 **Target:** `SN_SEPOLIA` + `BASE_SEPOLIA` (`Base chain_id 84532`)
 **Harness:** `ops/testnet-rehearsal/dry-run.mjs`
 **Machine inventory:** `ops/testnet-rehearsal/endpoint-inventory.json`
@@ -231,8 +231,8 @@ The command is offline and validates:
 - the target manifest is owner-accepted for `testnet`, with `SN_SEPOLIA`,
   Base chain ID `84532`, and explicit Registry V2 selection;
 - the decision mirror contains the accepted target and chain-ID records;
-- all 25 inventory entries are unique and cover every requested area;
-- 25 source-present method entries point to existing local route files;
+- all 31 inventory entries are unique and cover every requested rehearsal area;
+- 31 source-present method entries point to existing local route files;
 - 0 specified-only entries remain unmounted in this integrated snapshot;
 - OpenAPI paths marked present are present in `docs/api/openapi.yaml`;
 - every endpoint keeps all seven maturity fields and no endpoint is promotable;
