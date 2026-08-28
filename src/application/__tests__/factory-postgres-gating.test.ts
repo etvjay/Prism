@@ -108,6 +108,14 @@ describe("Factory — Postgres environment gating", () => {
     });
   });
 
+  it("rehearsal without URL fails closed with 503 stable code", async () => {
+    await withEnv({ NODE_ENV: "development", PRISM_RUNTIME_MODE: "rehearsal", PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined }, async () => {
+      resetFactory();
+      expect(isProductionRuntime()).toBe(true);
+      await expect(getAppFactory()).rejects.toMatchObject({ code: APP_ERROR_CODE.RPC_UNAVAILABLE });
+    });
+  });
+
   it("production without URL fails closed with 503 stable code, never silent memory fallback", async () => {
     await withEnv({ NODE_ENV: "production", PRISM_POSTGRES_TEST_URL: undefined, PRISM_POSTGRES_URL: undefined }, async () => {
       resetFactory();

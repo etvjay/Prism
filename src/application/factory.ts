@@ -273,7 +273,7 @@ export function isPostgresUrlValid(url: string): boolean {
 }
 
 export function isProductionRuntime(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production";
+  return process.env.NODE_ENV === "production" || process.env.PRISM_REQUIRE_POSTGRES === "1" || process.env.PRISM_RUNTIME_MODE === "production" || process.env.PRISM_RUNTIME_MODE === "rehearsal";
 }
 
 export function getRuntimeMode(): FactoryRuntimeMode {
@@ -1061,7 +1061,7 @@ async function createSingletonFactory(): Promise<AppFactory> {
   }
 
   if (runtimeMode === "production") {
-    // Production without Postgres is fail-closed: never silently fall back to memory
+    // Production and rehearsal without Postgres are fail-closed: never silently fall back to memory
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "postgres_url_missing_in_production");
   }
 
