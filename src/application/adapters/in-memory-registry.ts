@@ -68,6 +68,16 @@ export class InMemoryRegistry implements RegistryReadPort, StarknetSubmitPort {
     return rec ? { ...rec } : null;
   }
 
+  async listByController(controller: string): Promise<readonly { prismId: string; createdAtBlock: number; version: number }[]> {
+    const target = controller.trim().toLowerCase();
+    if (!/^0x[0-9a-f]{1,64}$/.test(target)) return [];
+    const out: { prismId: string; createdAtBlock: number; version: number }[] = [];
+    for (const [prismId, rec] of this.identities) {
+      if (rec.controller.toLowerCase() === target) out.push({ prismId, createdAtBlock: rec.createdAtBlock, version: rec.version });
+    }
+    return out;
+  }
+
   async resolve(prismId: string, venue: string): Promise<{ executionAccount: string | null; watermark: number }> {
     // Find first ACTIVE binding for (prismId, venue)
     for (const [k, v] of this.bindings.entries()) {

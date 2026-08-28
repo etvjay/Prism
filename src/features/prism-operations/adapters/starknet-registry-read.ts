@@ -186,6 +186,13 @@ export class StarknetRegistryReadAdapter implements RegistryReadPort {
     );
   }
 
+  async listByController(_controller: string): Promise<readonly { prismId: string; createdAtBlock: number; version: number }[]> {
+    // Canonical V1/V2 registry ABI exposes no by-controller view. This
+    // discovery path is available only via the scoped public event projection.
+    // A live reader without a wired projection must not fabricate matches.
+    throw new StarknetRegistryReadError("ERR-001", "by_controller_unavailable:canonical_v1_v2_views_expose_no_by_controller_entrypoint");
+  }
+
   async isDigestConsumed(digest: Hex): Promise<boolean> {
     if (!/^0x[0-9a-fA-F]{64}$/.test(digest)) {
       throw new StarknetRegistryReadError("ERR-023", `malformed_digest:${digest}`);

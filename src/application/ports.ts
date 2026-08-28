@@ -72,6 +72,8 @@ export interface PrivacyReceiptApplicationPort {
 export interface RegistryReadPort {
   /** Returns controller for prismId or null if not found (ERR-010 family). Never throws for not-found. */
   getIdentity(prismId: string): Promise<{ controller: string; createdAtBlock: number; version: number } | null>;
+  /** Returns all candidate identities whose canonical controller matches. May be empty. Never throws for an empty result. */
+  listByController(controller: string): Promise<readonly { prismId: string; createdAtBlock: number; version: number }[]>;
   /** Resolve returns ACTIVE account or null (= NO_ACTIVE_DESTINATION). */
   resolve(prismId: string, venue: string): Promise<{ executionAccount: string | null; watermark: number }>;
   /**
