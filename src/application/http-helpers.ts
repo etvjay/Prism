@@ -205,10 +205,10 @@ export function requireAuthenticatedSession(req: Request, body: Record<string, u
   const parsed = parseSession(req, fromBody);
   if (!parsed) return { error: jsonError(parsedHeaders.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 401, "missing_app_session") };
   // Test fixtures are explicitly opted in and are not an authority source in
-  // production or rehearsal. Body fixtures historically use frozen timestamps;
-  // still validate their shape while header expiry remains enforceable.
+  // production or rehearsal. They still pass through the same shape, issue-time,
+  // and expiry validation as signed sessions.
   try {
-    return assertValidAppSession(fromBody ? { ...parsed, expiresAt: null } : parsed, Math.floor(Date.now() / 1000));
+    return assertValidAppSession(parsed, Math.floor(Date.now() / 1000));
   } catch (error) {
     if (isAppAuthError(error)) return { error: jsonError(parsedHeaders.requestId, error.code, 401, error.detail) };
     return { error: jsonError(parsedHeaders.requestId, "ERR-023", 401, "invalid_app_session") };
