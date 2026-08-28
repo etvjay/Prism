@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./authority";
+export * from "./erc4337-user-operation";
 export {
   activateSessionGrant,
   assertSessionGrant,
