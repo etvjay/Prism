@@ -56,7 +56,7 @@ import type { PortfolioAggregationPort } from "../features/prism-portfolio/domai
 
 /** Handler is a pure async function over typed request envelope -> typed response. */
 export type Handler<TPayload, TData> = (req: AppCommandRequest<TPayload>) => Promise<AppResponse<TData>>;
-export type QueryHandler<TQuery, TData> = (req: { payload: TQuery; headers?: { requestId?: string | null } }) => Promise<AppResponse<TData>>;
+export type QueryHandler<TQuery, TData> = (req: { payload: TQuery; headers?: { requestId?: string | null }; session?: AppSession }) => Promise<AppResponse<TData>>;
 
 function bindingErrorShape(cause: BindingDisclosureError): AppErrorResponse["error"] {
   const status = (() => {
@@ -303,6 +303,8 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
   /** Process-local idempotency fences for the X2 privacy adapter. */
   private readonly strk20Idempotency = new Map<string, { fingerprint: string; actionId: string }>();
   private readonly strk20ActionFingerprints = new Map<string, string>();
+  /** Process-local ownership fence. Durable action stores are not wired in X2. */
+  private readonly strk20ActionOwners = new Map<string, string>();
 
   constructor(private readonly app: PrismApplicationService, options?: PrismApiHandlersOptions) {
     this.assertChainTouchingConfigured = options?.assertChainTouchingConfigured;
@@ -427,6 +429,13 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
       const internal = privacyActionRequest(payload);
       const operation = payload.operation ?? "create";
       const existing = service.getAction(payload.actionId);
+      const owner = this.strk20ActionOwners.get(payload.actionId);
+      // Do not allow a caller who did not create an action to advance it or
+      // read its provider-derived lifecycle. Missing ownership is tolerated
+      // only for transport-neutral unit tests that inject a pre-existing view.
+      if (owner && owner !== `${req.session.sessionId}:${req.session.userId}`) {
+        return strk20NotFound(payload.actionId, requestId) as AppResponse<Strk20ActionData>;
+      }
       if (operation === "create") {
         const key = req.headers.idempotencyKey ?? payload.idempotencyKey ?? `action:${payload.actionId}`;
         const fingerprint = actionFingerprint(payload, req.session);
@@ -441,6 +450,7 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
         // Action ids and idempotency keys are both replay fences. A repeated
         // create returns the existing local record and never calls a provider.
         const view = existing ?? service.create(internal);
+        this.strk20ActionOwners.set(payload.actionId, `${req.session.sessionId}:${req.session.userId}`);
         this.strk20Idempotency.set(key, { fingerprint, actionId: payload.actionId });
         this.strk20ActionFingerprints.set(payload.actionId, fingerprint);
         return ok<Strk20ActionData>(serializePrivacyActionView(view), undefined, requestId);
@@ -466,6 +476,11 @@ export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyRec
     const service = this.privacyActionService;
     if (!service) return strk20Unavailable(requestId) as AppResponse<Strk20ActionData>;
     try {
+      const session = (req as unknown as { session?: AppSession }).session;
+      const owner = this.strk20ActionOwners.get(req.payload.actionId);
+      if (owner && (!session || owner !== `${session.sessionId}:${session.userId}`)) {
+        return strk20NotFound(req.payload.actionId, requestId) as AppResponse<Strk20ActionData>;
+      }
       const view = service.getAction(req.payload.actionId);
       if (!view) return strk20NotFound(req.payload.actionId, requestId) as AppResponse<Strk20ActionData>;
       return ok<Strk20ActionData>(serializePrivacyActionView(view), undefined, requestId);

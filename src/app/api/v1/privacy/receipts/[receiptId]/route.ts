@@ -1,10 +1,12 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, toHttpResponse, jsonError } from "@/application/http-helpers";
+import { parseHeaders, toHttpResponse, jsonError, requireAuthenticatedSession } from "@/application/http-helpers";
 
-// GET /v1/privacy/receipts/:receiptId — derived policy-filtered projection.
+// GET /v1/privacy/receipts/:receiptId, derived policy-filtered projection.
 // This route never returns generic operation/provider/raw receipt material.
 export async function GET(req: Request, ctx: { params: Promise<{ receiptId: string }> }): Promise<Response> {
   const parsed = parseHeaders(req);
+  const sessionOrErr = requireAuthenticatedSession(req, null);
+  if ("error" in sessionOrErr) return sessionOrErr.error;
   const { receiptId } = await ctx.params;
   let decoded: string;
   try {
@@ -21,6 +23,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ receiptId: stri
   const response = await factory.handlers.getPrivacyReceipt({
     payload: { receiptId: decoded },
     headers: { requestId: parsed.requestId },
+    session: sessionOrErr,
   });
   return toHttpResponse(response, parsed);
 }
