@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as createPayment } from "../payments/requests/route";
 import { GET as getPayment } from "../payments/requests/[requestId]/route";
+import { POST as createGift } from "../gifts/route";
 import { getPaymentHttpRuntime, resetPaymentHttpRuntime } from "@/features/prism-payments/application/http-runtime";
 
 const hash = `0x${"a".repeat(64)}`;
@@ -30,7 +31,10 @@ describe("request payment mounted route", () => {
   beforeEach(() => {
     resetPaymentHttpRuntime();
     process.env.PRISM_RUNTIME_MODE = "test";
+    process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES = "1";
     delete process.env.PRISM_REQUIRE_POSTGRES;
+    delete process.env.PRISM_POSTGRES_TEST_URL;
+    delete process.env.PRISM_POSTGRES_URL;
   });
 
   it("requires a session for writes", async () => {
@@ -64,6 +68,24 @@ describe("request payment mounted route", () => {
     process.env.PRISM_RUNTIME_MODE = "test";
   });
 
+  it("rejects malformed Postgres configuration before constructing a payment store", async () => {
+    process.env.PRISM_POSTGRES_TEST_URL = "http://not-postgres";
+    resetPaymentHttpRuntime();
+    await expect(getPaymentHttpRuntime()).rejects.toMatchObject({ code: "ERR-062", detail: "invalid_postgres_url_format" });
+    delete process.env.PRISM_POSTGRES_TEST_URL;
+  });
+
+  it("requires an explicit test-only fixture opt-in even in test mode", async () => {
+    delete process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES;
+    const response = await createPayment(new Request("http://x/v1/payments/requests", {
+      method: "POST",
+      headers: sessionHeaders,
+      body: paymentBody({ requestId: "req-fixture-opt-in" }),
+    }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { detail: "session_fixture_opt_in_required" } });
+  });
+
   it("rejects unverified header sessions outside test mode", async () => {
     process.env.PRISM_RUNTIME_MODE = "production";
     resetPaymentHttpRuntime();
@@ -75,6 +97,24 @@ describe("request payment mounted route", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: { detail: "session_verifier_unavailable" } });
     process.env.PRISM_RUNTIME_MODE = "test";
+  });
+
+  it("rejects a forged gift sender even with a valid test fixture session", async () => {
+    const response = await createGift(new Request("http://x/v1/gifts", {
+      method: "POST",
+      headers: { ...sessionHeaders, "Idempotency-Key": "gift-forged" },
+      body: JSON.stringify({
+        sender: "attacker",
+        asset: "0x0000000000000000000000000000000000000001",
+        amount: "10",
+        chainId: 84532,
+        expiresAt: 200,
+        nullifierCommitment: hash,
+        now: 100,
+      }),
+    }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: "ERR-065" } });
   });
 
   it("binds the requester to the authenticated session and redacts private fields", async () => {

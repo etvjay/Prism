@@ -192,6 +192,11 @@ export function requireAuthenticatedSession(req: Request, body: Record<string, u
   const mode = process.env.PRISM_RUNTIME_MODE;
   const testMode = mode === "test" || (mode === undefined && process.env.NODE_ENV === "test");
   if (!testMode) return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
+  // Fixture sessions are deliberately opt-in and only exist for isolated tests.
+  // There is no production/rehearsal override for this switch.
+  if (process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES !== "1") {
+    return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_fixture_opt_in_required") };
+  }
   const fromBody = (body?.session ?? body?.appSession ?? null) as unknown as AppSession | null;
   const parsed = parseSession(req, fromBody);
   if (!parsed) return { error: jsonError(parsedHeaders.requestId, APP_ERROR_CODE.STALE_STATE_CONFLICT, 401, "missing_app_session") };
