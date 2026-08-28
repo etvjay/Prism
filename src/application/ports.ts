@@ -12,6 +12,11 @@ import type {
   IssueChallengePayload,
   SubmitProofData,
   SubmitProofPayload,
+  Strk20ActionData,
+  Strk20ActionPayload,
+  GetStrk20ActionQuery,
+  PrivacyReceiptData,
+  GetPrivacyReceiptQuery,
 } from "./schemas";
 import { StarknetSubmitAdapter } from "../features/prism-operations/adapters/starknet-submit";
 import { StarknetSubmitAdapterV2 } from "../features/prism-operations/adapters/starknet-submit-v2";
@@ -47,6 +52,17 @@ export interface ChallengeProofApplicationPort {
 
 /** Descriptive alias for callers that name this the challenge/proof port. */
 export type ChallengeProofPort = ChallengeProofApplicationPort;
+
+/** Wallet-mediated STRK20 lifecycle transport; no raw provider material. */
+export interface Strk20ActionApplicationPort {
+  createStrk20Action(req: AppCommandRequest<Strk20ActionPayload>): Promise<AppResponse<Strk20ActionData>>;
+  getStrk20Action(req: { payload: GetStrk20ActionQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<Strk20ActionData>>;
+}
+
+/** Derived policy-filtered privacy receipt projection. */
+export interface PrivacyReceiptApplicationPort {
+  getPrivacyReceipt(req: { payload: GetPrivacyReceiptQuery; headers?: { requestId?: string | null } }): Promise<AppResponse<PrivacyReceiptData>>;
+}
 
 // ---------------------------------------------------------------------------
 // Starknet registry / submission boundary

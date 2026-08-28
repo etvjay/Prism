@@ -86,6 +86,10 @@ export type ProofStatus = "not_requested" | "simulated_empty" | "ready" | "walle
 export interface PrivacyActionRequest {
   readonly id: string;
   readonly kind: PrivacyActionKind;
+  /** Product correlation only; never used as execution authority. */
+  readonly prismId?: string | null;
+  /** Opaque wallet/session reference; keys and provider objects never enter this type. */
+  readonly walletSessionRef?: string | null;
   /** Required for the WalletAccountV6 prepared-proof route. */
   readonly actions?: readonly Strk20Action[];
   readonly execution?: PrivacyActionExecution;
@@ -539,6 +543,12 @@ export class PrivacyActionService {
     if (isTerminalState(record.state)) {
       throw new Strk20Error(STRK20_ERROR_CODE.ILLEGAL_TRANSITION, `submit_terminal_action:${record.state}`);
     }
+    // Replaying the same submit request is safe once a hash is recorded: the
+    // M5 submission fence makes this a read of the existing attempt, never a
+    // second Wallet API/prover call.
+    if (record.submissionAttempted && record.transactionHash !== null) {
+      return this.toView(record);
+    }
     if (record.phase !== "proof_ready") {
       throw new Strk20Error(
         record.proofStatus === "simulated_empty" ? STRK20_ERROR_CODE.PROOF_REQUIRED : STRK20_ERROR_CODE.ILLEGAL_TRANSITION,
@@ -920,7 +930,9 @@ export class PrivacyActionService {
       registration: { ...record.registration },
       fee: record.fee ? { ...record.fee } : null,
       consent: { ...record.consent },
-      proof: { status: record.proofStatus, call: record.prepared?.call ?? null },
+      // The prepared call contains raw calldata and is an internal provider
+      // artifact. Keep the transport-facing view status-only.
+      proof: { status: record.proofStatus, call: null },
       submissionAttempted: record.submissionAttempted,
       approvalTransactionHash: record.approvalTransactionHash,
       transactionHash: record.transactionHash,

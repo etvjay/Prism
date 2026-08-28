@@ -32,13 +32,23 @@ import type {
   AliasLookupQuery,
   ResolutionContinuityData,
   ResolutionContinuityQuery,
+  Strk20ActionData,
+  Strk20ActionPayload,
+  GetStrk20ActionQuery,
+  PrivacyReceiptData,
+  GetPrivacyReceiptQuery,
 } from "./schemas";
 import type { PersistedOperation } from "../features/prism-operations/domain/operation-store";
+import type { PrivacyReceiptApplicationPort, Strk20ActionApplicationPort } from "./ports";
 import type { AppSession } from "./auth";
 import { assertValidAppSession } from "./auth";
 import type { Clock } from "../features/prism-identity/domain/ports";
 import { BindingDisclosureError, BINDING_ERROR_CODE, type BindingOwnerActor } from "../features/prism-identity/domain/binding-disclosure";
 import type { BindingDisclosureService } from "../features/prism-identity/application/binding-disclosure-service";
+import { PrivacyActionService, type PrivacyActionRequest } from "../features/prism-strk20/application/privacy-action-service";
+import { Strk20Error, STRK20_ERROR_CODE } from "../features/prism-strk20/domain/errors";
+import { PrivacyReceiptService } from "./privacy-receipt-service";
+import { parseStrk20ActionPayload, serializePrivacyActionView } from "./strk20-transport";
 
 /** Handler is a pure async function over typed request envelope -> typed response. */
 export type Handler<TPayload, TData> = (req: AppCommandRequest<TPayload>) => Promise<AppResponse<TData>>;
@@ -117,6 +127,122 @@ function mapOwnerHandlerFailure(cause: unknown, requestId: string | null): AppRe
   return unavailableBindingService(requestId);
 }
 
+function strk20Unavailable(requestId: string | null): AppResponse<never> {
+  return err({
+    code: STRK20_ERROR_CODE.UNSUPPORTED_WALLET_METHOD,
+    name: "privacy_provider_unavailable",
+    category: "dependency",
+    retryable: "true_backoff",
+    userAction: "connect_supported_wallet",
+    httpStatusHint: 503,
+    detail: "external_wallet_provider_required_x2",
+  }, requestId);
+}
+
+function strk20NotFound(actionId: string, requestId: string | null): AppResponse<never> {
+  return err({
+    code: STRK20_ERROR_CODE.STALE_STATE,
+    name: "action_not_found",
+    category: "not_found",
+    retryable: "no",
+    userAction: "check_identifier",
+    httpStatusHint: 404,
+    detail: `action_not_found:${actionId}`,
+  }, requestId);
+}
+
+function mapStrk20Failure(cause: unknown, requestId: string | null): AppResponse<never> {
+  if (cause instanceof Strk20Error) {
+    const shape = cause.toExternalShape();
+    const rawDetail = typeof shape.detail === "string" ? shape.detail : null;
+    const detail = rawDetail === null
+      ? undefined
+      : /private|viewing|seed|mnemonic|proof|calldata|raw|provider|secret|password|note/i.test(rawDetail)
+        ? "provider_failure"
+        : rawDetail.slice(0, 160);
+    return err({
+      ...shape,
+      ...(detail === undefined ? {} : { detail }),
+    }, requestId);
+  }
+  const code = (cause as { code?: unknown } | null)?.code;
+  // M5 errors remain an explicit X2/provider blocker, but their detail is not
+  // safe to echo because a provider may include hashes, calldata, or secrets.
+  if (typeof code === "string" && /^M5-\d{3}$/.test(code)) {
+    return err({
+      code,
+      name: "m5_blocked",
+      category: "dependency",
+      retryable: "true_backoff",
+      userAction: "provide_external_wallet_and_receipt",
+      httpStatusHint: 503,
+      detail: "external_provider_blocked_x2",
+    }, requestId);
+  }
+  return err({
+    code: STRK20_ERROR_CODE.DEPENDENCY_FAILURE,
+    name: "dependency_failure",
+    category: "dependency",
+    retryable: "true_backoff",
+    userAction: "wait_retry",
+    httpStatusHint: 503,
+    detail: "provider_failure",
+  }, requestId);
+}
+
+function decimalOrNull(value: string | null | undefined, field: string): bigint | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new Strk20Error(STRK20_ERROR_CODE.INVALID_AMOUNT, `${field}_must_be_decimal_string`);
+  try {
+    return BigInt(value);
+  } catch {
+    throw new Strk20Error(STRK20_ERROR_CODE.INVALID_AMOUNT, `${field}_must_be_decimal_string`);
+  }
+}
+
+function privacyActionRequest(payload: Strk20ActionPayload): PrivacyActionRequest {
+  // Re-run the safe parser at the application seam for non-HTTP callers; it
+  // rejects an accidentally widened payload before the provider port sees it.
+  const safe = parseStrk20ActionPayload(payload);
+  return {
+    id: safe.actionId,
+    prismId: safe.prismId ?? null,
+    walletSessionRef: safe.walletSessionRef ?? null,
+    kind: safe.kind,
+    execution: safe.execution ?? (safe.kind === "application" ? "wallet_action" : "wallet_managed"),
+    expectedChainId: safe.expectedChainId ?? null,
+    quotedFee: decimalOrNull(safe.quotedFee, "quoted_fee"),
+    requireConsent: safe.requireConsent,
+    token: safe.token as `0x${string}` | undefined,
+    amount: decimalOrNull(safe.amount, "amount") ?? undefined,
+    recipient: safe.recipient as `0x${string}` | undefined,
+    spender: safe.spender as `0x${string}` | undefined,
+    consentTokens: safe.consentTokens as readonly `0x${string}`[] | undefined,
+  };
+}
+
+function actionFingerprint(payload: Strk20ActionPayload, session: AppSession): string {
+  // The parser returns fields in a fixed order and excludes the HTTP envelope;
+  // include the authenticated subject so an idempotency key cannot cross users.
+  return JSON.stringify({
+    sessionId: session.sessionId,
+    userId: session.userId,
+    payload: { ...payload, operation: "create", idempotencyKey: undefined },
+  });
+}
+
+function idempotencyConflict(requestId: string | null): AppResponse<never> {
+  return err({
+    code: STRK20_ERROR_CODE.STALE_STATE,
+    name: "idempotency_key_conflict",
+    category: "replay",
+    retryable: "no",
+    userAction: "use_new_idempotency_key",
+    httpStatusHint: 409,
+    detail: "idempotency_key_conflict",
+  }, requestId);
+}
+
 /**
  * Wiring for all API handlers. Transport layer (HTTP/gRPC/queue) maps its own
  * wire format into these typed envelopes and maps AppResponse.error.httpStatusHint
@@ -129,17 +255,29 @@ export interface PrismApiHandlersOptions {
   readonly bindingDisclosureService?: BindingDisclosureService;
   /** Runtime clock used to validate owner-session freshness at this boundary. */
   readonly bindingDisclosureClock?: Clock;
+  /** Optional injected Wallet API lifecycle; absent remains an explicit X2 blocker. */
+  readonly privacyActionService?: PrivacyActionService | null;
+  /** Optional derived privacy receipt projector; absent remains fail-closed. */
+  readonly privacyReceiptService?: PrivacyReceiptService | null;
 }
 
-export class PrismApiHandlers {
+export class PrismApiHandlers implements Strk20ActionApplicationPort, PrivacyReceiptApplicationPort {
   private readonly assertChainTouchingConfigured?: () => void;
   private readonly bindingDisclosureService?: BindingDisclosureService;
   private readonly bindingDisclosureClock?: Clock;
+  private readonly privacyActionService?: PrivacyActionService | null;
+  private readonly privacyReceiptService?: PrivacyReceiptService | null;
+  /** Process-local idempotency fences for the X2 privacy adapter. */
+  private readonly strk20Idempotency = new Map<string, { fingerprint: string; actionId: string }>();
+  private readonly strk20ActionFingerprints = new Map<string, string>();
 
   constructor(private readonly app: PrismApplicationService, options?: PrismApiHandlersOptions) {
     this.assertChainTouchingConfigured = options?.assertChainTouchingConfigured;
     this.bindingDisclosureService = options?.bindingDisclosureService;
     this.bindingDisclosureClock = options?.bindingDisclosureClock;
+    this.privacyActionService = options?.privacyActionService;
+    this.privacyReceiptService = options?.privacyReceiptService
+      ?? (this.privacyActionService ? new PrivacyReceiptService(this.privacyActionService) : null);
   }
 
   private async runChainTouching<T>(action: () => Promise<AppResponse<T>>): Promise<AppResponse<T>> {
@@ -218,6 +356,81 @@ export class PrismApiHandlers {
   /** GET /v1/operations/:id — durably persisted operation read (SM-PRISM-003). */
   getOperation: QueryHandler<{ operationId: string }, PersistedOperation | null> = (req) =>
     this.app.getOperation(req);
+
+  // --- Wallet-mediated STRK20 lifecycle / policy-filtered privacy receipt ---
+
+  /**
+   * POST /v1/strk20/actions. The operation selector lets a transport caller
+   * advance one safe lifecycle step without ever sending raw calldata/proof.
+   * `create` is side-effect free; provider submission only occurs for explicit
+   * `submit` after the service's capability/fee/consent/proof gates pass.
+   */
+  async createStrk20Action(req: AppCommandRequest<Strk20ActionPayload>): Promise<AppResponse<Strk20ActionData>> {
+    const requestId = req.headers.requestId ?? null;
+    const service = this.privacyActionService;
+    if (!service) return strk20Unavailable(requestId) as AppResponse<Strk20ActionData>;
+    try {
+      const payload = parseStrk20ActionPayload(req.payload);
+      const internal = privacyActionRequest(payload);
+      const operation = payload.operation ?? "create";
+      const existing = service.getAction(payload.actionId);
+      if (operation === "create") {
+        const key = req.headers.idempotencyKey ?? payload.idempotencyKey ?? `action:${payload.actionId}`;
+        const fingerprint = actionFingerprint(payload, req.session);
+        const prior = this.strk20Idempotency.get(key);
+        if (prior && (prior.fingerprint !== fingerprint || prior.actionId !== payload.actionId)) {
+          return idempotencyConflict(requestId) as AppResponse<Strk20ActionData>;
+        }
+        const actionPrior = this.strk20ActionFingerprints.get(payload.actionId);
+        if (actionPrior && actionPrior !== fingerprint) {
+          return idempotencyConflict(requestId) as AppResponse<Strk20ActionData>;
+        }
+        // Action ids and idempotency keys are both replay fences. A repeated
+        // create returns the existing local record and never calls a provider.
+        const view = existing ?? service.create(internal);
+        this.strk20Idempotency.set(key, { fingerprint, actionId: payload.actionId });
+        this.strk20ActionFingerprints.set(payload.actionId, fingerprint);
+        return ok<Strk20ActionData>(serializePrivacyActionView(view), undefined, requestId);
+      }
+      let view;
+      if (operation === "prepare") {
+        view = existing ? await service.prepare(payload.actionId) : await service.prepare(internal);
+      } else if (operation === "submit") {
+        if (!existing) return strk20NotFound(payload.actionId, requestId) as AppResponse<Strk20ActionData>;
+        view = await service.submit(payload.actionId);
+      } else {
+        if (!existing) return strk20NotFound(payload.actionId, requestId) as AppResponse<Strk20ActionData>;
+        view = await service.observeReceipt(payload.actionId);
+      }
+      return ok<Strk20ActionData>(serializePrivacyActionView(view), undefined, requestId);
+    } catch (cause) {
+      return mapStrk20Failure(cause, requestId) as AppResponse<Strk20ActionData>;
+    }
+  }
+
+  getStrk20Action: QueryHandler<GetStrk20ActionQuery, Strk20ActionData> = async (req) => {
+    const requestId = req.headers?.requestId ?? null;
+    const service = this.privacyActionService;
+    if (!service) return strk20Unavailable(requestId) as AppResponse<Strk20ActionData>;
+    try {
+      const view = service.getAction(req.payload.actionId);
+      if (!view) return strk20NotFound(req.payload.actionId, requestId) as AppResponse<Strk20ActionData>;
+      return ok<Strk20ActionData>(serializePrivacyActionView(view), undefined, requestId);
+    } catch (cause) {
+      return mapStrk20Failure(cause, requestId) as AppResponse<Strk20ActionData>;
+    }
+  };
+
+  getPrivacyReceipt: QueryHandler<GetPrivacyReceiptQuery, PrivacyReceiptData> = async (req) => {
+    const requestId = req.headers?.requestId ?? null;
+    const service = this.privacyReceiptService;
+    if (!service) return strk20Unavailable(requestId) as AppResponse<PrivacyReceiptData>;
+    try {
+      return await service.getReceipt(req.payload.receiptId, requestId);
+    } catch (cause) {
+      return mapStrk20Failure(cause, requestId) as AppResponse<PrivacyReceiptData>;
+    }
+  };
 
   /** Retry only pre-submit failed_retryable operations with an actual adapter. */
   retryOperation(operationId: string, now: number): Promise<AppResponse<{ operationId: string; state: string }>> {
@@ -332,5 +545,34 @@ export const API_CONTRACTS = [
     systemOp: "SM-PRISM-003",
     errors: ["ERR-023"],
     notes: "durable operation row; submitted != completed",
+  },
+] as const;
+
+/** Additive STRK20/privacy contracts kept separate from the legacy M2 table. */
+export const STRK20_API_CONTRACTS = [
+  {
+    method: "POST",
+    path: "/v1/strk20/actions",
+    handler: "createStrk20Action",
+    systemOp: "STRK20-ACTION-LIFECYCLE",
+    errors: ["STRK20-001", "STRK20-002", "STRK20-003", "STRK20-004", "STRK20-008", "STRK20-013", "STRK20-018", "STRK20-019"],
+    idempotency: "actionId create fence; provider submission is poll-only after submissionAttempted",
+    notes: "wallet-mediated only; raw proof/calldata/keys/notes/provider responses rejected; submitted != completed",
+  },
+  {
+    method: "GET",
+    path: "/v1/strk20/actions/:actionId",
+    handler: "getStrk20Action",
+    systemOp: "STRK20-ACTION-LIFECYCLE",
+    errors: ["STRK20-011", "STRK20-013", "STRK20-019"],
+    notes: "JSON-safe lifecycle projection; fee BigInts are decimal strings and proof/call is status-only",
+  },
+  {
+    method: "GET",
+    path: "/v1/privacy/receipts/:receiptId",
+    handler: "getPrivacyReceipt",
+    systemOp: "STRK20-PRIVACY-RECEIPT-PROJECTION",
+    errors: ["ERR-002", "STRK20-013", "STRK20-019"],
+    notes: "derived policy-filtered projection; OBSERVED requires matching successful final receipt and pinned pool event",
   },
 ] as const;

@@ -12,6 +12,15 @@ import type { AliasLookupResult } from "../features/prism-resolution/application
 import type { ResolutionContinuityResult } from "../features/prism-resolution/application/continuity-service";
 import type { ResolutionDiff } from "../features/prism-resolution/domain/risks";
 import type { ResolutionSnapshot } from "../features/prism-resolution/domain/snapshot";
+import type {
+  ConsentStatus,
+  PrivacyActionExecution,
+  PrivacyActionKind,
+  PrivacyActionPhase,
+  PrivacyActionState,
+  ProofStatus,
+  RegistrationStatus,
+} from "../features/prism-strk20/application/privacy-action-service";
 
 // ---------------------------------------------------------------------------
 // Envelope primitives
@@ -234,6 +243,133 @@ export interface GetOperationQuery {
   readonly operationId: string;
 }
 export type GetOperationData = PersistedOperation | null;
+
+// ---------------------------------------------------------------------------
+// STRK20 action / privacy-receipt transport
+// ---------------------------------------------------------------------------
+
+/**
+ * Transport operation for the wallet-mediated STRK20 lifecycle. Raw actions,
+ * proofs, calldata, notes, keys, and provider responses are intentionally not
+ * part of this schema. Decimal quantities remain strings at this boundary.
+ */
+export type Strk20ActionTransportOperation = "create" | "prepare" | "submit" | "observe_receipt";
+
+export interface Strk20ActionPayload {
+  readonly actionId: string;
+  readonly prismId?: string | null;
+  readonly kind: PrivacyActionKind;
+  readonly execution?: PrivacyActionExecution;
+  readonly walletSessionRef?: string | null;
+  readonly expectedChainId?: string | null;
+  readonly quotedFee?: string | null;
+  readonly requireConsent?: boolean;
+  /** Wallet-mediated action inputs; never a proof/call/calldata payload. */
+  readonly token?: string | null;
+  readonly amount?: string | null;
+  readonly recipient?: string | null;
+  readonly spender?: string | null;
+  readonly consentTokens?: readonly string[];
+  /** The body form is accepted for SDK callers; HTTP headers remain preferred. */
+  readonly idempotencyKey?: string | null;
+  readonly operation?: Strk20ActionTransportOperation;
+}
+
+/** Frontend lifecycle vocabulary. Internal M4/M5 states remain private to the adapter. */
+export type Strk20LifecycleState =
+  | "consent-required"
+  | "awaiting-approval"
+  | "submitted"
+  | "processing"
+  | "receipt-confirmed"
+  | "reverted"
+  | "unknown"
+  | "unavailable"
+  | "requires-attention";
+
+export interface Strk20CapabilityData {
+  readonly capable: boolean;
+  readonly status: "supported" | "unsupported" | "unknown";
+  readonly apiVersions: readonly string[];
+  readonly specs: readonly string[];
+  readonly chainId: string;
+  readonly environment: "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
+  readonly mismatch: boolean;
+  readonly expected: "SN_MAIN" | "SN_SEPOLIA";
+}
+
+export interface Strk20FeeData {
+  readonly fee: string;
+  readonly blockNumber: number | null;
+  readonly quotedFee: string;
+}
+
+export interface Strk20ReceiptData {
+  readonly transactionHash: string;
+  readonly executionStatus: "SUCCEEDED" | "REVERTED" | "RECEIVED" | "PENDING" | "UNKNOWN";
+  readonly finalityStatus: "ACCEPTED_ON_L2" | "ACCEPTED_ON_L1" | "RECEIVED" | "PENDING" | "UNKNOWN";
+  readonly blockNumber: number | null;
+  readonly poolEventFound: boolean;
+}
+
+/** JSON-safe action lifecycle view. There is deliberately no proof/call body. */
+export interface Strk20ActionData {
+  readonly id: string;
+  readonly actionId: string;
+  readonly kind: PrivacyActionKind;
+  readonly execution: PrivacyActionExecution;
+  /** Frontend state; the internal M4/M5 state is not a completion claim. */
+  readonly state: Strk20LifecycleState;
+  /** Internal state vocabulary retained only for diagnostics/integration. */
+  readonly sourceState: PrivacyActionState;
+  readonly phase: PrivacyActionPhase;
+  readonly version: number;
+  readonly updatedAt: number;
+  readonly capability: Strk20CapabilityData | null;
+  readonly registration: { readonly status: RegistrationStatus };
+  readonly fee: Strk20FeeData | null;
+  readonly consent: { readonly status: ConsentStatus };
+  readonly proof: { readonly status: ProofStatus; readonly call: null };
+  readonly submissionAttempted: boolean;
+  readonly approvalTransactionHash: string | null;
+  readonly transactionHash: string | null;
+  readonly receipt: Strk20ReceiptData | null;
+  readonly terminal: boolean;
+  readonly errorCode: string | null;
+  readonly errorDetail: string | null;
+}
+
+export interface GetStrk20ActionQuery {
+  readonly actionId: string;
+}
+
+export type PrivacyReceiptMechanism =
+  | "NONE"
+  | "PRISM_DISCLOSURE_CONTROL"
+  | "STRK20_PRIVATE_TRANSFER"
+  | "STRK20_PRIVATE_INVOKE"
+  | "STRK20_SHADOW_ACCOUNT";
+
+export type PrivacyReceiptObservationStatus = "UNOBSERVED" | "PENDING" | "OBSERVED" | "UNAVAILABLE";
+export type PrivacyReceiptEvidenceSource = "NONE" | "WALLET_DECLARED_API" | "PROVIDER_RECEIPT" | "CANONICAL_CHAIN_READBACK";
+
+/** Policy-filtered receipt projection; raw chain/provider material is absent. */
+export interface PrivacyReceiptData {
+  readonly receiptId: string;
+  readonly actionId: string;
+  readonly mechanism: PrivacyReceiptMechanism;
+  readonly observationStatus: PrivacyReceiptObservationStatus;
+  readonly evidenceSource: PrivacyReceiptEvidenceSource;
+  readonly protectedProperties: readonly string[];
+  readonly publicProperties: readonly string[];
+  readonly limitations: readonly string[];
+  readonly transactionHash?: string;
+  readonly blockNumber?: number;
+}
+
+export interface GetPrivacyReceiptQuery {
+  readonly receiptId: string;
+}
 
 // Helpers
 export function ok<T>(data: T, operation?: AppSuccessResponse<T>["operation"], requestId?: string | null, watermark?: number | null): AppSuccessResponse<T> {

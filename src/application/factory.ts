@@ -40,6 +40,10 @@ import { createPrismApiHandlers } from "./handlers";
 import { InMemoryPauseService } from "./pause-port";
 import { InMemoryPauseMetrics } from "../features/prism-pause/ports/metrics";
 import { ReceiptService } from "./receipt-service";
+import { PrivacyReceiptService } from "./privacy-receipt-service";
+import { PrivacyActionService } from "../features/prism-strk20/application/privacy-action-service";
+import type { Strk20ActionPort } from "../features/prism-strk20/adapters/wallet-strk20-action-adapter";
+import type { Strk20WalletPort } from "../features/prism-strk20/domain/ports";
 import { AppError, APP_ERROR_CODE } from "./errors";
 import { StarknetRegistryReader, getStarknetRpcUrl, getStarknetRegistryAddress, isStarknetReadConfigured, isStarknetRpcUrlValid } from "./adapters/starknet-registry-reader";
 import { StarknetLedgerStatusAdapter } from "../features/prism-operations/adapters/starknet-ledger-status";
@@ -163,6 +167,14 @@ export interface FactoryStarknetOverrides {
   aliasAssociation?: IdentityAliasAssociationPort | null;
   /** Durable continuity baseline store; production defaults to PostgreSQL. */
   resolutionSnapshotStore?: ResolutionSnapshotStore;
+  /** Optional wallet-bound STRK20 action port for isolated X2 tests/runtime adapters. */
+  strk20ActionPort?: Strk20ActionPort | null;
+  /** Optional wallet-mediated capability/fee/consent port for isolated X2 tests/runtime adapters. */
+  strk20WalletPort?: Strk20WalletPort | null;
+  /** Explicit application service override; no implicit provider or fake is created. */
+  privacyActionService?: PrivacyActionService | null;
+  /** Explicit derived receipt projector override. */
+  privacyReceiptService?: PrivacyReceiptService | null;
 }
 
 export interface AppFactory {
@@ -189,6 +201,10 @@ export interface AppFactory {
   pauseService: InMemoryPauseService;
   pauseStore: PauseStore;
   receiptService: ReceiptService;
+  /** Wallet-mediated STRK20 action lifecycle, null when no provider is injected. */
+  privacyActionService: PrivacyActionService | null;
+  /** Policy-filtered privacy receipt projector, null when no lifecycle source exists. */
+  privacyReceiptService: PrivacyReceiptService | null;
   challengeService: PrismChallengeService;
   /** Durable PUBLIC/PRIVATE disclosure store; v0 persistence never accepts SELECTIVE. */
   bindingDisclosureStore: BindingDisclosureStore;
@@ -657,6 +673,14 @@ function createMemoryFactory(
     snapshotStore: resolutionSnapshotStore,
     now: clock,
   });
+  const privacyActionService = overrides?.privacyActionService !== undefined
+    ? overrides.privacyActionService
+    : (overrides?.strk20ActionPort || overrides?.strk20WalletPort
+      ? new PrivacyActionService({ actionPort: overrides.strk20ActionPort ?? null, walletPort: overrides.strk20WalletPort ?? null, now: () => clock.now() })
+      : null);
+  const privacyReceiptService = overrides?.privacyReceiptService !== undefined
+    ? overrides.privacyReceiptService
+    : (privacyActionService ? new PrivacyReceiptService(privacyActionService) : null);
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
@@ -675,6 +699,8 @@ function createMemoryFactory(
     assertChainTouchingConfigured,
     bindingDisclosureService,
     bindingDisclosureClock: clock,
+    privacyActionService,
+    privacyReceiptService,
   });
   // Reconciliation worker — transport-neutral fakes when starknet not configured; real adapters when configured.
   // X2 guard: daemon must not start in tests; caller must use tickAllOnce. Worker is still constructed for startupRecovery demo.
@@ -726,6 +752,8 @@ function createMemoryFactory(
     pauseService,
     pauseStore,
     receiptService,
+    privacyActionService,
+    privacyReceiptService,
     challengeService,
     bindingDisclosureStore,
     bindingDisclosureService,
@@ -888,6 +916,14 @@ async function createPostgresFactory(
     snapshotStore: resolutionSnapshotStore,
     now: clock,
   });
+  const privacyActionService = overrides?.privacyActionService !== undefined
+    ? overrides.privacyActionService
+    : (overrides?.strk20ActionPort || overrides?.strk20WalletPort
+      ? new PrivacyActionService({ actionPort: overrides.strk20ActionPort ?? null, walletPort: overrides.strk20WalletPort ?? null, now: () => clock.now() })
+      : null);
+  const privacyReceiptService = overrides?.privacyReceiptService !== undefined
+    ? overrides.privacyReceiptService
+    : (privacyActionService ? new PrivacyReceiptService(privacyActionService) : null);
   let n = 1;
   const app = new PrismApplicationService({
     challengeService,
@@ -906,6 +942,8 @@ async function createPostgresFactory(
     assertChainTouchingConfigured,
     bindingDisclosureService,
     bindingDisclosureClock: clock,
+    privacyActionService,
+    privacyReceiptService,
   });
   const fallbackLedger: LedgerStatusPort = ledgerStatusAdapter ?? {
     async observeChain() {
@@ -957,6 +995,8 @@ async function createPostgresFactory(
     pauseService,
     pauseStore,
     receiptService,
+    privacyActionService,
+    privacyReceiptService,
     challengeService,
     bindingDisclosureStore,
     bindingDisclosureService,
