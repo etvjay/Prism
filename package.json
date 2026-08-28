@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e:backend": "PRISM_RUNTIME_MODE=test PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES=1 node ops/backend-e2e/http-api.mjs"
   },
   "dependencies": {
     "@starknet-io/get-starknet-discovery": "6.0.3",
@@ -22,6 +23,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@starknet-io/types-js": "0.10.3",
     "@types/node": "24.10.2",
     "@types/pg": "^8.23.1",
