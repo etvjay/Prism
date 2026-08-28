@@ -14,7 +14,7 @@
 | `If-Match` | Optional quoted integer version, e.g. `"3"`; parsed as the expected CAS version. `X-Expected-Version` and `expected-version` are accepted aliases. |
 | `Content-Type: application/json` | Required for POST bodies. |
 
-Commands authenticate an **app session**, supplied either as `session`/`appSession` in the JSON body or through `X-Session-Id`, `X-Session-User`, `X-Session-Issued-At`, and optional `X-Session-Expires-At`. The test-only `Authorization: Bearer <sessionId>:<userId>` form is also recognized.
+Commands authenticate an **app session** with a server-issued signed token in `Authorization: Bearer <v1.signed-token>` (or the equivalent `X-Prism-Session-Token`/`X-Session-Token` header). The token's HMAC signature, issuer, audience, subject, issue time, expiry, and revocation status are verified by the backend. Body sessions and `X-Session-*` identity headers are never production/rehearsal transport. They are accepted only in test mode when `PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES=1` is explicitly set; malformed or missing fixtures are rejected.
 
 An app session is not a controller signature, Base ownership proof, wallet authority, or settlement authority. Request fields such as `controllerAddress`, `approver`, and `authorityActor` are untrusted claims until the dedicated canonical/authority port accepts them.
 
@@ -154,7 +154,7 @@ not a frontend wallet or escrow API:
 |---|---|---|
 | `POST /api/v1/payments/requests` | Authenticated workflow caller creates a payment request. The response is a public-safe projection. | Local request persistence only; payer approval and any submit step remain explicit. No app session, request claim, or address alone grants signing, funding, or settlement authority. |
 | `GET /api/v1/payments/requests/{requestId}` | Public-safe read of a payment request by id. | Returns the current typed lifecycle state; unknown is not completed and unavailable is not failure evidence. |
-| `POST /api/v1/payments/requests/{requestId}` | Authenticated workflow caller advances `approve` or `submit` as an explicit operation. | Domain/provider gates decide whether the transition is available. `submitted`, `unknown`, and `unavailable` remain distinct; no HTTP 200 implies settlement completion. |
+| `POST /api/v1/payments/requests/{requestId}` | Authenticated owner advances `view`, `approve`, or `submit` as an explicit operation. | The verified session subject must equal the request's `requesterRef` for all three operations; otherwise `ERR-065`/403 and no state change. Approval wallet identity comes from the approval payload and is never replaced by a request claim or session identity. Domain/provider gates decide whether the transition is available. `submitted`, `unknown`, and `unavailable` remain distinct; no HTTP 200 implies settlement completion. |
 | `POST /api/v1/gifts` | Authenticated workflow caller creates a claimable gift. | Local claim aggregate only; funding is a separate lifecycle step and Base escrow remains blocked without the absent EVM toolchain. |
 | `GET /api/v1/gifts/{claimId}` | Public-safe read of a gift claim projection. | `pending`, `claimable`, `claimed`, `expired`, and `refunded` are lifecycle facts from the claim store, not wallet or chain authority. |
 | `POST /api/v1/gifts/{claimId}` | Explicit `fund`, `mark_claimable`, `claim`, `expire`, or `refund` transition. | Proof/recipient/actor checks remain domain/provider-owned. `ERR-062`/`ERR-063` and unavailable/unknown states fail closed; no escrow contract is implied or invented. |

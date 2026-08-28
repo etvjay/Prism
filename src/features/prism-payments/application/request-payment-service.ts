@@ -38,6 +38,12 @@ function fingerprint(input: CreateRequestPaymentInput): string {
 export class RequestPaymentService {
   constructor(private readonly deps: RequestPaymentServiceDeps) {}
 
+  private assertRequester(payment: PaymentRequest, callerRef: string): void {
+    if (callerRef !== payment.requesterRef) {
+      throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED, "requester_authority_required");
+    }
+  }
+
   async create(input: CreateRequestPaymentInput): Promise<PaymentRequest> {
     if (!input.idempotencyKey || input.idempotencyKey.trim().length === 0) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_REQUEST, "idempotency_key_required");
@@ -50,15 +56,17 @@ export class RequestPaymentService {
     });
   }
 
-  async view(requestId: string, now: number): Promise<PaymentRequest> {
+  async view(requestId: string, now: number, callerRef: string): Promise<PaymentRequest> {
     const payment = await this.require(requestId);
+    this.assertRequester(payment, callerRef);
     return this.deps.store.update(requestId, payment.version, (current) =>
       transitionPaymentRequest(current, { to: "viewed", now }),
     );
   }
 
-  async approve(requestId: string, input: ApprovePaymentRequestInput): Promise<PaymentRequest> {
+  async approve(requestId: string, input: ApprovePaymentRequestInput, callerRef: string): Promise<PaymentRequest> {
     const payment = await this.require(requestId);
+    this.assertRequester(payment, callerRef);
     return this.deps.store.update(requestId, payment.version, (current) => approveDomain(current, input));
   }
 
@@ -67,8 +75,9 @@ export class RequestPaymentService {
    * has been recorded. Wallet rejection/unknown status handling is added by
    * the receipt adapter; this method never fabricates a transaction hash.
    */
-  async submit(requestId: string): Promise<PaymentRequest> {
+  async submit(requestId: string, callerRef: string): Promise<PaymentRequest> {
     const payment = await this.require(requestId);
+    this.assertRequester(payment, callerRef);
     if (payment.state !== "approved" || payment.approval === null) {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.WALLET_APPROVAL_REQUIRED, "explicit_payer_wallet_approval_required");
     }

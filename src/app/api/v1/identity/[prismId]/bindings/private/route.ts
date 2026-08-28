@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { jsonError, parseHeaders, requireSession, toHttpResponse } from "@/application/http-helpers";
+import { jsonError, parseHeaders, requireAuthenticatedSession, toHttpResponse } from "@/application/http-helpers";
 
 // GET /v1/identity/:prismId/bindings/private — owner-authorized private audience
 // This route has no public fallback. Private endpoint data can only be returned
@@ -8,7 +8,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ prismId: string
   const parsed = parseHeaders(req);
   const { prismId } = await ctx.params;
   const decodedPrismId = decodeURIComponent(prismId);
-  const sessionOrErr = requireSession(req, null);
+  const sessionOrErr = requireAuthenticatedSession(req, null);
   if ("error" in sessionOrErr) return sessionOrErr.error;
 
   let factory;

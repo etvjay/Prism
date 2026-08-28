@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, readJson, requireSession, jsonError, toHttpResponse, toHttpErrorResponse } from "@/application/http-helpers";
+import { parseHeaders, readJson, requireAuthenticatedSession, jsonError, toHttpResponse, toHttpErrorResponse } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
 import { PauseError } from "@/features/prism-pause/domain/errors";
 
@@ -8,7 +8,7 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = parseHeaders(req);
   const body = await readJson(req);
   if (body === null) return jsonError(parsed.requestId, "ERR-023", 400, "malformed_json");
-  const sessionOrErr = requireSession(req, body);
+  const sessionOrErr = requireAuthenticatedSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   // Intent creation requires prismId/purpose; venue/account optional.
   const prismId = body.prismId as string | undefined;

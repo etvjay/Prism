@@ -49,7 +49,7 @@ describe("request-payment application boundary", () => {
 
     let failure: unknown;
     try {
-      await service.submit(created.requestId);
+      await service.submit(created.requestId, "session:user-1");
     } catch (error) {
       failure = error;
     }
@@ -75,7 +75,7 @@ describe("request-payment application boundary", () => {
       now: 100,
       idempotencyKey: "payment-create-1",
     });
-    const viewed = await service.view(created.requestId, 101);
+    const viewed = await service.view(created.requestId, 101, "session:user-1");
     await service.approve(created.requestId, {
       now: 102,
       approval: {
@@ -90,9 +90,9 @@ describe("request-payment application boundary", () => {
         approvalReference: "wallet-approval-1",
         termsCommitment: HASH,
       },
-    });
+    }, "session:user-1");
 
-    await expect(service.submit(viewed.requestId)).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.WALLET_REJECTED });
+    await expect(service.submit(viewed.requestId, "session:user-1")).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.WALLET_REJECTED });
     expect((await service.get(created.requestId))?.state).toBe("rejected");
   });
 
@@ -113,7 +113,7 @@ describe("request-payment application boundary", () => {
       now: 100,
       idempotencyKey: "payment-create-1",
     });
-    await service.view(created.requestId, 101);
+    await service.view(created.requestId, 101, "session:user-1");
     await service.approve(created.requestId, {
       now: 102,
       approval: {
@@ -128,11 +128,49 @@ describe("request-payment application boundary", () => {
         approvalReference: "wallet-approval-1",
         termsCommitment: HASH,
       },
-    });
+    }, "session:user-1");
 
-    await expect(service.submit(created.requestId)).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN });
+    await expect(service.submit(created.requestId, "session:user-1")).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.SUBMISSION_STATUS_UNKNOWN });
     expect((await service.get(created.requestId))?.state).toBe("unknown");
-    await expect(service.submit(created.requestId)).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.WALLET_APPROVAL_REQUIRED });
+    await expect(service.submit(created.requestId, "session:user-1")).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.WALLET_APPROVAL_REQUIRED });
     expect(wallet.calls).toBe(1);
+  });
+
+  it("rejects a different requester for view, approve, and submit", async () => {
+    const service = new RequestPaymentService({ store: new InMemoryPaymentRequestStore(), payerWallet: new RecordingPayerWallet() });
+    const created = await service.create({
+      requestId: "payreq_01H00000000000000000000000",
+      requesterRef: "session:owner",
+      recipient: { kind: "claim_token", commitment: HASH },
+      asset: "native", amount: 100n, chainId: 84532, expiresAt: 200, now: 100,
+      idempotencyKey: "payment-create-1",
+    });
+    for (const action of [
+      () => service.view(created.requestId, 101, "session:attacker"),
+      () => service.approve(created.requestId, { now: 101, approval: {} as never }, "session:attacker"),
+      () => service.submit(created.requestId, "session:attacker"),
+    ]) {
+      await expect(action()).rejects.toMatchObject({ code: PAYMENT_CLAIM_ERROR_CODE.UNAUTHORIZED });
+    }
+    expect((await service.get(created.requestId))?.state).toBe("requested");
+  });
+
+  it("preserves the owner path and does not replace approval wallet identity", async () => {
+    const service = new RequestPaymentService({ store: new InMemoryPaymentRequestStore() });
+    const created = await service.create({
+      requestId: "payreq_01H00000000000000000000000",
+      requesterRef: "session:owner",
+      recipient: { kind: "claim_token", commitment: HASH },
+      asset: "native", amount: 100n, chainId: 84532, expiresAt: 200, now: 100,
+      idempotencyKey: "payment-create-1",
+    });
+    await service.view(created.requestId, 101, "session:owner");
+    const walletAddress = `0x${"b".repeat(40)}` as `0x${string}`;
+    await service.approve(created.requestId, { now: 102, approval: {
+      requestId: created.requestId, walletAddress, chainId: 84532, asset: created.asset,
+      amount: created.amount, recipientCommitment: created.recipient.commitment, expiresAt: created.expiresAt,
+      approvedAt: 102, approvalReference: "wallet-approval-1", termsCommitment: HASH,
+    }}, "session:owner");
+    expect((await service.get(created.requestId))?.approval?.walletAddress).toBe(walletAddress);
   });
 });

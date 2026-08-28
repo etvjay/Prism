@@ -33,15 +33,15 @@ describe("trusted application session boundary", () => {
     expect(result).toEqual({ sessionId: "session-0001", userId: "verified-user", issuedAt: NOW - 10, expiresAt: NOW + 3600 });
   });
 
-  it("rejects forged body sessions in production even when fixture opt-in is set", () => {
-    process.env.PRISM_RUNTIME_MODE = "production";
+  it.each(["production", "rehearsal"])("rejects forged legacy body sessions in %s even when fixture opt-in is set", (mode) => {
+    process.env.PRISM_RUNTIME_MODE = mode;
     process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES = "1";
     const result = requireAuthenticatedSession(request({}, { session: { sessionId: "session-0001", userId: "attacker", issuedAt: NOW - 1, expiresAt: NOW + 100 } }), {});
     expect("error" in result && result.error.status).toBe(503);
   });
 
-  it("rejects forged bearer and header material", async () => {
-    process.env.PRISM_RUNTIME_MODE = "production";
+  it.each(["production", "rehearsal"])("rejects forged bearer and header material in %s", async (mode) => {
+    process.env.PRISM_RUNTIME_MODE = mode;
     process.env.PRISM_APP_SESSION_SECRET = SECRET;
     const original = validToken({ sub: "verified-user" });
     const pieces = original.split(".");
@@ -75,14 +75,15 @@ describe("trusted application session boundary", () => {
     expect(() => verifySignedAppSession(validToken(), NOW)).toThrow(/session_revoked/);
   });
 
-  it("fails closed when the production secret is missing", () => {
-    process.env.PRISM_RUNTIME_MODE = "production";
+  it.each(["production", "rehearsal"])("fails closed when the %s secret is missing", (mode) => {
+    process.env.PRISM_RUNTIME_MODE = mode;
     const result = requireAuthenticatedSession(request({ authorization: "Bearer v1.invalid.invalid" }), {});
     expect("error" in result && result.error.status).toBe(503);
   });
 
   it("keeps fixture sessions behind the explicit test-only switch", () => {
     process.env.PRISM_RUNTIME_MODE = "test";
+    delete process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES;
     const body = { session: { sessionId: "session-0001", userId: "fixture-user", issuedAt: NOW - 1, expiresAt: NOW + 100 } };
     expect("error" in requireAuthenticatedSession(request({}, body), body)).toBe(true);
     process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES = "1";

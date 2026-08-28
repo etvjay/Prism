@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import {parseHeaders, toHttpResponse, readJson, requireSession, jsonError} from "@/application/http-helpers";
+import {parseHeaders, toHttpResponse, readJson, requireAuthenticatedSession, jsonError} from "@/application/http-helpers";
 
 // GET /v1/identity/:prismId/bindings — public audience projection only
 export async function GET(req: Request, ctx: { params: Promise<{ prismId: string }> }): Promise<Response> {
@@ -49,7 +49,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ prismId: strin
   if (requestedVisibility !== undefined && requestedVisibility !== "PUBLIC") return jsonError(parsed.requestId, "PRIVATE_AUDIENCE_REQUIRED", 403, "canonical_bind_is_public_only");
   if (requestedLifecycle === "SESSION" || requestedLifecycle === "EPHEMERAL") return jsonError(parsed.requestId, "LIFECYCLE_UNSUPPORTED", 501, "non_persistent_route_deferred");
   if (requestedLifecycle !== undefined && requestedLifecycle !== "PERSISTENT") return jsonError(parsed.requestId, "LIFECYCLE_UNSUPPORTED", 501, "unsupported_lifecycle");
-  const sessionOrErr = requireSession(req, body);
+  const sessionOrErr = requireAuthenticatedSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   const session = sessionOrErr;
 

@@ -1,6 +1,6 @@
 import { getAppFactory } from "@/application/factory";
 import { err } from "@/application/schemas";
-import { parseHeaders, readJson, requireSession, toHttpResponse, jsonError } from "@/application/http-helpers";
+import { parseHeaders, readJson, requireAuthenticatedSession, toHttpResponse, jsonError } from "@/application/http-helpers";
 import { Strk20Error } from "@/features/prism-strk20/domain/errors";
 import { parseStrk20ActionPayload } from "@/application/strk20-transport";
 
@@ -12,7 +12,7 @@ export async function POST(req: Request): Promise<Response> {
   const body = await readJson(req);
   if (body === null) return jsonError(parsed.requestId, "STRK20-011", 400, "malformed_json");
 
-  const sessionOrErr = requireSession(req, body);
+  const sessionOrErr = requireAuthenticatedSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
 
   let payload;

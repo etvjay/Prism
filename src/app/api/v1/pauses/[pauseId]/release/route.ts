@@ -1,5 +1,5 @@
 import { getAppFactory } from "@/application/factory";
-import { parseHeaders, readJson, requireSession, jsonError, toHttpErrorResponse } from "@/application/http-helpers";
+import { parseHeaders, readJson, requireAuthenticatedSession, jsonError, toHttpErrorResponse } from "@/application/http-helpers";
 import { APP_ERROR_CODE } from "@/application/errors";
 import { PauseError } from "@/features/prism-pause/domain/errors";
 
@@ -9,7 +9,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ pauseId: strin
   const decoded = decodeURIComponent(pauseId);
   const body = await readJson(req);
   if (body === null) return jsonError(parsed.requestId, "ERR-023", 400, "malformed_json");
-  const sessionOrErr = requireSession(req, body);
+  const sessionOrErr = requireAuthenticatedSession(req, body);
   if ("error" in sessionOrErr) return sessionOrErr.error;
   const expectedVersion = parsed.expectedVersion ?? (body.expectedVersion as number | null | undefined) ?? null;
   const planHash = body.planHash as string | undefined;

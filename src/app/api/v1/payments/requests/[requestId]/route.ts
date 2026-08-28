@@ -27,7 +27,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
     const operation = String(body.operation ?? "view");
     let data;
     if (operation === "view") {
-      data = await runtime.payments.view(id, Number(body.now ?? nowSeconds()));
+      data = await runtime.payments.view(id, Number(body.now ?? nowSeconds()), sessionOrErr.userId);
     } else if (operation === "approve") {
       const approval = (body.approval && typeof body.approval === "object" ? body.approval : {}) as Record<string, unknown>;
       data = await runtime.payments.approve(id, {
@@ -35,13 +35,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ requestId: str
         approval: {
           ...approval,
           requestId: id,
-          walletAddress: sessionOrErr.userId,
           chainId: Number(approval.chainId ?? BASE_SEPOLIA_CHAIN_ID),
           amount: BigInt(String(approval.amount)),
         },
-      } as never);
+      } as never, sessionOrErr.userId);
     } else if (operation === "submit") {
-      data = await runtime.payments.submit(id);
+      data = await runtime.payments.submit(id, sessionOrErr.userId);
     } else {
       throw new PaymentClaimError(PAYMENT_CLAIM_ERROR_CODE.INVALID_REQUEST, "unsupported_operation");
     }
