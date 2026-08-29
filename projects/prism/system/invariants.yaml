@@ -1,0 +1,103 @@
+# Prism invariants v0.1 (proposed) — authority: INVARIANTS.md
+invariants:
+  - invariant_id: INV-SYS-001
+    statement: registry identity key is a PrismID structurally distinct from every execution account and controller address
+    upstream: [INV-PRISM-001]
+    scope: [OBJ-PRISM-001, OBJ-PRISM-003]
+    authoritative_enforcement: counter_derived_registry_id_allocation
+    violating_commands: []
+    tests: [TEST-7-2-1, TEST-7-2-4]
+    severity: critical
+  - invariant_id: INV-SYS-002
+    statement: every state-mutating registry call executes with caller==identity.controller or the documented creation rule
+    upstream: [INV-PRISM-006, INV-PRISM-007]
+    scope: all_registry_writes
+    authoritative_enforcement: starknet_contract_caller_checks
+    violating_commands: [CMD-8-01_foreign_identity, CMD-8-02_foreign_identity]
+    tests: [TEST-7-2-3, TEST-8-3-2]
+    severity: critical
+  - invariant_id: INV-SYS-003
+    statement: verified proof confers zero canonical effect until Starknet tx SUCCEEDED; VERIFIED != ACTIVE
+    upstream: [INV-PRISM-003]
+    scope: [CMD-B-02_to_TR-8-01_boundary]
+    authoritative_enforcement: registry_state
+    violating_commands: [backend_premature_binding_write]
+    tests: [TEST-8-3-4]
+    severity: critical
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
+  - invariant_id: INV-SYS-004
+    statement: each accepted OwnershipProof digest is consumed exactly once ever; second submission reverts regardless of state
+    upstream: [FT-003]
+    scope: [OBJ-PRISM-005, TR-8-01]
+    authoritative_enforcement: onchain_consumed_digest_map_plus_server_nonce_store
+    violating_commands: [CMD-8-01_with_used_digest]
+    tests: [TEST-8-2-6, TEST-8-2-7, TEST-8-3-3]
+    severity: critical
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
+  - invariant_id: INV-SYS-005
+    statement: no surface represents submitted_or_confirming work as complete
+    upstream: [INV-PRISM-015]
+    scope: [SM-PRISM-003]
+    authoritative_enforcement: operation_state_gates_completion_on_reconciled
+    violating_commands: []
+    tests: [TEST-8-5-lifecycle]
+    severity: high
+  - invariant_id: INV-SYS-006
+    statement: REVOKED bindings never return to ACTIVE via any existing command; revocation never destroys or mutates the parent PrismIdentity
+    upstream: [INV-PRISM-002, INV-PRISM-004, FT-001]
+    scope: [SM-PRISM-002]
+    authoritative_enforcement: absence_of_reactivation_entrypoint
+    violating_commands: []
+    tests: [TEST-8-4-2, TEST-8-4-3]
+    severity: critical
+  - invariant_id: INV-SYS-007
+    statement: resolve returns NO_ACTIVE_DESTINATION for revoked/stale bindings even when caches hold prior active state; canonical state wins within stated reconciliation window
+    upstream: [INV-PRISM-004, FT-004]
+    scope: [QRY-8-01]
+    authoritative_enforcement: watermark_bounded_serve_and_invalidate
+    violating_commands: []
+    tests: [TEST-8-4-4]
+    severity: critical
+  - invariant_id: INV-SYS-008
+    statement: registry stores no social handles, viewing keys, balances, portfolio, or linkage metadata beyond the specified field list
+    upstream: [INV-PRISM-008, INV-PRISM-009, INV-PRISM-010, INV-PRISM-011]
+    scope: [OBJ-PRISM-001, OBJ-PRISM-003]
+    authoritative_enforcement: contract_schema_review_gate_A7-5
+    violating_commands: []
+    tests: [TEST-7-5-1]
+    severity: high
+  - invariant_id: INV-SYS-009
+    statement: Base proofs verify with the full EOA→EIP-1271→ERC-6492 ladder; no ecrecover-only shortcut; Starknet actions use Starknet signatures
+    upstream: [INV-PRISM-006, INV-PRISM-007, FT-002]
+    scope: [OBJ-PRISM-005]
+    authoritative_enforcement: backend_verifier_full_ladder
+    violating_commands: [CMD-B-02_wrong_class_accepted]
+    tests: [TEST-8-2-1, TEST-8-2-2, TEST-8-2-3, TEST-8-2-5]
+    severity: critical
+    change_class: STRENGTHEN_flagged_for_owner_acceptance
+  - invariant_id: INV-SYS-010
+    statement: a challenge nonce is consumable by exactly one successful verification; concurrent verifications yield one VERIFIED
+    upstream: []
+    research_gate_ref: A3_S4_nonce_tracking
+    scope: challenge_service
+    authoritative_enforcement: atomic_compare_and_set_consume_on_verify
+    violating_commands: [CMD-B-02_double_verify]
+    tests: [TEST-8-1-2, TEST-8-1-3]
+    severity: high
+  - invariant_id: INV-SYS-011
+    statement: any alteration of domain/venue/account/prism_id/nonce/expiry between issuance and verification fails with a distinct error code
+    upstream: []
+    linear_ref: A8-3_mutation_matrix_Q8.2
+    scope: [OBJ-PRISM-005]
+    authoritative_enforcement: digest_over_canonical_serialization_recomputed_at_verify
+    violating_commands: [CMD-B-02_mutated_fields]
+    tests: [TEST-8-2-4]
+    severity: critical
+  - invariant_id: INV-SYS-012
+    statement: PRISM-7/8 operations move no tokens and imply no bridge or solver capability
+    upstream: [INV-PRISM-013]
+    scope: entire_slice
+    authoritative_enforcement: no_token_approvals_no_transfer_entrypoints
+    violating_commands: []
+    tests: [TEST-7-5-1_absence_check]
+    severity: high

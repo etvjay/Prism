@@ -1,0 +1,2255 @@
+{
+  "artifact_id": "PRISM_TESTNET_REHEARSAL_ENDPOINT_INVENTORY",
+  "version": "0.1.0",
+  "purpose": "Read-only inventory for the Prism SN_SEPOLIA/Base Sepolia rehearsal. This is a source-and-spec inventory, not a deployment manifest and not an evidence envelope.",
+  "inspection_basis": {
+    "baseline_commit": "1e03d9c3d2eca86b04081b5ea98b94d5d877b917",
+    "worktree": "/home/ubuntu/prism-work/prism-v0-backend",
+    "source_scope": "exact backend candidate implementation commit; tracked rehearsal-required source routes only; the 32nd application route method, the portfolio route, is intentionally excluded from this 31-entry rehearsal surface and covered by the application route inventory",
+    "protected_paths_untouched_by_artifact": [
+      "src/",
+      "frontend files",
+      "contracts/",
+      "strk20.json",
+      "projects/prism/EVIDENCE_LEDGER.md",
+      "projects/prism/DECISIONS.md"
+    ]
+  },
+  "target": {
+    "environment": "testnet",
+    "starknet_network": "SN_SEPOLIA",
+    "base_network": "BASE_SEPOLIA",
+    "base_chain_id": 84532,
+    "mainnet_policy": "SN_MAIN and Base Mainnet are release-gated and rejected by the dry-run harness"
+  },
+  "maturity_contract": {
+    "specified": "Canonical/system documents or a named readiness requirement define the surface.",
+    "implemented": "The local source route/domain boundary exists; this is not transport or network evidence.",
+    "integrated": "The route is wired to the local application boundary, or the packet records why it is not yet wired. This is code integration only.",
+    "deployed": "A matching runtime/contract artifact exists on the target network and is read back.",
+    "observed": "A direct provider response, receipt, event, HTTP trace, or projection read was captured.",
+    "repeated": "The observation was repeated with restart/replay/independent read as required by the gate.",
+    "promotable": "The complete evidence packet passes its validator and is eligible for the declared maturity; no rehearsal row is promotable by itself."
+  },
+  "common_headers": {
+    "request": [
+      "X-Request-Id",
+      "X-Correlation-Id",
+      "Idempotency-Key",
+      "If-Match",
+      "X-Session-Id",
+      "X-Session-User"
+    ],
+    "response": [
+      "X-Request-Id",
+      "X-Correlation-Id",
+      "X-Prism-Watermark",
+      "ETag",
+      "X-Error-Code"
+    ],
+    "rules": [
+      "Use Idempotency-Key for create/bind/revoke/intent requests and reuse it only for an identical fingerprint.",
+      "Use If-Match as the expected operation/pause version where the route supports CAS.",
+      "An app session authenticates the product request; it never substitutes for a Starknet controller or Base proof.",
+      "A response operation.state is authoritative for workflow UX; HTTP 200 does not mean completed."
+    ]
+  },
+  "endpoint_state_defaults": {
+    "deployed": false,
+    "observed": false,
+    "repeated": false,
+    "promotable": false
+  },
+  "endpoints": [
+    {
+      "id": "ID_CREATE",
+      "area": "identity",
+      "method": "POST",
+      "path": "/v1/identity",
+      "source": "src/app/api/v1/identity/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "CMD-7-01",
+        "OP-7-01",
+        "SM-PRISM-003"
+      ],
+      "audience": "authenticated app session plus user-controlled Starknet wallet",
+      "authority": "Starknet registry; backend only creates the durable operation and relays an authorized request",
+      "side_effect": "allocates persistent identity on Starknet; no token movement",
+      "request": {
+        "query": [],
+        "body_required": [
+          "controllerAddress"
+        ],
+        "body_optional": [
+          "kind",
+          "session",
+          "correlationId",
+          "idempotencyKey"
+        ],
+        "body_secret_policy": "no private key, seed, password, viewing key, or keyed URL"
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{operationId,state,prismId?},operation:{operationId,state,version},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "Local handler and application boundary are present; a live next-start transport trace and real submit adapter are not established by this packet."
+    },
+    {
+      "id": "ID_READ",
+      "area": "identity",
+      "method": "GET",
+      "path": "/v1/identity/{prismId}",
+      "source": "src/app/api/v1/identity/[prismId]/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "QRY-7-01",
+        "OP-7-02",
+        "INV-SYS-001",
+        "INV-SYS-007"
+      ],
+      "audience": "public read",
+      "authority": "canonical Starknet registry read, or a bounded projection that preserves canonical authority",
+      "side_effect": "read only",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [],
+        "path_params": [
+          "prismId"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{prismId,controller,exists,watermark?},watermark?}; controller is null when the identity is absent only if the application chooses an explicit empty response",
+        "failure_statuses": [
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "Record identity/event agreement and the read watermark; do not treat an operation row as identity truth."
+    },
+    {
+      "id": "BY_CONTROLLER",
+      "area": "identity",
+      "method": "GET",
+      "path": "/v1/identities/by-controller?controller={controller}",
+      "source": "src/app/api/v1/identities/by-controller/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "frontend controller-discovery surface",
+        "canonical identity read boundary"
+      ],
+      "audience": "public discovery read; privacy review required before exposure",
+      "authority": "registryReadPort in local/dev path, scoped public event projection in the fallback path; never frontend cache",
+      "side_effect": "read only",
+      "request": {
+        "query_required": [
+          "controller"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,state:NONE|FOUND|MULTIPLE,candidates:[{prismId,status,watermark}],watermark,source}",
+        "failure_statuses": [
+          {
+            "status": 422,
+            "codes": [
+              "CONTROLLER_INVALID"
+            ]
+          },
+          {
+            "status": 502,
+            "codes": [
+              "CONTROLLER_LOOKUP_UNKNOWN"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "CONTROLLER_LOOKUP_UNAVAILABLE",
+              "STORE_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "Route is tracked in the integrated backend snapshot and covered by focused route tests. Canonical/projection readback, UNKNOWN status, and distinct NONE/UNKNOWN/UNAVAILABLE semantics remain explicit; OpenAPI is unchanged in this backend-only integration."
+    },
+    {
+      "id": "CHALLENGE_ISSUE",
+      "area": "ownership-proof",
+      "method": "POST",
+      "path": "/v1/challenge/issue",
+      "source": "src/app/api/v1/challenge/issue/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "CMD-B-01",
+        "SM-PRISM-001",
+        "OBJ-PRISM-005",
+        "INV-SYS-011"
+      ],
+      "audience": "authenticated app session; proof is for the named Base execution account",
+      "authority": "server challenge store and server policy for domain, chain ID, TTL, and nonce",
+      "side_effect": "stores an ISSUED challenge and single-use nonce; no chain write",
+      "request": {
+        "body_required": [
+          "prismId",
+          "executionAccount"
+        ],
+        "body_optional": [
+          "venue",
+          "ttlSeconds",
+          "session"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{challengeId,digest,schemaVersion,chainId,domain,venue,executionAccount,prismId,nonce,issuedAt,expiresAt,messageToSign,typedData?}}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "ERR-005"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "Challenge values are not secrets, but signatures and session linkage remain operationally sensitive; record only the fields needed to correlate the proof."
+    },
+    {
+      "id": "CHALLENGE_VERIFY",
+      "area": "ownership-proof",
+      "method": "POST",
+      "path": "/v1/challenge/verify",
+      "source": "src/app/api/v1/challenge/verify/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "CMD-B-02",
+        "SM-PRISM-001",
+        "INV-SYS-009",
+        "INV-SYS-010",
+        "INV-SYS-011"
+      ],
+      "audience": "authenticated app session plus user-controlled Base signer",
+      "authority": "backend verification ladder for proof validity only; no canonical binding until the Starknet transition",
+      "side_effect": "consumes the challenge nonce on verification attempt; no Starknet write",
+      "request": {
+        "body_required": [
+          "challengeId",
+          "presented",
+          "signature"
+        ],
+        "presented_required": [
+          "domain",
+          "venue",
+          "executionAccount",
+          "prismId",
+          "chainId",
+          "schemaVersion",
+          "nonce",
+          "expiresAt"
+        ],
+        "body_optional": [
+          "session"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{status:verified,signatureClass:EOA|EIP1271|ERC6492,digest,verifiedAt}}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-012"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-003",
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-006"
+            ]
+          },
+          {
+            "status": 410,
+            "codes": [
+              "ERR-013"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "ERR-014"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "VERIFIED is not ACTIVE and does not prove a binding. Altered fields fail before verification; an attempted verification consumes the nonce according to the service contract."
+    },
+    {
+      "id": "PUBLIC_BINDINGS_LIST",
+      "area": "bindings",
+      "method": "GET",
+      "path": "/v1/identity/{prismId}/bindings?audience=public",
+      "source": "src/app/api/v1/identity/[prismId]/bindings/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "QRY-8-02",
+        "INV-SYS-008",
+        "DEC-PRISM-020",
+        "DEC-PRISM-022"
+      ],
+      "audience": "public audience only",
+      "authority": "public binding disclosure store backed by canonical binding state",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "prismId"
+        ],
+        "query_optional": [
+          "audience=public",
+          "visibility=PUBLIC",
+          "lifecycle=PERSISTENT"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:[{bindingId,prismId,visibility:PUBLIC,status:ACTIVE,version,endpoint,historicalPublic:true,publiclyExposedAt,createdAt,updatedAt}]}",
+        "failure_statuses": [
+          {
+            "status": 403,
+            "codes": [
+              "PRIVATE_AUDIENCE_REQUIRED"
+            ]
+          },
+          {
+            "status": 501,
+            "codes": [
+              "AUDIENCE_UNSUPPORTED",
+              "SELECTIVE_UNSUPPORTED",
+              "LIFECYCLE_UNSUPPORTED"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "STORE_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "privacy_note": "PRIVATE and SELECTIVE rows must never be collapsed into this response. Base bindings are public linkage by v0 design."
+    },
+    {
+      "id": "BIND",
+      "area": "bindings",
+      "method": "POST",
+      "path": "/v1/identity/{prismId}/bindings",
+      "source": "src/app/api/v1/identity/[prismId]/bindings/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "OP-8-01",
+        "CMD-8-01",
+        "SM-PRISM-002",
+        "INV-SYS-002",
+        "INV-SYS-003",
+        "INV-SYS-004",
+        "INV-SYS-005"
+      ],
+      "audience": "authenticated app session, verified Base proof, and user-controlled Starknet controller",
+      "authority": "Starknet registry caller/controller check and onchain digest single-use; backend is a trusted proof verifier only",
+      "side_effect": "creates an ACTIVE public binding only at a successful Starknet state transition; no asset movement",
+      "request": {
+        "path_params": [
+          "prismId"
+        ],
+        "body_required": [
+          "venue",
+          "executionAccount",
+          "proofDigest",
+          "challengeId",
+          "chainId",
+          "expiresAt",
+          "controllerAddress"
+        ],
+        "body_optional": [
+          "visibility=PUBLIC",
+          "lifecycle=PERSISTENT",
+          "session",
+          "idempotencyKey",
+          "correlationId",
+          "expectedVersion"
+        ],
+        "headers_required_for_release": [
+          "X-Session-Id or body.session"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{operationId,state},operation:{operationId,state,version},requestId}; state is not completion",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "ERR-004",
+              "PRIVATE_AUDIENCE_REQUIRED"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-007",
+              "ERR-008",
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "ERR-005"
+            ]
+          },
+          {
+            "status": 501,
+            "codes": [
+              "SELECTIVE_UNSUPPORTED",
+              "LIFECYCLE_UNSUPPORTED"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "The route may return a submitted operation before a receipt. Canonical ACTIVE requires receipt, matching event, reconciliation, and an independent read."
+    },
+    {
+      "id": "PRIVATE_BINDINGS_LIST",
+      "area": "bindings",
+      "method": "GET",
+      "path": "/v1/identity/{prismId}/bindings/private",
+      "source": "src/app/api/v1/identity/[prismId]/bindings/private/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "QRY-8-03",
+        "DEC-PRISM-020",
+        "DEC-PRISM-021",
+        "DEC-PRISM-023"
+      ],
+      "audience": "owner-authorized private audience only",
+      "authority": "owner authorization port plus private-binding protection port; session alone is insufficient",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "prismId"
+        ],
+        "body_required": [],
+        "body_optional": [],
+        "headers_required": [
+          "X-Session-Id",
+          "X-Session-User"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:[{bindingId,prismId,visibility:PRIVATE,status:ACTIVE|REVOKED,endpoint,historicalPublic,hiddenAt,historicalPublicWarning,...}]}",
+        "failure_statuses": [
+          {
+            "status": 401,
+            "codes": [
+              "OWNER_AUTHORIZATION_REQUIRED"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "OWNER_NOT_AUTHORIZED"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "OWNER_AUTHORIZATION_UNAVAILABLE",
+              "BLOCKED_BY_KEY_MANAGEMENT",
+              "STORE_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "privacy_note": "Current protection is intentionally fail-closed until encryption-at-rest, key ownership, recovery, and owner authorization providers are proven. No plaintext endpoint belongs in logs, public responses, or evidence."
+    },
+    {
+      "id": "REVOKE",
+      "area": "bindings",
+      "method": "POST",
+      "path": "/v1/identity/{prismId}/bindings/{bindingId}/revoke",
+      "source": "src/app/api/v1/identity/[prismId]/bindings/[bindingId]/revoke/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "OP-8-03",
+        "CMD-8-02",
+        "SM-PRISM-002",
+        "INV-SYS-006",
+        "INV-SYS-005"
+      ],
+      "audience": "authenticated app session plus identity controller",
+      "authority": "Starknet registry controller authorization; parent Prism identity survives",
+      "side_effect": "marks the binding REVOKED at a successful Starknet transition; no asset movement",
+      "request": {
+        "path_params": [
+          "prismId",
+          "bindingId"
+        ],
+        "body_required": [
+          "venue",
+          "executionAccount",
+          "controllerAddress"
+        ],
+        "body_optional": [
+          "session",
+          "idempotencyKey",
+          "correlationId"
+        ],
+        "headers_optional": [
+          "X-Request-Id",
+          "X-Correlation-Id",
+          "Idempotency-Key"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{operationId,state},operation:{operationId,state,version},requestId}; repeated revoke may report the already-revoked fact",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "ERR-004"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-009"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-011",
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "ERR-005"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "After a successful revoke, resolve must return NO_ACTIVE_DESTINATION and the parent identity must still read."
+    },
+    {
+      "id": "RESOLVE",
+      "area": "resolution",
+      "method": "GET",
+      "path": "/v1/resolve/{identifier}?venue=BASE",
+      "source": "src/app/api/v1/resolve/[identifier]/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "QRY-8-01",
+        "OP-8-02",
+        "INV-SYS-006",
+        "INV-SYS-007"
+      ],
+      "audience": "public read",
+      "authority": "canonical Starknet state or bounded projection; cache past the watermark is never authoritative",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "identifier"
+        ],
+        "query_required": [
+          "venue=BASE"
+        ],
+        "query_optional": [
+          "allowStale=true for controlled diagnostics only"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{prismId,venue,executionAccount:string|null,exists:boolean,watermark:number|null},watermark?}; null executionAccount is NO_ACTIVE_DESTINATION",
+        "failure_statuses": [
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "A stale ACTIVE cache must be refused or replaced by canonical NO_ACTIVE_DESTINATION. Record watermark and confirmed block together."
+    },
+    {
+      "id": "ALIAS_LOOKUP",
+      "area": "aliases",
+      "method": "GET",
+      "path": "/v1/aliases/{provider}/{value}",
+      "source": "src/app/api/v1/aliases/[provider]/[value]/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "DEC-PRISM-019",
+        "ResolutionContinuityService",
+        "PRISM_READINESS_DASHBOARD.md"
+      ],
+      "audience": "public read; provider and explicit association evidence remain visible as typed state",
+      "authority": "external alias provider evidence plus explicit Prism-owned association; alias text never becomes a Prism ID by inference",
+      "side_effect": "read only",
+      "wire_shape_status": "accepted_backend_transport_contract",
+      "request": {
+        "path_params": [
+          "provider",
+          "value"
+        ],
+        "body_required": [],
+        "body_optional": [],
+        "note": "Provider and value are decoded and normalized at the route boundary; no session or body is required."
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{status,state,alias,subject,externalAddress,canonicalValue,association,prismId,associationEvidence,detail},requestId}",
+        "failure_statuses": [
+          {
+            "status": 422,
+            "codes": [
+              "ALIAS_INVALID_REQUEST"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "blocker": "Do not add an HTTP claim or simulate provider success until the provider interface, association authority, and transport schema are accepted.",
+      "integration_note": "Provider success, not-found, unavailable, invalid, and interface-blocked outcomes remain typed in data; Prism ID is populated only from explicit association evidence. No OpenAPI file was changed."
+    },
+    {
+      "id": "CONTINUITY",
+      "area": "resolution",
+      "method": "GET",
+      "path": "/v1/resolution/{identifier}/continuity",
+      "source": "src/app/api/v1/resolution/[identifier]/continuity/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "DEC-PRISM-019",
+        "DEC-PRISM-020",
+        "DEC-PRISM-023",
+        "ResolutionContinuityService",
+        "PRISM_READINESS_DASHBOARD.md"
+      ],
+      "audience": "public read; external provider/association evidence and snapshot freshness remain explicit",
+      "authority": "canonical resolution plus durable, scoped snapshot store; Pause consumes typed risk codes, not an opaque score",
+      "side_effect": "read plus durable snapshot comparison when the configured snapshot store is available",
+      "wire_shape_status": "accepted_backend_transport_contract",
+      "request": {
+        "path_params": [
+          "identifier"
+        ],
+        "query_required": [],
+        "query_optional": [
+          "venue",
+          "purpose",
+          "provider",
+          "aliasProvider"
+        ],
+        "body_required": [],
+        "body_optional": [],
+        "note": "venue defaults to BASE and purpose defaults to default; prism: identifiers are accepted directly, while aliases use provider:value or an explicit provider query."
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{status,continuityStatus,state,evidenceStatus,blocked,prismId,alias,associationEvidence,externalSubject,executionAccount,destination,providerStatus,previous,current,diff,risks,watermark,freshness,freshnessStatus,source,detail},requestId}",
+        "failure_statuses": [
+          {
+            "status": 422,
+            "codes": [
+              "RESOLUTION_INVALID_REQUEST",
+              "ALIAS_INVALID_REQUEST",
+              "ERR-001"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "blocker": "No continuity/Pause integration claim is allowed until alias association, snapshot durability, and risk delivery are transport-tested.",
+      "integration_note": "FRESH/STALE/UNKNOWN and resolved/no-destination/unavailable states remain distinct; snapshots are public allow-list projections and risks never directly authorize Pause."
+    },
+    {
+      "id": "STRK20_ACTION_CREATE",
+      "area": "strk20",
+      "method": "POST",
+      "path": "/v1/strk20/actions",
+      "source": "src/app/api/v1/strk20/actions/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "DEC-PRISM-006",
+        "DEC-PRISM-007",
+        "DEC-PRISM-M5-001",
+        "STRK20 Wallet API boundary",
+        "PRISM_READINESS_DASHBOARD.md"
+      ],
+      "audience": "authenticated app session plus wallet-mediated provider boundary",
+      "authority": "user-controlled STRK20-capable wallet/prover/provider; Prism owns intent, policy, lifecycle, and labels, not viewing keys or private notes",
+      "side_effect": "would request a wallet action; never execute from this harness",
+      "wire_shape_status": "accepted_backend_transport_contract",
+      "request": {
+        "body_required": [
+          "actionId",
+          "kind"
+        ],
+        "body_optional": [
+          "prismId",
+          "execution",
+          "walletSessionRef",
+          "expectedChainId",
+          "quotedFee",
+          "requireConsent",
+          "token",
+          "amount",
+          "recipient",
+          "spender",
+          "consentTokens",
+          "operation",
+          "idempotencyKey",
+          "session",
+          "correlationId"
+        ],
+        "note": "kind is shield, private_transfer, or application; operation is create, prepare, submit, or observe_receipt. Forbidden proof/calldata/raw/provider/key/note fields are rejected before the handler."
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:JSON-safe Strk20ActionData,requestId}; submitted and receipt-confirmed remain distinct lifecycle states",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "STRK20-011",
+              "STRK20-015"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "STRK20-004",
+              "STRK20-005"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "STRK20-002",
+              "STRK20-003",
+              "STRK20-008",
+              "STRK20-011",
+              "STRK20-012",
+              "STRK20-019",
+              "STRK20-021"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "STRK20-006",
+              "STRK20-016",
+              "STRK20-018"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021",
+              "STRK20-007",
+              "STRK20-009",
+              "STRK20-013"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "blocker": "Requires Wallet API/spec capability >=0.10.3, correct SN_SEPOLIA network, explicit consent, real proof, receipt, pool event, and independent read.",
+      "integration_note": "Create is process-local and idempotency-fenced; prepare/submit/observe_receipt are explicit lifecycle operations behind injected wallet/provider ports. No provider response, proof, calldata, viewing key, or private note is projected."
+    },
+    {
+      "id": "STRK20_ACTION_READ",
+      "area": "strk20",
+      "method": "GET",
+      "path": "/v1/strk20/actions/{actionId}",
+      "source": "src/app/api/v1/strk20/actions/[actionId]/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "DEC-PRISM-M5-001",
+        "STRK20 operation/recovery domain",
+        "PRISM_READINESS_DASHBOARD.md"
+      ],
+      "audience": "public JSON-safe lifecycle read in this slice; provider/raw material remains excluded",
+      "authority": "durable operation plus provider receipt/reconciliation; submitted hash alone is not completion",
+      "side_effect": "read only when implemented",
+      "wire_shape_status": "accepted_backend_transport_contract",
+      "request": {
+        "path_params": [
+          "actionId"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:JSON-safe Strk20ActionData,requestId}; proof.call is always null at transport",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "STRK20-011"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "STRK20-011"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "STRK20-019"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "blocker": "No action readback may be represented by the generic operations route until the privacy-specific schema exists.",
+      "integration_note": "A submitted transaction hash is not completion; receipt finality and pool-event checks remain separate."
+    },
+    {
+      "id": "PRIVACY_RECEIPT_READ",
+      "area": "strk20",
+      "method": "GET",
+      "path": "/v1/privacy/receipts/{receiptId}",
+      "source": "src/app/api/v1/privacy/receipts/[receiptId]/route.ts",
+      "source_state_at_inspection": "tracked_in_integrated_snapshot",
+      "openapi": false,
+      "spec_refs": [
+        "DEC-PRISM-006",
+        "STRK20 receipt/privacy boundary",
+        "PRISM_READINESS_DASHBOARD.md"
+      ],
+      "audience": "explicitly scoped privacy receipt projection; no viewing-key, note, sender-attribution, or raw provider material",
+      "authority": "provider receipt plus typed privacy attribution; shield metadata and private-transfer metadata remain distinct",
+      "side_effect": "read only when implemented",
+      "wire_shape_status": "accepted_backend_transport_contract",
+      "request": {
+        "path_params": [
+          "receiptId"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{receiptId,actionId,mechanism,observationStatus,evidenceSource,protectedProperties,publicProperties,limitations,transactionHash?,blockNumber?},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "STRK20-011"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-002"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "STRK20-019"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "blocker": "The existing /v1/receipts route is generic operation-derived state and is not a privacy receipt.",
+      "integration_note": "OBSERVED requires a matching successful final receipt and pinned pool event; receipt projection is derived from the action lifecycle and does not create a second ledger."
+    },
+    {
+      "id": "OPERATION_READ",
+      "area": "operations",
+      "method": "GET",
+      "path": "/v1/operations/{operationId}",
+      "source": "src/app/api/v1/operations/[operationId]/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "SM-PRISM-003",
+        "INV-SYS-005",
+        "AUTHORITY_MATRIX observability_chain"
+      ],
+      "audience": "operation participant or public read according to product policy; payload contains no secrets",
+      "authority": "durable operation store for workflow status; chain RPC for submitted/processing/confirming/confirmed facts; indexer/reconciliation for completion",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "operationId"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{id,kind,state,version,txHash,errorCode,errorDetail,createdAt,updatedAt,correlationId,reconciliationWatermark},operation?}",
+        "failure_statuses": [
+          {
+            "status": 404,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "Poll this resource after every chain-touching request. Do not skip from submitted to completed; unknown remains poll-only or requires_attention."
+    },
+    {
+      "id": "RECEIPT_READ",
+      "area": "receipts",
+      "method": "GET",
+      "path": "/v1/receipts/{receiptId}",
+      "source": "src/app/api/v1/receipts/[receiptId]/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "Receipt domain object",
+        "SM-PRISM-003",
+        "INV-SYS-005"
+      ],
+      "audience": "operation participant or policy-approved reader",
+      "authority": "operation-derived projection; not a substitute for a chain receipt or independent read",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "receiptId"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{receiptId,operationId,kind,state,txHash,createdAt,updatedAt,watermark,errorCode,errorDetail,correlationId},operation:{operationId,state,version}}",
+        "failure_statuses": [
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "The generic receipt is only complete after reconciliation; a submitted or processing row is not a confirmed receipt."
+    },
+    {
+      "id": "INTENT_CREATE",
+      "area": "intents",
+      "method": "POST",
+      "path": "/v1/intents",
+      "source": "src/app/api/v1/intents/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "ExecutionIntent",
+        "PRISM_PAUSE_PHASE_PLAN P1",
+        "DEC-PRISM-M0-001"
+      ],
+      "audience": "authenticated app session",
+      "authority": "durable intent/plan store; recipient resolution and policy remain explicit dependencies",
+      "side_effect": "creates a durable intent and local plan; no chain write",
+      "request": {
+        "body_required": [
+          "prismId",
+          "purpose",
+          "idempotencyKey"
+        ],
+        "body_optional": [
+          "venue",
+          "executionAccount",
+          "amount",
+          "asset",
+          "recipientPrismId",
+          "recipientAddress",
+          "session",
+          "correlationId"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{intentId,prismId,purpose,planHash,venue,executionAccount,createdAt},requestId}",
+        "failure_statuses": [
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "Intent creation is not settlement. Keep intent, pause, operation, and receipt identifiers correlated."
+    },
+    {
+      "id": "INTENT_PAUSE",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/intents/{intentId}/pause",
+      "source": "src/app/api/v1/intents/[intentId]/pause/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "ExecutionPause",
+        "PRISM_PAUSE_PHASE_PLAN P2",
+        "DEC-PRISM-M0-001"
+      ],
+      "audience": "authenticated app session",
+      "authority": "durable PauseService and plan hash bound to the intent",
+      "side_effect": "creates PAUSED pause state; no chain write",
+      "request": {
+        "path_params": [
+          "intentId"
+        ],
+        "body_required": [],
+        "body_optional": [
+          "session"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{pauseId,intentId,planHash,state:PAUSED,version,reasonCodes,riskLevel,approvalScopeHash:null,settlementOperationId:null,...},requestId}",
+        "failure_statuses": [
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-010"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      }
+    },
+    {
+      "id": "PAUSE_READ",
+      "area": "pause",
+      "method": "GET",
+      "path": "/v1/pauses/{pauseId}",
+      "source": "src/app/api/v1/pauses/[pauseId]/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "ExecutionPause",
+        "PRISM_PAUSE_PHASE_PLAN P2-P4"
+      ],
+      "audience": "policy-approved read",
+      "authority": "durable PauseStore",
+      "side_effect": "read only",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [],
+        "body_optional": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:ExecutionPause,requestId}",
+        "failure_statuses": [
+          {
+            "status": 404,
+            "codes": [
+              "ERR-002"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      }
+    },
+    {
+      "id": "PAUSE_VERIFY",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/pauses/{pauseId}/verify",
+      "source": "src/app/api/v1/pauses/[pauseId]/verify/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "PRISM_PAUSE_PHASE_PLAN P3",
+        "INV-SYS-007",
+        "DEC-PRISM-021"
+      ],
+      "audience": "authenticated app session; verification sources are server/provider-owned",
+      "authority": "typed policy checks and authoritative providers; UNKNOWN is blocking",
+      "side_effect": "transitions PAUSED/VERIFYING to RELEASE_READY, ESCALATED, or EXPIRED; no chain write",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [],
+        "body_optional": [
+          "planHash",
+          "policyVersion",
+          "session"
+        ],
+        "forbidden_client_fields": [
+          "sources"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{state:RELEASE_READY|ESCALATED|EXPIRED,checks,reasonCodes,riskLevel,version,...},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "PAUSE-STALE-VERSION",
+              "PAUSE-POLICY-VERSION-MISMATCH"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "PAUSE-CHECK-UNKNOWN-BLOCKING"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "A request cannot author verification sources. Missing provider facts must remain UNKNOWN/blocking."
+    },
+    {
+      "id": "PAUSE_RELEASE",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/pauses/{pauseId}/release",
+      "source": "src/app/api/v1/pauses/[pauseId]/release/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "PRISM_PAUSE_PHASE_PLAN P4-P5",
+        "INV-SYS-005",
+        "DEC-PRISM-M0-001"
+      ],
+      "audience": "authenticated app session plus configured pause authority",
+      "authority": "Pause policy/authority resolver and plan/approval scope hashes; settlement adapter is a separate boundary",
+      "side_effect": "marks pause RELEASED and links a settlement operation; it must not mark that operation completed",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [
+          "planHash",
+          "settlementOperationId"
+        ],
+        "body_optional": [
+          "approvalScopeHash",
+          "expectedVersion",
+          "session"
+        ],
+        "headers_optional": [
+          "If-Match"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{state:RELEASED,settlementOperationId,version,...},requestId}; settlement operation remains separately polled",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "PAUSE-AUTHORITY-DENIED"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "PAUSE-STALE-VERSION",
+              "PAUSE-PLAN-HASH-MISMATCH",
+              "PAUSE-APPROVAL-SCOPE-MISMATCH"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "PAUSE-RELEASE-NOT-READY",
+              "PAUSE-CHECK-UNKNOWN-BLOCKING"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "Current adapters are local/test-only unless an explicit real settlement adapter is supplied. RELEASED is not completed."
+    },
+    {
+      "id": "PAUSE_CANCEL",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/pauses/{pauseId}/cancel",
+      "source": "src/app/api/v1/pauses/[pauseId]/cancel/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "PRISM_PAUSE_PHASE_PLAN P4",
+        "SYSTEM_FOUNDRY CAS rule"
+      ],
+      "audience": "authenticated app session plus configured pause authority",
+      "authority": "PauseStore CAS and authority resolver",
+      "side_effect": "transitions a non-released pause to CANCELLED; no chain write",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [],
+        "body_optional": [
+          "expectedVersion",
+          "authorityActor",
+          "actor",
+          "reason",
+          "reasonCode",
+          "session"
+        ],
+        "headers_optional": [
+          "If-Match"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{state:CANCELLED,version,reasonCodes,...},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "PAUSE-AUTHORITY-DENIED"
+            ]
+          },
+          {
+            "status": 404,
+            "codes": [
+              "ERR-002"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "PAUSE-STALE-VERSION",
+              "PAUSE-CANCEL-NOT-ALLOWED"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      }
+    },
+    {
+      "id": "PAUSE_ESCALATE",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/pauses/{pauseId}/escalate",
+      "source": "src/app/api/v1/pauses/[pauseId]/escalate/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "PRISM_PAUSE_PHASE_PLAN P3-P4",
+        "UNKNOWN fail-closed rule"
+      ],
+      "audience": "authenticated app session",
+      "authority": "PauseService policy state machine; current wrapper applies the configured escalation reason/count",
+      "side_effect": "transitions an eligible pause to ESCALATED; no chain write",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [],
+        "body_optional": [
+          "session"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{state:ESCALATED,requiredApprovalCount,approvalScopeHash,version,...},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "PAUSE-ESCALATE-NOT-ALLOWED",
+              "PAUSE-STALE-VERSION"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      }
+    },
+    {
+      "id": "PAUSE_APPROVE",
+      "area": "pause",
+      "method": "POST",
+      "path": "/v1/pauses/{pauseId}/approve",
+      "source": "src/app/api/v1/pauses/[pauseId]/approve/route.ts",
+      "source_state_at_inspection": "tracked_at_baseline",
+      "openapi": true,
+      "spec_refs": [
+        "PRISM_PAUSE_PHASE_PLAN P4",
+        "DEC-PRISM-024",
+        "INV-SYS-005"
+      ],
+      "audience": "authenticated app session plus configured approval authority",
+      "authority": "authority resolver, exact plan hash, approval scope hash, and typed check results",
+      "side_effect": "may reduce escalation or transition to RELEASE_READY; no chain write",
+      "request": {
+        "path_params": [
+          "pauseId"
+        ],
+        "body_required": [],
+        "body_optional": [
+          "planHash",
+          "approvalScopeHash",
+          "approver",
+          "approverAddress",
+          "session"
+        ],
+        "query": []
+      },
+      "response": {
+        "success_status": [
+          200
+        ],
+        "success_shape": "{ok:true,data:{state:RELEASE_READY|ESCALATED,approvalScopeHash,version,...},requestId}",
+        "failure_statuses": [
+          {
+            "status": 400,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 401,
+            "codes": [
+              "ERR-023"
+            ]
+          },
+          {
+            "status": 403,
+            "codes": [
+              "PAUSE-AUTHORITY-DENIED"
+            ]
+          },
+          {
+            "status": 409,
+            "codes": [
+              "PAUSE-PLAN-HASH-MISMATCH",
+              "PAUSE-APPROVAL-SCOPE-MISMATCH",
+              "PAUSE-STALE-VERSION"
+            ]
+          },
+          {
+            "status": 422,
+            "codes": [
+              "PAUSE-CHECK-UNKNOWN-BLOCKING"
+            ]
+          },
+          {
+            "status": 503,
+            "codes": [
+              "ERR-021"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "evidence_note": "A claimed approver in the body is not authority by itself; the configured resolver is authoritative."
+    },
+    {
+      "id": "PAYMENT_REQUEST_CREATE",
+      "area": "payments",
+      "method": "POST",
+      "path": "/v1/payments/requests",
+      "source": "src/app/api/v1/payments/requests/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "create payment request; public projection redacts memo and private recipient material"
+    },
+    {
+      "id": "PAYMENT_REQUEST_READ",
+      "area": "payments",
+      "method": "GET",
+      "path": "/v1/payments/requests/{requestId}",
+      "source": "src/app/api/v1/payments/requests/[requestId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "read payment request public projection; lifecycle remains explicit"
+    },
+    {
+      "id": "PAYMENT_REQUEST_ACTION",
+      "area": "payments",
+      "method": "POST",
+      "path": "/v1/payments/requests/{requestId}",
+      "source": "src/app/api/v1/payments/requests/[requestId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "approve or submit payment request; no signing/broadcast authority"
+    },
+    {
+      "id": "GIFT_CREATE",
+      "area": "gifts",
+      "method": "POST",
+      "path": "/v1/gifts",
+      "source": "src/app/api/v1/gifts/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "create claimable gift; public projection omits proof/private recipient material"
+    },
+    {
+      "id": "GIFT_READ",
+      "area": "gifts",
+      "method": "GET",
+      "path": "/v1/gifts/{claimId}",
+      "source": "src/app/api/v1/gifts/[claimId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "read claimable gift public projection"
+    },
+    {
+      "id": "GIFT_ACTION",
+      "area": "gifts",
+      "method": "POST",
+      "path": "/v1/gifts/{claimId}",
+      "source": "src/app/api/v1/gifts/[claimId]/route.ts",
+      "source_state_at_inspection": "tracked_at_candidate",
+      "openapi": false,
+      "spec_refs": [
+        "PRISM_V0_PAYMENT_CLAIM_BACKEND",
+        "API_FRONTEND_HANDOFF"
+      ],
+      "audience": "authenticated workflow caller with public redacted projection",
+      "authority": "injected payment/claim domain ports; backend does not infer wallet, escrow, signing, or settlement authority",
+      "side_effect": "local durable lifecycle mutation only; live funding, signing, broadcast, and Base escrow are unavailable without approved providers/toolchain",
+      "request": {
+        "query": [],
+        "body_required": [],
+        "body_optional": [
+          "operation",
+          "requestId",
+          "claimId",
+          "session",
+          "idempotencyKey"
+        ]
+      },
+      "response": {
+        "success_status": [
+          200,
+          201
+        ],
+        "success_shape": "{ok:true,data:{...},requestId}; private/proof/provider fields are forbidden",
+        "failure_statuses": [
+          {
+            "status": 503,
+            "codes": [
+              "ERR-062",
+              "ERR-063",
+              "DEPENDENCY_UNAVAILABLE"
+            ]
+          }
+        ]
+      },
+      "maturity": {
+        "specified": true,
+        "implemented": true,
+        "integrated": true,
+        "deployed": false,
+        "observed": false,
+        "repeated": false,
+        "promotable": false
+      },
+      "integration_note": "fund, mark_claimable, claim, expire, or refund; authority remains domain/provider gated"
+    }
+  ]
+}

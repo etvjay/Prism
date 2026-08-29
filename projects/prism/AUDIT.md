@@ -5,7 +5,7 @@
 **Project:** Prism  
 **Repository:** `etvjay/Prism`  
 **Sprint:** STRK20 Private Sprint  
-**Current outcome:** `PASS_WITH_LIMITATIONS — BUILD APPROVED, EVIDENCE NOT YET EARNED`
+**Current outcome:** `PASS_WITH_LIMITATIONS — LOCAL BUILD EVIDENCE EARNED, RUNTIME/MAINNET EVIDENCE OPEN`
 
 ---
 
@@ -132,9 +132,11 @@ get-starknet 6.0.3
 Rules:
 
 - Prism never receives the user's viewing key.
-- Capability detection uses Wallet API/spec version checks, not a private-balance read.
+- Capability detection uses Wallet API/spec version checks at or above the current stable v0.10.3 threshold, not a private-balance read.
 - Private-balance reads are requested only because Private Balance is an intentional product feature.
 - Direct Privacy SDK is reserved for controlled-key/advanced routes, not the ordinary consumer dapp.
+- The browser UI must show the observed Starknet environment and block private-action readiness when it does not match the configured target.
+- Wallet account/network changes are re-read through the current Wallet Standard event surface; stale authority state must not remain visible.
 
 ---
 
@@ -456,6 +458,53 @@ The current root `STRK20_INTEGRATION_PLAN.md` governs the implementation phases.
 
 ---
 
+# 16A. Phase 1 Implementation Checkpoint
+
+The wallet/capability code path is implemented and headlessly verified. This changes implementation state, not runtime evidence maturity.
+
+```text
+capability threshold corrected to >= 0.10.3
+explicit SN_MAIN / SN_SEPOLIA / UNKNOWN state
+wrong-network state
+account/network change re-read
+wallet-standard disconnect
+```
+
+```text
+TypeScript check        PASS
+Next production build   PASS
+diff check              PASS
+manual Ready observation PENDING
+G0 mainnet evidence      NOT_IMPLEMENTED
+```
+
+The exact commit and manual result belong in the phase record and evidence ledger after observation.
+
+---
+
+# 16B. Landing Experience Checkpoint
+
+The canonical public landing and truthful testnet Home preview are implemented in commit `d0c27ed`.
+
+```text
+reference-led warm instrument shell       IMPLEMENTED
+flat + living Refracted Core system       IMPLEMENTED
+canonical hero copy                       IMPLEMENTED
+scroll-led identity/Home narrative        IMPLEMENTED
+truthful endpoint state labels            IMPLEMENTED
+fabricated balances/activity              ABSENT
+default wallet environment                SN_SEPOLIA
+TypeScript check                          PASS
+Next production build                     PASS
+localhost server-render assertions        PASS
+desktop/mobile browser screenshots        PASS
+public deployment                         NOT_IMPLEMENTED
+```
+
+The responsive review passed at 1363×936 and 390×844 with no horizontal overflow, application-origin console errors, framework overlay, or missing primary content. Enter Prism reached the Home state, and unavailable action copy remained truthful. This checkpoint remains X2 local-controlled evidence; it does not close public-demo, real-wallet observation, or mainnet gates.
+
+---
+
 # 17. Evidence Maintenance Rule
 
 Every meaningful runtime milestone updates:
@@ -479,7 +528,8 @@ Current STRK20 source refresh      PASS
 Registration upstream              PASS
 Repository setup                   PASS
 Current integration plan           PASS
-Wallet implementation              NOT_IMPLEMENTED
+Landing implementation             PASS
+Wallet implementation              IMPLEMENTED / RUNTIME OBSERVATION PENDING
 Prism identity implementation      NOT_IMPLEMENTED
 Base binding                       NOT_IMPLEMENTED
 G0 mainnet evidence                NOT_IMPLEMENTED
@@ -490,7 +540,7 @@ Public demo                        NOT_IMPLEMENTED
 
 Overall:
 
-> **PASS_WITH_LIMITATIONS — BUILD APPROVED, EVIDENCE NOT YET EARNED**
+> **PASS_WITH_LIMITATIONS — LOCAL BUILD EVIDENCE EARNED, RUNTIME/MAINNET EVIDENCE OPEN**
 
 The methodology is no longer the bottleneck. Execution and evidence are.
 

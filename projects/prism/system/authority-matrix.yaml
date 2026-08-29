@@ -1,0 +1,105 @@
+# Prism authority matrix v0.1 (proposed) — authority: AUTHORITY_MATRIX.md
+authority_rows:
+  - row_id: A1
+    behavior: prism_identity_existence_and_read
+    primary_authority: StarknetPrismIdentityRegistry
+    secondary_validation: backend_indexer
+    never_authoritative: [frontend, backend_cache]
+  - row_id: A2
+    behavior: controller_state
+    primary_authority: registry_caller_checks
+    secondary_validation: backend_relay_prechecks
+    never_authoritative: [ui_session]
+  - row_id: A3
+    behavior: binding_lifecycle_status
+    primary_authority: registry
+    secondary_validation: indexer_events
+    never_authoritative: [optimistic_ui]
+  - row_id: A4
+    behavior: base_ownership_proof_validity
+    primary_authority: backend_verifier_full_ladder   # EOA→EIP-1271→ERC-6492; onchain consumes digest only
+    secondary_validation: registry_digest_single_use_check
+    never_authoritative: [frontend_wallet_messages_alone]
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
+  - row_id: A5
+    behavior: canonical_acceptance_of_base_proof
+    primary_authority: registry_state_transition
+    secondary_validation: operation_reconciliation
+    never_authoritative: [backend_verified_flag]
+  - row_id: A6
+    behavior: resolution_result
+    primary_authority: registry_canonical_state_or_indexer_within_staleness_bound
+    secondary_validation: cache_watermark_recheck
+    never_authoritative: [cached_value_past_watermark]
+  - row_id: A7
+    behavior: base_balances_public_activity
+    primary_authority: base_rpc_explorer
+    secondary_validation: derived_portfolio_layer
+    never_authoritative: [prism_registry]
+  - row_id: A8
+    behavior: operation_ux_status
+    primary_authority: workflow_plus_ledger_reconciliation
+    secondary_validation: frontend_subscription
+    never_authoritative: [optimistic_ui]
+  - row_id: A9
+    behavior: privacy_claims
+    primary_authority: underlying_mechanism_evidence
+    secondary_validation: FT-007_copy_audit
+    never_authoritative: [marketing_copy]
+
+authorization_model:
+  create_identity: {caller: any_starknet_account, constraint: once_per_prism_id}
+  bind_execution_identity: {caller: identity_controller, extra: verified_proof_digest_unconsumed}
+  revoke_binding: {caller: identity_controller}
+  resolve: {caller: anyone, read_only: true}
+  get_identity: {caller: anyone, read_only: true}
+  separation_rules:
+    - product_authentication_never_substitutes_controller_signature
+    - backend_may_refuse_to_relay_but_never_authorizes
+
+trust_boundaries:
+  - principal: user_controller
+    can_authenticate_as: identity_controller_via_starknet_signature
+    can_authorize: [bind, revoke]
+    can_write: registry_protected_state
+    must_not_know: []
+    can_move_value: none_in_slice
+    can_override: nothing_canonical
+    compromise_boundary: full_control_of_that_identitys_bindings
+  - principal: backend_service
+    can_authenticate_as: itself_relayer_verifier_role_only
+    can_authorize: nothing_canonical
+    can_read: [chain_state, challenge_store]
+    can_write: [challenge_nonces, operation_records, caches_indexes]
+    must_not_know: [user_private_keys, viewing_keys, unnecessary_session_linkage]
+    can_override: none_trusted_verifier_for_proof_validity_only
+    failure_impact: liveness_degradation_no_integrity_loss_to_canonical_state
+    compromise_boundary: can_issue_fraudulent_VERIFIED_but_cannot_bind_without_users_starknet_key
+    decision_refs: [DEC-PRISM-SYS-001_ACCEPTED]
+  - principal: base_wallet
+    can_authenticate_as: owner_of_execution_account_via_ladder_valid_signature
+    can_authorize: one_ownership_proof_over_one_challenge
+    must_not_know: [starknet_controller_key]
+    compromise_boundary: bindings_for_that_execution_account
+  - principal: starknet_sequencer
+    role: transaction_ordering_finality_infrastructure
+    failure_impact: liveness_only
+
+reconciliation_rules:
+  - {case: submitted_unknown_tx, authority: chain_rpc_requery, repair: repoll_by_hash_then_failed_retryable,
+     user_visibility: still_processing_honest_label}
+  - {case: confirmed_unindexed, authority: chain_receipt, repair: replay_events_from_block_range,
+     user_visibility: none}
+  - {case: missed_or_duplicate_events, authority: chain_receipts, repair: idempotent_reindex_keyed_tx_hash_event_index,
+     user_visibility: none}
+  - {case: stale_cache_active_for_revoked, authority: registry_state, repair: invalidate_serve_NO_ACTIVE_DESTINATION,
+     user_visibility: correct_result}
+  - {case: backend_restart_mid_operation, authority: durable_op_row, repair: resume_polling_from_recorded_tx_hash,
+     user_visibility: truthful_resume}
+  - {case: crash_after_verify_before_submit, authority: challenge_store_digest_unused, repair: expire_gracefully_user_retries_fresh_challenge,
+     user_visibility: restart_binding_prompt}
+  - {case: contract_upgrade, authority: n_a, repair: no_upgrade_path_in_scope}
+
+observability_chain:
+  [user_action_id, request_id, command_id, operation_id, db_tx_id,
+   chain_tx_hash, event_id, reconciliation_id, served_state_version]

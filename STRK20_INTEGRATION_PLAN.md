@@ -1,10 +1,10 @@
 # Prism — STRK20 Integration Plan
 ## v0.1 · 2026-08-20
 
-**Status:** Ready for explicit implementation approval; implementation evidence pending  
+**Status:** Phase 1 code complete; manual wallet gate and runtime evidence pending
 **Route:** Privacy Wallet API for user flows + Prism-owned pool-integrated application contract for meaningful private action and final sprint evidence
 
-> This file is the plan boundary required by the current `starkience/strk20-agent-skills` integration skill. STRK20 app-code execution starts only after explicit approval of this plan. Prism's broader non-STRK20 work remains governed by the Foundry control plane.
+> This file is the plan boundary required by the current `starkience/strk20-agent-skills` integration skill. The plan was explicitly approved for phase-by-phase execution on 2026-08-20. Prism's broader non-STRK20 work remains governed by the Foundry control plane.
 
 ---
 
@@ -12,7 +12,7 @@
 
 Current repository reality:
 
-- Prism has a Next.js 16 / React 19 / TypeScript frontend shell, but no wallet connection is wired yet.
+- Prism has a Next.js 16 / React 19 / TypeScript frontend shell with a wallet connection/capability slice; manual wallet validation remains open.
 - The app currently communicates the product thesis but does not execute STRK20 actions.
 - Prism needs real private Starknet financial state without ever handling a user's viewing key.
 - The sprint requires at least three successful SN_MAIN hashes that touch the STRK20 pool.
@@ -44,6 +44,14 @@ get-starknet wallet standard              6.0.3
 @starknet-io/types-js                     0.10.3
 zustand                                   ^5.0.9
 ```
+
+## Freshness recheck — 2026-08-20
+
+- `starknet` 10.4.0 remains the pinned STRK20-compatible route; the upstream `next` tag has moved to 10.7.0.
+- `get-starknet-discovery` `next` moved from 6.0.3 to 6.0.4; the pinned 6.0.3 version remains deliberate for this phase and must be re-verified before the next phase.
+- `get-starknet-wallet-standard` `next` moved from 6.0.3 to 6.0.5; the pinned 6.0.3 version remains deliberate for this phase and must be re-verified before the next phase.
+- Wallet API v0.10.3 is still the latest stable spec; v0.10.4 remains a release candidate.
+- The upstream privacy monorepo removed `packages/sub_account_anonymizer` and added `packages/shadow_account_anonymizer`; shadow accounts remain outside Prism's sprint MVP.
 
 ## Contracts
 
@@ -234,7 +242,7 @@ Completed:
 - get-starknet pin updated to 6.0.3;
 - privacy and evidence profiles recanonicalized.
 
-## Phase 1 — Wallet connection + capability state
+## Phase 1 — Wallet connection + capability state ⏸ code complete; manual gate pending 2026-08-20
 
 Build:
 
@@ -254,13 +262,17 @@ Requirements:
 - supported state;
 - unsupported-wallet state;
 - disconnected state;
-- explicit `SN_MAIN` / environment state.
+- explicit `SN_MAIN` / environment state;
+- account/network change subscription with silent re-read;
+- network mismatch state that prevents private-action readiness from being implied.
 
 Frontend proof:
 
 ```text
 Connect wallet
+→ Observe environment
 → Privacy available / unsupported
+→ Re-read after account/network change
 ```
 
 Headless gate:
@@ -275,7 +287,9 @@ Manual gate:
 
 - Ready extension connects;
 - non-private wallet degrades without throwing;
-- no balance-consent prompt appears just from capability detection.
+- no balance-consent prompt appears just from capability detection;
+- SN_MAIN is shown as the expected environment;
+- wrong-network and account/network-change states remain truthful.
 
 ## Phase 2 — Shield + private balance
 
@@ -510,12 +524,13 @@ No private key or viewing key should ever be pasted into the repository or chat 
 
 ---
 
-# 9. Next step after approval
+# 9. Next step after Phase 1 handoff
 
 ```text
-Phase 1 wallet/capability vertical slice
-+
-Phase 4 minimal PrismIdentityRegistry scaffold
+Manual Ready-wallet gate for Phase 1
+→ G0 SN_MAIN reachability when funded wallet access is available
+→ Phase 2 shield/private balance
+→ Phase 4 minimal PrismIdentityRegistry scaffold in parallel
 ```
 
 Then perform G0 as soon as the user-controlled wallet is ready, without waiting for the entire product.

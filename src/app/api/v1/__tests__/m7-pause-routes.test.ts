@@ -1,0 +1,236 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PauseError, PAUSE_ERROR_CODE } from "../../../../features/prism-pause/domain/errors";
+import { getAppFactory } from "../../../../application/factory";
+import { POST as createIntentPost } from "../intents/route";
+import { POST as pauseIntentPost } from "../intents/[intentId]/pause/route";
+import { POST as verifyPausePost } from "../pauses/[pauseId]/verify/route";
+import { POST as approvePausePost } from "../pauses/[pauseId]/approve/route";
+import { POST as releasePausePost } from "../pauses/[pauseId]/release/route";
+import { POST as cancelPausePost } from "../pauses/[pauseId]/cancel/route";
+import { GET as getPauseGet } from "../pauses/[pauseId]/route";
+import { GET as getReceiptGet } from "../receipts/[receiptId]/route";
+
+vi.mock("@/application/factory", () => ({
+  getAppFactory: vi.fn(),
+}));
+
+const pauseService = {
+  createIntent: vi.fn(),
+  pauseIntent: vi.fn(),
+  verifyPause: vi.fn(),
+  approvePause: vi.fn(),
+  releasePause: vi.fn(),
+  cancelPause: vi.fn(),
+  getPause: vi.fn(),
+  receiptService: { getReceipt: vi.fn() },
+};
+
+const session = {
+  sessionId: "session-m7",
+  userId: "user-m7",
+  issuedAt: Math.floor(Date.now() / 1000) - 10,
+  expiresAt: Math.floor(Date.now() / 1000) + 3600,
+};
+
+function request(body: Record<string, unknown>, headers: Record<string, string> = {}) {
+  return new Request("http://localhost/api", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({ session, ...body }),
+  });
+}
+
+describe("M7 Pause REST boundary regressions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAppFactory).mockResolvedValue({ pauseService, receiptService: pauseService.receiptService } as never);
+  });
+
+  it("preserves the stable recipient mismatch error at the REST boundary", async () => {
+    pauseService.createIntent.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.INVALID_PLAN, "recipient_mismatch"));
+
+    const response = await createIntentPost(
+      request({
+        prismId: "prism:source",
+        recipientPrismId: "prism:dest",
+        recipientAddress: "0xdef",
+        idempotencyKey: "idem-rest-recipient-mismatch",
+      }, { "x-request-id": "req-recipient-mismatch" }),
+    );
+    const body = (await response.json()) as { error: { code: string; detail: string } };
+
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.INVALID_PLAN);
+    expect(body.error.detail).toBe("recipient_mismatch");
+    expect(pauseService.createIntent).toHaveBeenCalledWith(expect.objectContaining({
+      recipientPrismId: "prism:dest",
+      recipientAddress: "0xdef",
+    }));
+  });
+
+  it("does not treat an app session or request claim as approval/release authority", async () => {
+    pauseService.approvePause.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED, "pause_authority_policy_not_configured"));
+    const approveResponse = await approvePausePost(
+      request({ approver: "claimed-controller" }, { "x-request-id": "req-approve" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const approveBody = (await approveResponse.json()) as { error: { code: string } };
+    expect(approveResponse.status).toBe(503);
+    expect(approveBody.error.code).toBe(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED);
+    expect(pauseService.approvePause).toHaveBeenCalledWith(
+      "pause-1",
+      session.userId,
+      expect.objectContaining({ authorityClaim: "claimed-controller" }),
+    );
+
+    pauseService.releasePause.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED, "pause_authority_policy_not_configured"));
+    const releaseResponse = await releasePausePost(
+      request({ settlementOperationId: "op-1", authorityActor: "claimed-controller" }, { "x-request-id": "req-release" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const releaseBody = (await releaseResponse.json()) as { error: { code: string } };
+    expect(releaseResponse.status).toBe(503);
+    expect(releaseBody.error.code).toBe(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED);
+    expect(pauseService.releasePause).toHaveBeenCalledWith(
+      "pause-1",
+      null,
+      expect.objectContaining({ authoritySubject: session.userId }),
+    );
+  });
+
+  it("forwards the authenticated cancel subject and reason to the authority boundary", async () => {
+    pauseService.cancelPause.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED, "pause_authority_policy_not_configured"));
+
+    const response = await cancelPausePost(
+      request({
+        expectedVersion: 0,
+        reason: "user_requested",
+        authorityActor: "claimed-controller",
+      }, { "x-request-id": "req-cancel", "x-correlation-id": "corr-cancel" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string } };
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.AUTHORITY_UNCONFIGURED);
+    expect(pauseService.cancelPause).toHaveBeenCalledWith(
+      "pause-1",
+      0,
+      expect.objectContaining({
+        authoritySubject: session.userId,
+        authorityClaim: "claimed-controller",
+        reason: "user_requested",
+      }),
+    );
+    expect(response.headers.get("x-correlation-id")).toBe("corr-cancel");
+  });
+
+  it("preserves PauseError catalogue/status when pausing an expired intent", async () => {
+    pauseService.pauseIntent.mockRejectedValue(new PauseError(PAUSE_ERROR_CODE.INTENT_EXPIRED, "intent-expired"));
+
+    const response = await pauseIntentPost(
+      request({}, { "x-request-id": "req-expired", "x-correlation-id": "corr-expired" }),
+      { params: Promise.resolve({ intentId: "intent-expired" }) },
+    );
+    const body = (await response.json()) as { error: { code: string; name: string; httpStatusHint: number } };
+
+    expect(response.status).toBe(410);
+    expect(body.error.code).toBe("ERR-105");
+    expect(body.error.name).toBe("intent_expired");
+    expect(body.error.httpStatusHint).toBe(410);
+  });
+
+  it("echoes correlation on successful verification responses", async () => {
+    pauseService.verifyPause.mockResolvedValue({ pauseId: "pause-1", state: "RELEASE_READY", version: 1 });
+
+    const response = await verifyPausePost(
+      request({}, { "x-request-id": "req-verify", "x-correlation-id": "corr-verify" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe("req-verify");
+    expect(response.headers.get("x-correlation-id")).toBe("corr-verify");
+  });
+
+  it("rejects client-supplied verification sources instead of treating them as authoritative", async () => {
+    const response = await verifyPausePost(
+      request({
+        sources: {
+          recipientBinding: { status: "BOUND", observedValue: "0xabc" },
+          routeAllowed: { chainAllowed: true, assetAllowed: true, contractAllowed: true, notRevoked: true },
+          simulation: { success: true, effectMatches: true, freshnessOk: true },
+          agentAuthorized: { authorized: true },
+        },
+      }, { "x-request-id": "req-untrusted-sources", "x-correlation-id": "corr-untrusted-sources" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string; detail?: string } };
+
+    expect(response.status).toBe(422);
+    expect(body.error.code).toBe(PAUSE_ERROR_CODE.INVALID_STATE);
+    expect(body.error.detail).toBe("verification_sources_not_client_writable");
+    expect(response.headers.get("x-correlation-id")).toBe("corr-untrusted-sources");
+    expect(pauseService.verifyPause).not.toHaveBeenCalled();
+  });
+
+  it("maps pause-store read failures to a stable dependency error", async () => {
+    pauseService.getPause.mockRejectedValue(new Error("store_connection_failed"));
+
+    const response = await getPauseGet(
+      request({}, { "x-request-id": "req-read", "x-correlation-id": "corr-read" }),
+      { params: Promise.resolve({ pauseId: "pause-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string; httpStatusHint: number } };
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ERR-021");
+    expect(body.error.httpStatusHint).toBe(503);
+    expect(response.headers.get("x-correlation-id")).toBe("corr-read");
+  });
+
+  it("maps receipt-store failures to a stable dependency error", async () => {
+    pauseService.receiptService.getReceipt.mockRejectedValue(new Error("receipt_store_down"));
+
+    const response = await getReceiptGet(
+      request({}, { "x-request-id": "req-receipt", "x-correlation-id": "corr-receipt" }),
+      { params: Promise.resolve({ receiptId: "receipt-1" }) },
+    );
+    const body = (await response.json()) as { error: { code: string; httpStatusHint: number } };
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ERR-021");
+    expect(body.error.httpStatusHint).toBe(503);
+    expect(response.headers.get("x-correlation-id")).toBe("corr-receipt");
+  });
+
+  it("does not expose raw provider detail in a receipt resource", async () => {
+    pauseService.receiptService.getReceipt.mockResolvedValue({
+      ok: true,
+      data: {
+        receiptId: "receipt-1",
+        operationId: "op-1",
+        kind: "bind_execution_identity",
+        state: "failed_retryable",
+        txHash: null,
+        createdAt: 1_000,
+        updatedAt: 1_001,
+        watermark: null,
+        errorCode: "ERR-021",
+        errorDetail: "provider=https://rpc.example/?token=secret-token",
+        correlationId: "corr-receipt",
+      },
+    });
+
+    const response = await getReceiptGet(
+      request({}, { "x-request-id": "req-receipt-safe" }),
+      { params: Promise.resolve({ receiptId: "receipt-1" }) },
+    );
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(text).not.toContain("https://rpc.example");
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("dependency_unavailable");
+  });
+});

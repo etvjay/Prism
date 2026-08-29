@@ -234,6 +234,12 @@ The SDK rename includes `SubAccount` → `ShadowAccount` and `build().subaccount
 
 Prism will not make shadow accounts an MVP dependency because the default consumer route remains wallet-mediated.
 
+The supplied shadow-account overview is therefore retained only as an optional
+provider observation: a privacy-pool/anonymizer may create disposable Starknet
+execution accounts for private DeFi actions such as Vesu or Endur. This is not a
+STRK20 note, memo, claim, receipt, binding, or evidence of unlinkability; no
+shadow-account action is required by the normal Wallet API route.
+
 ## `privacy_invoke`
 
 General model:
