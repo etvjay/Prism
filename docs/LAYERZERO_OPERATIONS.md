@@ -48,24 +48,12 @@ then bilateral peers last. The Base side uses the official `setPeer`, library,
 vendored official Endpoint/OApp interfaces and SDK ABI. Never commit deployed
 addresses, RPC URLs, fees, GUIDs, or transaction hashes to source.
 
-## Current blocking status (2026-08-29 UTC)
+## Blocking status at this checkout
 
-The protected-input preflight passed with the explicit official Base Sepolia RPC
-and the privately loaded `sn_testnet` RPC. Local Foundry and Scarb builds passed;
-the focused Base OApp suite passed 5/5 tests.
-
-One Starknet declaration was broadcast and independently read back as
-`ACCEPTED_ON_L2` with execution `SUCCEEDED`; the declared class is retrievable
-from the target RPC. The subsequent first Starknet deployment attempt failed
-with the exact RPC error `Class with hash 0x6e120b425616adf1dd4ec4dd7dd4efdbc3b35680c6860488bc6d3f524d9d5b1 is not declared`.
-Per the operator boundary, no retry or further broadcast was performed.
-No Starknet OApp address exists from this operation, and no Base deployment,
-configuration transaction, quote, message, delivery, or replay attempt was
-made. Therefore there is no honest source receipt/GUID, DVN verification,
-Executor delivery, destination receipt/event/state, second-provider agreement,
-or replay evidence to claim.
-
-The next operator action requires resolving the target RPC's declaration
-visibility/propagation issue, then performing a fresh reviewed deployment
-attempt. This document intentionally records no RPC URLs, private material,
-fees, or credentials.
+No broadcast is claimed from this worktree. The read-only gate currently stops
+because the protected Starknet RPC document is mode `0664` rather than `0600`,
+and no explicit protected `BASE_SEPOLIA_RPC_URL` is present in the process.
+The Base RPC is required before Base deployment/configuration or any message
+send can be safely attempted. Consequently there is no honest source receipt,
+GUID, DVN verification, Executor delivery, destination receipt, event,
+second-provider agreement, or replay evidence yet.

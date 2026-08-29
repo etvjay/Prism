@@ -12,16 +12,15 @@ require_testnet() {
   : "${STARKNET_ACCOUNT_NAME:?set STARKNET_ACCOUNT_NAME}"
 }
 
-sn() { sncast --account "$STARKNET_ACCOUNT_NAME" "$@" --url "$STARKNET_RPC_URL"; }
+sn() { sncast "$@" --url "$STARKNET_RPC_URL" --account "$STARKNET_ACCOUNT_NAME"; }
 
 require_testnet
 : "${STARKNET_OAPP:?set deployed Starknet OApp address}"
-: "${STARKNET_ENDPOINT:?set official Starknet LayerZero Endpoint address}"
 case "${1:-}" in
   readback)
     sn call --contract-address "$STARKNET_OAPP" --function get_endpoint
     sn call --contract-address "$STARKNET_OAPP" --function get_peer --calldata 40245
-    sn call --contract-address "$STARKNET_ENDPOINT" --function get_eid
+    sn call --contract-address "$STARKNET_OAPP" --function get_eid
     sn call --contract-address "$STARKNET_OAPP" --function sent_count
     sn call --contract-address "$STARKNET_OAPP" --function received_count
     ;;
