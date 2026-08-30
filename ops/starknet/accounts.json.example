@@ -2,8 +2,8 @@
   "_comment": "SECRET-FREE accounts-file template — no private keys, no mnemonics, no keystore secrets are committed. Copy to a local path outside the repo (e.g. ~/.starknet-accounts/starknet-accounts.json) and populate from env/keystore only.",
   "sepolia-deployer": {
     "address": "0x<SEPOLIA_DEPLOYER_ADDRESS_PLACEHOLDER>",
-    "private_key_env_var": "STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY",
-    "keystore_env_var": "STARKNET_SEPOLIA_KEYSTORE_PATH",
+    "private_key_env_var": "STARKNET_DEPLOYER_PRIVATE_KEY",
+    "keystore_env_var": "STARKNET_KEYSTORE_PATH",
     "public_key_env_var": "STARKNET_SEPOLIA_DEPLOYER_PUBLIC_KEY",
     "note": "All secret material is referenced by ENV VAR NAME, not value. The validator (ops/starknet/validate.mjs) rejects any key that looks like a real 32-byte hex secret."
   },

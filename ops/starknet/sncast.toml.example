@@ -9,8 +9,11 @@
 #   - every profile references an env var for the RPC URL / account
 #   - no mainnet profile is marked as default without owner release gate
 #
-# Real values live in the environment (STARKNET_RPC_URL, BASE_RPC_URL, etc.).
-# See ops/target-network/manifest.yaml for per-environment expected values.
+# Real values live in the environment. One naming contract is used for both
+# PRISM_TARGET_ENV=testnet and PRISM_TARGET_ENV=mainnet:
+# STARKNET_RPC_URL, NEXT_PUBLIC_STARKNET_RPC_URL, BASE_RPC_URL,
+# BASE_CHAIN_ID, STARKNET_DEPLOYER_PRIVATE_KEY or STARKNET_KEYSTORE_PATH,
+# and BASE_SIGNER_PRIVATE_KEY. See ops/starknet/VALIDATION.md.
 
 # --- Starknet Foundry project defaults (committed, but still secret-free) ---
 # contracts/prism_identity_registry/snfoundry.toml should keep these commented defaults
@@ -21,8 +24,8 @@
 # {
 #   "sepolia-deployer": {
 #     "address": "0x<SEPOLIA_DEPLOYER_ADDRESS>",
-#     "private_key_env_var": "STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY",
-#     "keystore_env_var": "STARKNET_SEPOLIA_KEYSTORE_PATH",
+#     "private_key_env_var": "STARKNET_DEPLOYER_PRIVATE_KEY",
+#     "keystore_env_var": "STARKNET_KEYSTORE_PATH",
 #     "note": "Value is an ENV VAR NAME, not a secret. No secret is committed."
 #   }
 # }
@@ -31,10 +34,10 @@
 # File: sncast.toml (or snfoundry.toml [sncast.sepolia] section)
 #
 # [sncast.sepolia]
-# url_env_var = "STARKNET_SEPOLIA_RPC_URL"   # expected: https://.../v0_7 without embedded key
+# url_env_var = "STARKNET_RPC_URL"   # expected: https://.../v0_7 without embedded key
 # account = "sepolia-deployer"
 # accounts-file = "~/.starknet-accounts/starknet-accounts.json"
-# keystore_env_var = "STARKNET_SEPOLIA_KEYSTORE_PATH"  # never a literal path with secret
+# keystore_env_var = "STARKNET_KEYSTORE_PATH"  # never a literal path with secret
 # wait-params = { timeout = 300, retry-interval = 10 }
 # show-explorer-links = true
 

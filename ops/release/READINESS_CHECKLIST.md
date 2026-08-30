@@ -61,7 +61,7 @@ remain separate gates.
 | Check | Required | Current | Blocks |
 |---|---|---|---|
 | Secret-free templates pass `node ops/starknet/validate.mjs` | No `0x` 64-hex secret, no hard-coded `alchemy.com/v2/<key>`, every profile references `*_RPC_URL` env var, no active `sncast.toml` committed | **PASS** | Deployment |
-| Env contract outside repo: `STARKNET_SEPOLIA_RPC_URL` / `STARKNET_RPC_URL`, `BASE_RPC_URL`, `BASE_CHAIN_ID=84532` (testnet) declared in `ops/target-network/manifest.yaml` + `ops/starknet/provider.example.toml` | Shell / `.env` excluded by `.gitignore` | **NOT_PROVIDED (expected offline)** | Live `sncast declare/deploy`, `get_identity` second read |
+| Env contract outside repo: `STARKNET_RPC_URL` / `BASE_RPC_URL` (selected by `PRISM_TARGET_ENV`), `BASE_CHAIN_ID=84532` (testnet) declared in `ops/target-network/manifest.yaml` + `ops/starknet/provider.example.toml` | Shell / `.env` excluded by `.gitignore` | **NOT_PROVIDED (expected offline)** | Live `sncast declare/deploy`, `get_identity` second read |
 | Funded SN_SEPOLIA deployer account + faucet plan (address/keystore referenced by env var, never committed) | `ops/starknet/accounts.json.example` + `sncast.toml.example` | **FUNDED — 3005 STRK read back; account not deployed** | Account deployment / registry declare/deploy |
 | Funded Base Sepolia EOA for ladder fixtures (EOA → 1271 → 6492) | E2E procedure `DECISIVE_SEQUENCE_PROCEDURE.md §2` | **OPEN — EOA created but not funded** | Real Base proof against live RPC |
 | Dry-run deployment command check passes without RPC: `sncast declare --dry-run` syntax validated via `node ops/starknet/dry-run-check.mjs` (offline) | New in Bundle 3T Deploy | **PASS when --dry-run present** | Prevents accidental live broadcast |
@@ -130,12 +130,55 @@ No frontend, contract behavior, `strk20.json`, Linear/Notion, credentials, or pu
 
 1. **Close chainId gate:** Jason creates `DEC-PRISM-SYS-003` in `DECISIONS.md` (template in `CHAINID_V2_DECISION_PACKET.md:§6`) — `ACCEPT` triggers WP-1 spec amendment + `e8886af` merge; `REJECT` records residual risk.
 2. **Close target-network gate:** Jason creates `DEC-PRISM-OPS-001` (template in `ops/target-network/PROPOSAL.md:§2`) then mirrors into `ops/target-network/manifest.yaml:owner_decision` (`ACCEPTED`, `selected_environment`, `disposition_chainId_v2`, `signature`).
-3. **Close funding gate:** Provision funded deployer outside repo (`STARKNET_SEPOLIA_RPC_URL`, `STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY` or keystore) — verify via `node ops/starknet/validate.mjs` (still secret-free) + `sncast --profile sepolia account list` (requires env — not run in this bundle).
+3. **Close funding gate:** Provision funded deployer outside repo (`STARKNET_RPC_URL`, `STARKNET_DEPLOYER_PRIVATE_KEY` or `STARKNET_KEYSTORE_PATH`) — verify via `node ops/starknet/validate.mjs` (still secret-free) + `sncast --profile sepolia account list` (requires env — not run in this bundle).
 4. **Close deployment gate:** Run live `sncast declare/deploy` with `--dry-run` first (validated by `ops/starknet/dry-run-check.mjs`), then live — capture network/address/class_hash/tx/block/status and write envelope under `ops/evidence/envelopes/` (never `strk20.json`).
 5. **Close independent-read gate:** Perform second RPC read + Voyager explorer URL per tx; re-run `node ops/evidence/validate.mjs <envelope.json> --require-independent-read`; copy validated fields into `EVIDENCE_LEDGER.md` yaml template at `X3` (testnet).
 6. **Close harness E2E gate:** Run `ops/testnet/decisive-sequence.harness.mjs --env testnet` with live wallets — procedure in `DECISIVE_SEQUENCE_PROCEDURE.md §2`; record every divergence case.
 
 Each step re-runs `npm test && npm run typecheck && npm run build && node ops/*/validate.mjs` before any commit.
+
+---
+
+## 8. Mainnet release gate — fail closed
+
+`MAINNET_READY` is a statement about observed SN_MAIN evidence, not a planned
+configuration. Run the offline validator against an operator-produced,
+secret-free JSON packet:
+
+```bash
+node ops/release/validate-mainnet.mjs --self-test
+node ops/release/validate-mainnet.mjs /path/to/mainnet-release-packet.json
+```
+
+The packet is rejected unless it contains **exact** (non-placeholder) values
+for all of the following:
+
+- `release_status: MAINNET_READY`, `environment: SN_MAIN`, Base chain ID `8453`,
+  and an `owner_decision` with accepted status, decision ID, owner, timestamp,
+  and signature/reference;
+- `mainnet_figures`: SN_MAIN, Base `8453`, canonical pool address, pool-event
+  transaction/block, exactly three final submission transaction hashes, and an
+  independently observed `hub_validator` of `ok=true`, `pool=true`, `mine=true`;
+- every required contract's address, class hash, deployment block,
+  constructor calldata, accepted deployment receipt, and independent provider
+  read proving address/class-hash match;
+- observed wallet and prover providers, wallet address, proof identifier,
+  receipt transaction hash, and verification timestamp.
+
+Missing figures, inferred addresses, absent receipts, a single-provider result,
+missing wallet/prover evidence, or an unaccepted owner decision leaves the
+result `NOT MAINNET_READY`. The validator never writes `strk20.json` or any
+ledger. It is intentionally offline; operator evidence remains subject to
+independent review and the LayerZero bilateral blocker remains unchanged.
+
+## 9. External gates still open
+
+This repository contains no mainnet figures or receipts. Remaining gates are
+owner acceptance of the mainnet release/manifest, frozen contract set and
+configuration, funded signer/wallet/prover evidence, SN_MAIN deployments and
+independent reads, the three final submissions plus upstream validator
+readback, and the existing M5/LayerZero/provider gates. Testnet ledger rows and
+`evidence/lz-support-blocker-2026-08-30.md` are not modified by this tooling.
 
 ---
 
