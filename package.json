@@ -7,6 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "validate:api-parity": "node scripts/validate-api-parity.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:backend": "PRISM_RUNTIME_MODE=test PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES=1 node ops/backend-e2e/http-api.mjs"

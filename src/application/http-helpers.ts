@@ -171,6 +171,14 @@ export async function readJson(req: Request): Promise<Record<string, unknown> | 
 
 // Helper to build AppSession fallback for unauthenticated tests (requires explicit session in real flow)
 export function requireSession(req: Request, body: Record<string, unknown> | null): AppSession | { error: Response } {
+  // Legacy callers must not silently accept caller-asserted headers/body in a
+  // deployed process. Production writes use requireAuthenticatedSession; this
+  // compatibility helper is fixture-only and fail-closed by default.
+  const testMode = process.env.PRISM_RUNTIME_MODE === "test" || (process.env.PRISM_RUNTIME_MODE === undefined && process.env.NODE_ENV === "test");
+  if (!testMode || process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES !== "1") {
+    const parsedHeaders = parseHeaders(req);
+    return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
+  }
   const fromBody = (body?.session ?? body?.appSession ?? null) as unknown as AppSession | null;
   const parsed = parseSession(req, fromBody);
   if (parsed) return parsed;

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Prism Protocol API
-  version: 1.0.0
+  version: 0.1.0
   description: |
     Domain-first REST surface over PrismApplicationService / PauseService.
     No raw felt/calldata; submitted != completed; stable ERR catalogue;
