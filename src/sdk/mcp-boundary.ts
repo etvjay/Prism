@@ -58,12 +58,12 @@ export const MCP_TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
   {
     name: "prism_request_pause_verification",
     description: "Verify a PAUSED intent — triggers policy checks (recipient binding, amount ceiling, authority).",
-    inputSchema: { type: "object", required: ["pauseId"], properties: { pauseId: { type: "string" } } },
+    inputSchema: { type: "object", additionalProperties: false, required: ["pauseId", "planHash"], properties: { pauseId: { type: "string", minLength: 1 }, planHash: { type: "string", pattern: "^0x[0-9a-fA-F]+$" }, policyVersion: { type: "string", minLength: 1 } } },
   },
   {
     name: "prism_request_approval",
     description: "Request escalation/approval for a pause. Does not bypass Pause or change policy scope.",
-    inputSchema: { type: "object", required: ["pauseId"], properties: { pauseId: { type: "string" }, approver: { type: "string" } } },
+    inputSchema: { type: "object", additionalProperties: false, required: ["pauseId", "planHash", "approvalScopeHash"], properties: { pauseId: { type: "string", minLength: 1 }, planHash: { type: "string", pattern: "^0x[0-9a-fA-F]+$" }, approvalScopeHash: { type: "string", pattern: "^0x[0-9a-fA-F]+$" }, approver: { type: "string", minLength: 1 } } },
   },
   {
     name: "prism_get_operation",
@@ -87,7 +87,19 @@ export const MCP_TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
   },
 ] as const;
 
-// Thin adapter — each tool calls the same PrismClient that REST handlers use.
+export function validateMcpToolInput(name: string, args: Record<string, unknown>): string | null {
+  const definition = MCP_TOOL_DEFINITIONS.find((tool) => tool.name === name);
+  if (!definition) return `unknown_tool:${name}`;
+  const schema = definition.inputSchema as { required?: string[]; properties?: Record<string, { pattern?: string }> };
+  for (const key of schema.required ?? []) if (typeof args[key] !== "string" || !(args[key] as string).trim()) return `missing_required:${key}`;
+  for (const [key, value] of Object.entries(args)) {
+    if (/private.?key|viewing.?key|seed|mnemonic|signing.?key|secret|password/i.test(key)) return "secret_input_rejected";
+    const pattern = schema.properties?.[key]?.pattern;
+    if (pattern && typeof value === "string" && !new RegExp(pattern).test(value)) return `invalid_format:${key}`;
+  }
+  return null;
+}
+
 // No direct chain, no policy duplication, no secret handling.
 export function createMcpAdapter(client: PrismClient) {
   return {
@@ -97,6 +109,8 @@ export function createMcpAdapter(client: PrismClient) {
       // Authority guard: no tool may bypass Pause or mark settlement completed.
       const blocked = ["bypass_pause", "mark_completed", "sign_with_user_key", "read_viewing_key"];
       if (blocked.some((b) => name.includes(b))) return { ok: false, error: { code: "ERR-004", detail: `tool_not_authorized:${name}` } };
+      const validationError = validateMcpToolInput(name, args);
+      if (validationError) return { ok: false, error: { code: "ERR-023", detail: validationError } };
 
       switch (name) {
         case "prism_resolve":
@@ -115,14 +129,14 @@ export function createMcpAdapter(client: PrismClient) {
         case "prism_inspect_pause":
           return client.pauses.get(args.pauseId as string);
         case "prism_request_pause_verification":
-          return client.pauses.verify(args.pauseId as string);
+          return client.pauses.verify(args.pauseId as string, { planHash: args.planHash as string, ...(typeof args.policyVersion === "string" ? { policyVersion: args.policyVersion } : {}) });
         case "prism_request_approval":
           // Two-step: escalate then approve — model as approve if escalated, else escalate
           {
             const pause = await client.pauses.get(args.pauseId as string);
             if (!pause.ok) return pause;
             const state = (pause.data as { state: string }).state;
-            if (state === "ESCALATED") return client.pauses.approve(args.pauseId as string, { approver: args.approver as string | null });
+            if (state === "ESCALATED") return client.pauses.approve(args.pauseId as string, { planHash: args.planHash as string, approvalScopeHash: args.approvalScopeHash as string, approver: args.approver as string | null });
             return client.pauses.escalate(args.pauseId as string);
           }
         case "prism_get_operation":

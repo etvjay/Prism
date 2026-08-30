@@ -44,6 +44,24 @@ export interface SdkResponse<T> {
   readonly requestId?: string | null;
   readonly operation?: { operationId: string; state: OperationState; version: number };
   readonly watermark?: number | null;
+  readonly retryAfterSeconds?: number | null;
+}
+
+/** Exact binding fields required when mutating a Pause. */
+export interface PauseVerificationInput {
+  readonly planHash: string;
+  readonly policyVersion?: string;
+}
+export interface PauseApprovalInput {
+  readonly planHash: string;
+  readonly approvalScopeHash: string;
+  readonly approver?: string | null;
+}
+export interface PauseReleaseInput {
+  readonly planHash: string;
+  readonly approvalScopeHash: string;
+  readonly settlementOperationId: string;
+  readonly expectedVersion?: number | null;
 }
 
 export interface IdentityData {

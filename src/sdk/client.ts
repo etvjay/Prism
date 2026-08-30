@@ -13,6 +13,9 @@ import type {
   ReceiptData,
   IntentData,
   PauseData,
+  PauseVerificationInput,
+  PauseApprovalInput,
+  PauseReleaseInput,
   AppSession,
   IntentPurpose,
   PublicBindingData,
@@ -50,11 +53,13 @@ async function parseSdkResponse<T>(res: Response): Promise<SdkResponse<T>> {
   const requestId = res.headers.get("x-request-id") ?? (json as { requestId?: string | null }).requestId ?? null;
   const watermarkHeader = res.headers.get("x-prism-watermark");
   const watermark = watermarkHeader ? Number(watermarkHeader) : (json as { watermark?: number | null }).watermark ?? null;
+  const retryAfterRaw = res.headers.get("retry-after");
+  const retryAfterSeconds = retryAfterRaw && Number.isFinite(Number(retryAfterRaw)) ? Number(retryAfterRaw) : null;
   const operation = (json as { operation?: { operationId: string; state: string; version: number } }).operation ?? null;
   if (!json.ok) {
-    return { ok: false, error: (json as { error: SdkResponse<T>["error"] }).error, requestId, watermark: watermark as number | null };
+    return { ok: false, error: (json as { error: SdkResponse<T>["error"] }).error, requestId, watermark: watermark as number | null, retryAfterSeconds };
   }
-  return { ok: true, data: (json as { data: T }).data, requestId, operation: operation as never, watermark: watermark as number | null };
+  return { ok: true, data: (json as { data: T }).data, requestId, operation: operation as never, watermark: watermark as number | null, retryAfterSeconds };
 }
 
 function randomId(prefix: string): string {
@@ -86,8 +91,7 @@ export class PrismClient {
   async negotiateVersion(): Promise<{ serverVersion: string | null; supported: boolean }> {
     const res = await this.doFetch(this.url("/v1/identity/nonexistent-version-probe"), { method: "GET", headers: buildHeaders(this.defaultSession, {}) });
     const v = res.headers.get("x-prism-api-version") ?? res.headers.get("x-api-version") ?? null;
-    // Any 2xx/4xx without version header is treated as supported v1
-    return { serverVersion: v ?? "v1", supported: true };
+    return { serverVersion: v, supported: v === "1.0.0" || v === "v1" };
   }
 
   /** Operation polling helper — polls until terminal or requires_attention */
@@ -297,18 +301,18 @@ export class PrismClient {
       const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}`), { method: "GET", headers });
       return parseSdkResponse(res);
     },
-    verify: async (pauseId: string, opts?: { requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
+    verify: async (pauseId: string, opts: PauseVerificationInput & { requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
       const session = opts?.session ?? this.defaultSession;
       if (!session) return { ok: false, error: { code: "ERR-023", name: "stale_state_conflict", category: "stale_state", retryable: "re_read", userAction: "refresh", httpStatusHint: 401, detail: "missing_app_session" } };
       const headers = buildHeaders(session, { requestId: opts?.requestId ?? null, extra: this.defaultHeaders });
-      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/verify`), { method: "POST", headers, body: JSON.stringify({ session }) });
+      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/verify`), { method: "POST", headers, body: JSON.stringify({ session, planHash: opts.planHash, ...(opts.policyVersion ? { policyVersion: opts.policyVersion } : {}) }) });
       return parseSdkResponse(res);
     },
-    release: async (pauseId: string, opts?: { expectedVersion?: number | null; requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
+    release: async (pauseId: string, opts: PauseReleaseInput & { requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
       const session = opts?.session ?? this.defaultSession;
       if (!session) return { ok: false, error: { code: "ERR-023", name: "stale_state_conflict", category: "stale_state", retryable: "re_read", userAction: "refresh", httpStatusHint: 401, detail: "missing_app_session" } };
       const headers = buildHeaders(session, { requestId: opts?.requestId ?? null, expectedVersion: opts?.expectedVersion ?? null, extra: this.defaultHeaders });
-      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/release`), { method: "POST", headers, body: JSON.stringify({ session, expectedVersion: opts?.expectedVersion ?? null }) });
+      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/release`), { method: "POST", headers, body: JSON.stringify({ session, planHash: opts.planHash, approvalScopeHash: opts.approvalScopeHash, settlementOperationId: opts.settlementOperationId, expectedVersion: opts.expectedVersion ?? null }) });
       return parseSdkResponse(res);
     },
     cancel: async (pauseId: string, opts?: { expectedVersion?: number | null; requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
@@ -325,11 +329,11 @@ export class PrismClient {
       const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/escalate`), { method: "POST", headers, body: JSON.stringify({ session }) });
       return parseSdkResponse(res);
     },
-    approve: async (pauseId: string, opts?: { approver?: string | null; requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
+    approve: async (pauseId: string, opts: PauseApprovalInput & { requestId?: string | null; session?: AppSession }): Promise<SdkResponse<PauseData>> => {
       const session = opts?.session ?? this.defaultSession;
       if (!session) return { ok: false, error: { code: "ERR-023", name: "stale_state_conflict", category: "stale_state", retryable: "re_read", userAction: "refresh", httpStatusHint: 401, detail: "missing_app_session" } };
       const headers = buildHeaders(session, { requestId: opts?.requestId ?? null, extra: this.defaultHeaders });
-      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/approve`), { method: "POST", headers, body: JSON.stringify({ session, approver: opts?.approver ?? null }) });
+      const res = await this.doFetch(this.url(`/v1/pauses/${encodeURIComponent(pauseId)}/approve`), { method: "POST", headers, body: JSON.stringify({ session, planHash: opts.planHash, approvalScopeHash: opts.approvalScopeHash, approver: opts.approver ?? null }) });
       return parseSdkResponse(res);
     },
   };

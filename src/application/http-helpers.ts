@@ -74,6 +74,7 @@ export function parseSession(req: Request, bodySession?: unknown): AppSession | 
 export function toHttpResponse<T>(appRes: AppResponse<T>, parsed: ParsedHeaders): Response {
   const headers = new Headers();
   headers.set("content-type", "application/json");
+  headers.set("x-prism-api-version", "1.0.0");
   if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
   if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
   if (appRes.ok && (appRes as { watermark?: number | null }).watermark !== undefined && (appRes as { watermark?: number | null }).watermark !== null) {
@@ -117,6 +118,7 @@ export function toHttpResponse<T>(appRes: AppResponse<T>, parsed: ParsedHeaders)
 
 export function jsonError(requestId: string | null, code: string, httpStatus: number, detail?: string): Response {
   const headers = new Headers({ "content-type": "application/json" });
+  headers.set("x-prism-api-version", "1.0.0");
   if (requestId) headers.set("x-request-id", requestId);
   headers.set("x-error-code", code);
   const safeDetail = sanitizeExternalDetail(code, detail);
@@ -141,6 +143,7 @@ export interface ExternalHttpErrorShape {
 /** Serialize a domain error at the HTTP boundary with the same redaction as AppResponse errors. */
 export function toHttpErrorResponse(error: ExternalHttpErrorShape, parsed: ParsedHeaders, status = error.httpStatusHint): Response {
   const headers = new Headers({ "content-type": "application/json", "x-error-code": error.code });
+  headers.set("x-prism-api-version", "1.0.0");
   if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
   if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
   const detail = sanitizeExternalDetail(error.code, error.detail);
