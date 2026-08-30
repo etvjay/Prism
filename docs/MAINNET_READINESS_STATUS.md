@@ -4,7 +4,7 @@
 **As of:** 2026-08-30
 **Candidate:** `701fae1`
 
-## Summary for ecosystem and Starknet reviewers
+## Summary
 
 Prism's backend and release scaffolding are now substantially prepared for a controlled mainnet decision. Testnet remains the default operational environment, while mainnet is isolated behind an explicit fail-closed configuration and evidence gate.
 
