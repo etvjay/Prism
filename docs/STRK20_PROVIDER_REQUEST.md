@@ -33,6 +33,10 @@ This confirms endpoint reachability only. It does not prove WalletAccountV6 comp
    - Required account/session binding.
    - Whether note discovery includes OpenNoteDeposit results and maturity state.
 
+## Current wallet under test
+
+The bounded SN_SEPOLIA test is being run through the **Ready X** Wallet API provider. The provider response should therefore distinguish Ready Wallet registration/support from generic STRK20 or helper-route behavior.
+
 ## Wallet compatibility
 
 Please confirm:
