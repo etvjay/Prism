@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFixedWindowRateLimiter, rateLimitResponse, recordHttpEvent } from "../http-guards";
+import { clientRateLimitKey, createFixedWindowRateLimiter, rateLimitResponse, recordHttpEvent } from "../http-guards";
+import { signAppSession } from "../auth";
 import { PrismClient } from "../../sdk/client";
 import { validateMcpToolInput } from "../../sdk/mcp-boundary";
 
@@ -33,6 +34,20 @@ describe("API/SDK/MCP hardening", () => {
     recordHttpEvent({ audit, metric }, { event: "rejected", requestId: "r", route: "/v1/x", status: 429 });
     expect(audit).toHaveBeenCalledOnce();
     expect(metric).toHaveBeenCalledWith("http.rejected", 1, { status: "429", route: "/v1/x" });
+  });
+
+  it("does not let x-session-id or an untrusted forwarded header choose the bucket", () => {
+    delete process.env.PRISM_TRUST_PROXY;
+    const request = new Request("http://localhost", { headers: { "x-session-id": "attacker-chosen", "x-forwarded-for": "10.0.0.1" } });
+    expect(clientRateLimitKey(request)).toBe("anonymous");
+  });
+
+  it("keys authenticated requests by the verified principal, not the presented session id", () => {
+    process.env.PRISM_APP_SESSION_SECRET = "test-only-session-secret-32-bytes-long";
+    const token = signAppSession({ sid: "session-0001", sub: "verified-user", iat: 1, exp: 4102444800 }, process.env.PRISM_APP_SESSION_SECRET);
+    const request = new Request("http://localhost", { headers: { authorization: `Bearer ${token}`, "x-session-id": "forged" } });
+    expect(clientRateLimitKey(request)).toBe("principal:verified-user");
+    delete process.env.PRISM_APP_SESSION_SECRET;
   });
 
   it("rejects MCP secret/viewing-key inputs and requires exact pause bindings", () => {

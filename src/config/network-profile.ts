@@ -95,6 +95,7 @@ export const MAINNET_PROFILE: NetworkProfile = {
 const ADDRESS = /^0x[0-9a-f]{1,64}$/i;
 const EVM_ADDRESS = /^0x[0-9a-f]{40}$/i;
 const PLACEHOLDER = /<|>|placeholder|todo|tbd|example|changeme/i;
+const MAINNET_IMMUTABLE_CONTRACT_SET = ["SN_MAIN.registry", "BASE_MAINNET.registry", "BASE_MAINNET.helper", "BASE_MAINNET.oapp"] as const;
 
 function requireFigure(figure: ContractFigure, label: string, evm: boolean): void {
   if (!figure.address || PLACEHOLDER.test(figure.address) || !(evm ? EVM_ADDRESS : ADDRESS).test(figure.address)) throw new Error(`${label}.address missing or invalid`);
@@ -119,8 +120,12 @@ export function validateNetworkProfile(profile: NetworkProfile): NetworkProfile 
     requireFigure(profile.base.helper, "base.helper", true);
     requireFigure(profile.base.oapp, "base.oapp", true);
     if (profile.status !== "READY" || profile.isDefault || !profile.independentlyValidated || !profile.validationSource) throw new Error("mainnet is incomplete or not independently validated");
-    if (profile.immutableContractSet.length !== 4) throw new Error("immutable contract set incomplete");
+    if (profile.immutableContractSet.length !== MAINNET_IMMUTABLE_CONTRACT_SET.length || new Set(profile.immutableContractSet).size !== MAINNET_IMMUTABLE_CONTRACT_SET.length || MAINNET_IMMUTABLE_CONTRACT_SET.some((identity) => !profile.immutableContractSet.includes(identity))) throw new Error("mainnet immutable contract set must contain each exact identity once");
   }
   if (profile.immutableContractSet.length === 0) throw new Error("immutable contract set missing");
+  if (new Set(profile.immutableContractSet).size !== profile.immutableContractSet.length) throw new Error("immutable contract set must contain unique identities");
+  const figures = [profile.starknet.registry, profile.base.registry, profile.base.helper, profile.base.oapp];
+  const addresses = figures.map((figure) => figure.address).filter((address): address is string => Boolean(address));
+  if (new Set(addresses.map((address) => address.toLowerCase())).size !== addresses.length) throw new Error("contract addresses must be unique");
   return profile;
 }

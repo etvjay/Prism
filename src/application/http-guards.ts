@@ -1,4 +1,5 @@
 // Testable transport hardening: bounded request admission plus structured hooks.
+import { verifySignedAppSession } from "./auth";
 export interface AuditEvent { readonly event: string; readonly requestId: string | null; readonly route?: string; readonly subject?: string | null; readonly status?: number; readonly metadata?: Record<string, string | number | boolean | null>; }
 export interface HttpTelemetry { audit?(event: AuditEvent): void; metric?(name: string, value?: number, tags?: Record<string, string>): void; }
 export function recordHttpEvent(telemetry: HttpTelemetry | undefined, event: AuditEvent): void {
@@ -32,5 +33,20 @@ export function rateLimitResponse(requestId: string | null, decision: RateLimitD
 }
 
 export function clientRateLimitKey(req: Request): string {
-  return req.headers.get("x-session-id") ?? req.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim() ?? "anonymous";
+  // x-session-id is caller-controlled metadata and must never be an authority
+  // or the primary abuse-control identity. Prefer the verified signed subject.
+  const token = req.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? req.headers.get("x-prism-session-token");
+  if (token) {
+    try {
+      const session = verifySignedAppSession(token);
+      return `principal:${session.userId}`;
+    } catch { /* fall through to a safe, non-spoofable bucket */ }
+  }
+  // Forwarded identity is usable only when the deployment explicitly asserts
+  // that a trusted proxy strips/replaces these headers.
+  if (process.env.PRISM_TRUST_PROXY === "1") {
+    const proxyIdentity = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+    if (proxyIdentity) return `proxy:${proxyIdentity}`;
+  }
+  return "anonymous";
 }

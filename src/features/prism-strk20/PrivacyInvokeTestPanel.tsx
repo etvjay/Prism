@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { M5VesuRunner } from "./m5/runner";
+import { loadM5Operation } from "./m5/operation";
 import { M5_BLOCKED_BY_ENVIRONMENT_EVIDENCE } from "./m5/errors";
 import { STRK_SEPOLIA, VTOKEN_STRK_SEPOLIA, HELPER_ADDRESS_SEPOLIA, PRIVACY_POOL_SEPOLIA } from "./m5/constants";
 import { useSession } from "../wallet/session/SessionProvider";
@@ -36,7 +37,13 @@ export default function PrivacyInvokeTestPanel() {
   const { snapshot, getM5Provider } = useSession();
   const [amount, setAmount] = useState("1");
   const [running, setRunning] = useState(false);
+  const [submissionFenced, setSubmissionFenced] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
+
+  useEffect(() => {
+    const operation = loadM5Operation("privacy-invoke-ui-test");
+    setSubmissionFenced(Boolean(operation?.submissionAttempted && !operation.txHash));
+  }, []);
 
   const runTest = async () => {
     let inAmount: bigint;
@@ -49,13 +56,25 @@ export default function PrivacyInvokeTestPanel() {
       return;
     }
 
+    const persisted = loadM5Operation("privacy-invoke-ui-test");
+    if (persisted?.submissionAttempted && !persisted.txHash) {
+      setSubmissionFenced(true);
+      setStatus({ tone: "error", title: "Submission fence active", detail: "A prior wallet submission timed out ambiguously. Retry is disabled; reconcile the transaction before submitting again." });
+      return;
+    }
+
     setRunning(true);
     try {
       const provider = getM5Provider();
       const result = await new M5VesuRunner({ inAmount, operationId: "privacy-invoke-ui-test" }).run(provider);
       setStatus(privacyInvokeStatus(result));
     } catch {
-      setStatus({ tone: "error", title: "Runner stopped", detail: "The provider rejected or could not complete the bounded test. No receipt is claimed by this UI." });
+      const persisted = loadM5Operation("privacy-invoke-ui-test");
+      const fenced = Boolean(persisted?.submissionAttempted && !persisted.txHash);
+      setSubmissionFenced(fenced);
+      setStatus(fenced
+        ? { tone: "error", title: "Submission fence active", detail: "The wallet response was ambiguous. Retry is disabled until the transaction is reconciled." }
+        : { tone: "error", title: "Runner stopped", detail: "The provider rejected or could not complete the bounded test. No receipt is claimed by this UI." });
     } finally {
       setRunning(false);
     }
@@ -84,7 +103,7 @@ export default function PrivacyInvokeTestPanel() {
       <label className={styles.amountLabel} htmlFor="privacy-invoke-amount">STRK amount</label>
       <div className={styles.controls}>
         <input id="privacy-invoke-amount" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} />
-        <button disabled={running || !connected || !onSepolia} onClick={() => void runTest()} type="button">
+        <button disabled={running || submissionFenced || !connected || !onSepolia} onClick={() => void runTest()} type="button">
           {running ? "Running bounded test…" : "Run provider test"}
         </button>
       </div>

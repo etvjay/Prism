@@ -43,6 +43,9 @@ describe("network configuration profiles", () => {
     expect(() => validateNetworkProfile({ ...completeMainnet(), starknet: { ...completeMainnet().starknet, registry: { ...completeMainnet().starknet.registry, address: "0x<REGISTRY>" } } })).toThrow(/placeholder|address/i);
     expect(() => validateNetworkProfile({ ...completeMainnet(), base: { ...completeMainnet().base, chainId: 84532 } })).toThrow(/chain|network/i);
     expect(() => validateNetworkProfile({ ...completeMainnet(), immutableContractSet: [] })).toThrow(/immutable/i);
+    expect(() => validateNetworkProfile({ ...completeMainnet(), immutableContractSet: ["SN_MAIN.registry", "SN_MAIN.registry", "BASE_MAINNET.helper", "BASE_MAINNET.oapp"] })).toThrow(/immutable/i);
+    expect(() => validateNetworkProfile({ ...TESTNET_PROFILE, immutableContractSet: ["SN_SEPOLIA.registry", "SN_SEPOLIA.registry"] })).toThrow(/unique/i);
+    expect(() => validateNetworkProfile({ ...completeMainnet(), base: { ...completeMainnet().base, helper: { ...completeMainnet().base.helper, address: completeMainnet().base.registry.address } } })).toThrow(/unique/i);
   });
 
   it("does not mutate the STRK20 evidence artifact", () => {

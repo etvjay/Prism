@@ -57,7 +57,7 @@ import {
   validateVesuDepositObservation,
   type M5ReceiptObservation,
 } from "./validation";
-import { createM5Operation, markM5SubmissionStarted, markM5Submitted, recoverM5Operation, type M5Operation } from "./operation";
+import { createM5Operation, loadM5Operation, markM5SubmissionStarted, markM5Submitted, persistM5Operation, recoverM5Operation, type M5Operation } from "./operation";
 import { evaluateM5Maturity } from "./maturity";
 import { isShadowAccountObservationSupported, normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
 // ---------------------------------------------------------------------------
@@ -310,6 +310,7 @@ export class M5VesuRunner {
     if (cfg.quotedFee !== undefined && cfg.quotedFee !== null && (typeof cfg.quotedFee !== "bigint" || cfg.quotedFee < 0n)) {
       throw new M5Error(M5_ERROR_CODE.FEE_UNAVAILABLE, "quoted_fee_invalid");
     }
+    this.operation = loadM5Operation(this.cfg.operationId!);
   }
 
   // Main entry — provider-injected
@@ -537,6 +538,7 @@ export class M5VesuRunner {
       operation = createM5Operation(this.cfg.operationId!, Date.now());
       operation = markM5SubmissionStarted(operation, Date.now());
       this.operation = operation;
+      persistM5Operation(operation);
       try {
         const res = await provider.strk20InvokeTransaction(actions);
         assertViewingKeyFree(res, "submission_result");
@@ -545,6 +547,7 @@ export class M5VesuRunner {
         }
         operation = markM5Submitted(operation, res.transaction_hash, Date.now());
         this.operation = operation;
+        persistM5Operation(operation);
         txHash = operation.txHash as Hex;
         predicates.submissionObserved = true;
       } catch (e) {
@@ -641,6 +644,7 @@ export class M5VesuRunner {
         });
         operation = recovered.operation;
         this.operation = operation;
+        persistM5Operation(operation);
         // A reverted label without a block is not terminal chain evidence;
         // continue polling for a final receipt. Successful observations retain
         // the historical strict finality checks below.
@@ -662,6 +666,7 @@ export class M5VesuRunner {
       });
       operation = timedOut.operation;
       this.operation = operation;
+      persistM5Operation(operation);
       throw new M5Error(M5_ERROR_CODE.UNKNOWN_RECEIPT, `receipt not found for ${txHash} after ${timeout}ms`);
     }
     predicates.receiptObserved = true;
