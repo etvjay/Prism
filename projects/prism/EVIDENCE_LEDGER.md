@@ -119,7 +119,7 @@ For every final STRK20 submission transaction record:
 
 ```text
 network = SN_MAIN
-transaction hash
+transaction hash (exact 32-byte value; distinct from the other two)
 success status
 block
 STRK20 pool event
@@ -127,11 +127,13 @@ Prism contract involvement if contracts are declared
 build commit
 user/demo flow
 privacy property actually evidenced
-strk20.json inclusion
+independent provider/explorer read
+strk20.json inclusion only after separate authorization
 ```
 
-If `strk20.json.contracts` is non-empty, a final candidate does **not** pass until current hub-equivalent checks produce:
-
+The release packet must carry exactly three distinct final submission hashes. A repeated
+hash is one observation, not three submissions, even if the hub validator returns the same
+result. Record receipt and independent-read evidence before any ledger promotion.
 ```text
 ok   = true
 pool = true

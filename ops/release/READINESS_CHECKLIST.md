@@ -182,4 +182,36 @@ readback, and the existing M5/LayerZero/provider gates. Testnet ledger rows and
 
 ---
 
+## 10. Exact readiness matrix (this baseline)
+
+| Gate | Required evidence | Current | Ceiling |
+|---|---|---|---|
+| Software / validator | strict packet fields, exact 32-byte values, three distinct hashes, environment contract, self-test | **PASS** | X2 tooling |
+| Owner decision | accepted mainnet decision mirrored in packet and decision ledger | **OPEN** | not promotable |
+| Signer / funding | protected references plus independently read funding receipts for Starknet, Base, wallet, prover | **OPEN** | not promotable |
+| Contract figures | exact address/class hash/block/calldata for every required contract | **OPEN (null in manifest)** | not promotable |
+| Deployment receipts | accepted receipt for every contract and final operation | **OPEN** | not promotable |
+| Independent reads | second provider/explorer read for every receipt and contract identity | **OPEN** | not promotable |
+| Privacy route | wallet authorization, prover proof, pool/helper action, note readback, conservation | **OPEN / external** | not promotable |
+| Final submissions | exactly three **distinct** SN_MAIN hashes; each `ok=true,pool=true,mine=true` | **OPEN** | not promotable |
+| Artifact safety | no deployment/broadcast, no secrets, no `strk20.json` mutation | **PASS** | — |
+| **Overall** | all rows above plus authorized deployment | **NOT MAINNET_READY** | X2 preparation |
+
+The validator is intentionally stricter than the documentation: shortened display hashes,
+reused submission hashes, missing independent reads, missing wallet/prover receipts, or a
+missing environment contract fail closed. No figure is supplied here; the first valid
+packet may substitute only independently observed values.
+
+## 11. External gates still required
+
+1. Owner accepts and mirrors the mainnet release decision and exact scope.
+2. Operator supplies protected signer/funding references and independently reads public funding receipts.
+3. Operator freezes the contract set, ABI/schema/compiler versions, and exact mainnet figures.
+4. Authorized operator performs dry-run then live SN_MAIN/Base Mainnet deployment; no broadcast is authorized by this repository change.
+5. Independent providers re-read every deployment/operation receipt, address, class hash, block, and status.
+6. Wallet/prover provider completes the real privacy path, including accepted receipt and independent readback.
+7. Three distinct final submissions pass current hub validation (`ok`, `pool`, `mine`) and are independently rechecked.
+8. Audit/owner review promotes only the matching evidence-ledger rows; `strk20.json` remains untouched until separately authorized.
+9. Existing M5, backend runtime, and LayerZero bilateral gates close independently; this packet does not waive them.
+
 *Governing principle: Research → Experiment → Build → Evidence. No ledger row moves without observed results.*
