@@ -65,7 +65,9 @@ import { isConcreteStarknetSubmitAdapter } from "./ports";
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 import type { VerificationSourceProvider } from "../features/prism-pause/domain/policy-engine";
 import type { LedgerStatusPort, EventIndexerPort } from "../features/prism-operations/domain/ports";
+import { Pool } from "pg";
 import { RpcProvider } from "starknet";
+import { getRuntimeProfileConfig, postgresPoolOptions, type RuntimeProfileConfig } from "./runtime-profile";
 
 export type SubmitPortMode = "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
 export type FactoryRuntimeMode = "test" | "development" | "production";
@@ -263,9 +265,34 @@ export function assertChainTouchingConfiguredForFactory(
 // ---------------------------------------------------------------------------
 
 export function getPostgresUrl(): string | null {
-  const raw = (process.env.PRISM_POSTGRES_TEST_URL ?? process.env.PRISM_POSTGRES_URL ?? "").trim();
-  if (!raw) return null;
-  return raw;
+  try {
+    return getRuntimeProfileConfig().databaseUrl;
+  } catch (error) {
+    // Preserve the legacy predicate's contract (invalid URL => false) while
+    // startup/factory paths still receive the fail-closed typed error.
+    if ((error as { code?: string }).code === "database_url_invalid") {
+      return (process.env.PRISM_POSTGRES_TESTNET_URL ?? process.env.PRISM_POSTGRES_TEST_URL ?? process.env.PRISM_POSTGRES_URL ?? "").trim() || null;
+    }
+    if ((error as { code?: string }).code === "profile_required") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** Exposed for startup probes and tests; contains no credential redaction risk. */
+export function getPostgresRuntimeConfig(): RuntimeProfileConfig {
+  return getRuntimeProfileConfig();
+}
+
+function getFactoryRuntimeConfig(): RuntimeProfileConfig {
+  try {
+    return getRuntimeProfileConfig();
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    const detail = code === "database_url_invalid" ? "invalid_postgres_url_format" : code === "profile_required" || code === "database_url_missing" ? "postgres_url_missing_in_production" : "invalid_runtime_profile_config";
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, detail);
+  }
 }
 
 export function isPostgresUrlValid(url: string): boolean {
@@ -794,11 +821,22 @@ function createMemoryFactory(
   };
 }
 
+async function ensurePostgresSchema(url: string, config: RuntimeProfileConfig): Promise<void> {
+  const bootstrap = new Pool({ connectionString: url });
+  try {
+    // schema is constrained to prism_testnet/prism_mainnet by the config parser.
+    await bootstrap.query(`CREATE SCHEMA IF NOT EXISTS "${config.schema}"`);
+  } finally {
+    await bootstrap.end().catch(() => undefined);
+  }
+}
+
 async function createPostgresFactory(
   url: string,
   clock = fixedClock(Math.floor(Date.now() / 1000)),
   overrides?: FactoryStarknetOverrides,
   runtimeMode: FactoryRuntimeMode = getRuntimeMode(),
+  profileConfig: RuntimeProfileConfig = getRuntimeProfileConfig(),
 ): Promise<AppFactory> {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
@@ -809,14 +847,18 @@ async function createPostgresFactory(
   // Validate format synchronously before attempting network
   assertPostgresUrlOrThrow(url);
 
-  // Create PG-backed stores. Each does migrate() fail-closed.
-  const ownershipStore = new PostgresOwnershipProofStore({ connectionString: url });
-  const operationStore = new PostgresOperationStore({ connectionString: url });
-  const pauseStore = new PostgresPauseStore({ connectionString: url });
-  const prismEventsStore = new PostgresPrismEventsStore({ connectionString: url });
-  const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore({ connectionString: url });
-  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore({ connectionString: url });
-  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new PostgresResolutionSnapshotStore({ connectionString: url });
+  // Create the profile namespace before setting search_path. Every adapter then
+  // migrates and reads only inside this network's schema.
+  await ensurePostgresSchema(url, profileConfig);
+  const poolOptions = postgresPoolOptions(profileConfig);
+  const pgOptions = { connectionString: url, ...poolOptions };
+  const ownershipStore = new PostgresOwnershipProofStore(pgOptions);
+  const operationStore = new PostgresOperationStore(pgOptions);
+  const pauseStore = new PostgresPauseStore(pgOptions);
+  const prismEventsStore = new PostgresPrismEventsStore(pgOptions);
+  const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore(pgOptions);
+  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore(pgOptions);
+  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new PostgresResolutionSnapshotStore(pgOptions);
   const privateBindingProtection = overrides?.privateBindingProtection ?? new UnconfiguredPrivateBindingProtection();
   const bindingOwnerAuthorization = overrides?.bindingOwnerAuthorization;
 
@@ -1056,7 +1098,8 @@ let singletonPromise: Promise<AppFactory> | null = null;
 let singletonError: Error | null = null;
 
 async function createSingletonFactory(): Promise<AppFactory> {
-  const url = getPostgresUrl();
+  const profileConfig = getFactoryRuntimeConfig();
+  const url = profileConfig.databaseUrl;
   const runtimeMode = getRuntimeMode();
 
   if (url !== null) {
@@ -1065,7 +1108,7 @@ async function createSingletonFactory(): Promise<AppFactory> {
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_postgres_url_format");
     }
     try {
-      return await createPostgresFactory(url, fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode);
+      return await createPostgresFactory(url, fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode, profileConfig);
     } catch (e) {
       if (e instanceof AppError) throw e;
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_init_failed:${(e as Error).message?.slice(0, 80) ?? "unknown"}`);
