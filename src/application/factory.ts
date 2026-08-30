@@ -461,8 +461,18 @@ function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["star
   return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
 }
 
-export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
-  const cfg = assertStarknetEnvOrThrow();
+export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides, options?: { ignoreIncompleteEnvironment?: boolean }): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
+  // Isolated test factories must not inherit a partially configured shell
+  // environment (for example an RPC URL without a registry address). A
+  // complete explicit configuration still takes the real read path; a
+  // partial ambient configuration is ignored only when the caller opts in.
+  let cfg: ReturnType<typeof assertStarknetEnvOrThrow>;
+  try {
+    cfg = assertStarknetEnvOrThrow();
+  } catch (error) {
+    if (options?.ignoreIncompleteEnvironment && (error as Error).message.includes("starknet_read_config_incomplete")) return null;
+    throw error;
+  }
   if (!cfg) return null;
   // Share one read-only provider across callContract and getEvents — no dead shim.
   const provider = overrides?.starknetReadProvider ?? createSharedRpcProvider(cfg.rpcUrl);
@@ -620,7 +630,7 @@ function createMemoryFactory(
   let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null = null;
   let starknetError: Error | null = null;
   try {
-    starknetPorts = createStarknetReadPorts(overrides);
+    starknetPorts = createStarknetReadPorts(overrides, { ignoreIncompleteEnvironment: runtimeMode === "test" });
   } catch (e) {
     starknetError = e as Error;
   }

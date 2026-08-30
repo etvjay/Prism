@@ -184,6 +184,15 @@ describe("Factory — Postgres environment gating", () => {
     });
   });
 
+  it("isolated test runtime ignores a partial ambient Starknet configuration", async () => {
+    await withEnv({ NODE_ENV: "test", PRISM_RUNTIME_MODE: "test", STARKNET_RPC_URL: "https://rpc.example.invalid", STARKNET_REGISTRY_ADDRESS: undefined, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
+      const iso = createIsolatedFactory(1_789_000_100);
+      expect(iso.isPostgres).toBe(false);
+      expect(iso.isStarknetConfigured).toBe(false);
+      await iso.shutdown();
+    });
+  });
+
   it("resetFactory clears singleton so next call re-evaluates env", async () => {
     await withEnv({ NODE_ENV: "test", PRISM_POSTGRES_TEST_URL: undefined, STARKNET_REGISTRY_VERSION: "v1" }, async () => {
       const f1 = await getAppFactory();
