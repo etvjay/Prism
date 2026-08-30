@@ -7,7 +7,7 @@ import { Pool } from "pg";
 import { PostgresPauseStore } from "../adapters/postgres-pause-store";
 import { createExecutionPlan } from "../domain/execution-plan";
 import { createIntent } from "../domain/intent";
-import { createPause, toVerifying } from "../domain/pause";
+import { createPause, toVerifying, computeApprovalScopeHash } from "../domain/pause";
 import { PauseService } from "../application/pause-service";
 import { testPauseAuthorityResolver } from "./test-authority";
 import type { PauseDecision } from "../ports/pause-store";
@@ -84,7 +84,9 @@ function makeDecision(input: {
     actor: "user",
     policyVersion: "v1",
     planHash: input.planHash as PauseDecision["planHash"],
-    approvalScopeHash: null,
+    approvalScopeHash: (input.kind === "APPROVE" || input.kind === "CONFIRM" || input.kind === "RELEASE")
+      ? computeApprovalScopeHash(input.pauseId, input.planHash as PauseDecision["planHash"], "v1")
+      : null,
     reasonCodes: ["test"],
     createdAt: input.createdAt ?? 1_789_000_010,
     expiresAt: null,
