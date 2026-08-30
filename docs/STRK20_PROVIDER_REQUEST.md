@@ -7,9 +7,17 @@ Prism is integrating the provider-injected WalletAccountV6 STRK20 route. Please 
 - Starknet Sepolia (`SN_SEPOLIA`)
 - Starknet Mainnet (`SN_MAIN`)
 
-## Required endpoints
+## Known supplied endpoint
 
-For each network, please provide the exact HTTPS endpoint and whether it is public, authenticated, wallet-session-bound, or IP-restricted:
+The provider supplied this Sepolia proving service URL:
+
+```text
+PROVING_SERVICE_URL=https://transaction-prover.alpha-sepolia.sw-dev.io
+health: /health → HTTP 200, {"status":"ok"}
+```
+
+This confirms endpoint reachability only. It does not prove WalletAccountV6 compatibility, proof generation, registration, transaction submission, or onchain success. The Sepolia `INDEXER_URL` and both Mainnet service URLs remain unconfirmed.
+
 
 1. `PROVING_SERVICE_URL`
    - Proof-generation endpoint used by WalletAccountV6/STRK20.
