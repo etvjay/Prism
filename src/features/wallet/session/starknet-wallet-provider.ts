@@ -3,6 +3,8 @@ import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-walle
 import { constants, WalletAccountV6, walletV6 } from "starknet";
 import type { ExpectedWalletEnvironment } from "../../prism-strk20/domain/wallet-capability";
 import type { StarknetWalletSessionProvider } from "./starknet-wallet-adapter";
+import { WalletV6M5Adapter, type WalletAccountV6Like } from "../../prism-strk20/m5/wallet-adapter";
+import type { M5Provider } from "../../prism-strk20/m5/ports";
 
 export interface DiscoveredStarknetWallet {
   readonly id: string;
@@ -20,6 +22,7 @@ export interface StarknetWalletBoundary {
   readonly provider: StarknetWalletSessionProvider;
   subscribe(listener: (change: unknown) => void): () => void;
   switchNetwork(): Promise<boolean>;
+  getM5Provider(): M5Provider | null;
 }
 
 type WalletV6Provider = Parameters<typeof WalletAccountV6.connect>[1];
@@ -114,5 +117,16 @@ export function createStarknetWalletBoundary(
       walletProvider,
       expectedChainId(expectedEnvironment) as Parameters<typeof walletV6.switchStarknetChain>[1],
     ),
+    getM5Provider: () => account
+      ? new WalletV6M5Adapter({
+          wallet: account as unknown as WalletAccountV6Like,
+          capabilityProvider: {
+            supportedWalletApi: async () => walletV6.supportedWalletApi(walletProvider),
+            supportedSpecs: async () => walletV6.supportedSpecs(walletProvider),
+            requestChainId: async () => walletV6.requestChainId(walletProvider),
+          },
+          walletFeatures: wallet,
+        })
+      : null,
   };
 }

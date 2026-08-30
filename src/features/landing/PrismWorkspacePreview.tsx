@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import WalletConnectionPanel from "../wallet/WalletConnectionPanel";
 import { SessionProvider } from "../wallet/session/SessionProvider";
+import PrivacyInvokeTestPanel from "../prism-strk20/PrivacyInvokeTestPanel";
 import styles from "./PrismWorkspacePreview.module.css";
 
 type WorkspaceTab = "home" | "activity" | "connections" | "profile";
@@ -162,6 +163,7 @@ export default function PrismWorkspacePreview() {
               {sessionDemo ? (
                 <SessionProvider>
                   <WalletConnectionPanel />
+                  <PrivacyInvokeTestPanel />
                 </SessionProvider>
               ) : null}
             </div>

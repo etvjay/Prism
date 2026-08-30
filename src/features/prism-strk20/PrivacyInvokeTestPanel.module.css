@@ -1,0 +1,21 @@
+.panel { margin-top: 24px; padding: 24px; border: 1px solid #d8dbe2; border-radius: 18px; background: #fbfcfe; color: #191a1e; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.eyebrow { margin: 0 0 8px; color: #70747d; font: 700 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+.header h3 { margin: 0; font-size: 20px; font-weight: 500; letter-spacing: -.03em; }
+.badge { flex: 0 0 auto; padding: 7px 10px; border: 1px solid #e0cda5; border-radius: 999px; color: #77561f; background: #fff9eb; font-size: 11px; }
+.intro { max-width: 720px; margin: 14px 0; color: #5f626b; font-size: 13px; line-height: 1.55; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 16px 0; color: #6a6d76; font-size: 12px; }
+.facts b { color: #25262b; font-weight: 600; }
+.amountLabel { display: block; margin-bottom: 7px; color: #6a6d76; font-size: 12px; }
+.controls { display: flex; gap: 10px; }
+.controls input { width: 160px; padding: 11px 12px; border: 1px solid #cfd2d9; border-radius: 10px; color: #191a1e; background: white; font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.controls button { padding: 11px 16px; border: 0; border-radius: 10px; color: white; background: #222327; cursor: pointer; font: 600 13px inherit; }
+.controls button:disabled { cursor: not-allowed; opacity: .42; }
+.hint, .empty { margin: 12px 0 0; color: #858891; font-size: 11px; line-height: 1.45; }
+.status { display: grid; gap: 5px; margin-top: 16px; padding: 13px 14px; border-radius: 10px; font-size: 12px; line-height: 1.4; }
+.status span { color: #5e626b; }
+.status--blocked { background: #fff4e7; border: 1px solid #ecd2a9; }
+.status--ready { background: #f1f3f7; border: 1px solid #d7dbe4; }
+.status--observed { background: #edf8f0; border: 1px solid #b9ddc0; }
+.status--error { background: #fff0f0; border: 1px solid #e6bcbc; }
+@media (max-width: 620px) { .header { display: grid; } .controls { flex-direction: column; } .controls input { width: 100%; } }
