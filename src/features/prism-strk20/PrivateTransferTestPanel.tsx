@@ -55,6 +55,40 @@ export default function PrivateTransferTestPanel() {
     }
   };
 
+  const runDeposit = async () => {
+    let value: bigint;
+    try {
+      if (!/^\d+(\.\d{1,18})?$/.test(amount) || Number(amount) <= 0) throw new Error("invalid_amount");
+      const [whole, fraction = ""] = amount.split(".");
+      value = BigInt(whole) * 10n ** 18n + BigInt(fraction.padEnd(18, "0"));
+      if (value <= 0n) throw new Error("invalid_amount");
+    } catch {
+      setStatus({ tone: "error", title: "Invalid amount", detail: "Enter a positive STRK amount with up to 18 decimal places." });
+      return;
+    }
+
+    setRunning(true);
+    let stage: "fee observation" | "wallet submission" = "fee observation";
+    try {
+      const provider = getM5Provider();
+      if (!provider) throw new Error("wallet_provider_unavailable");
+      await provider.getFeeAmount();
+      stage = "wallet submission";
+      const result = await provider.strk20InvokeTransaction([{
+        type: "deposit",
+        token: STRK_SEPOLIA,
+        amount: `0x${value.toString(16)}`,
+      }]);
+      const txHash = result.transaction_hash;
+      if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]+$/.test(txHash)) throw new Error("malformed_transaction_hash");
+      setStatus({ tone: "ready", title: "Shield submitted by Ready X", detail: `Transaction ${txHash.slice(0, 14)}… returned. Wait for private-state availability before transferring; no completion is claimed.` });
+    } catch (error) {
+      setStatus({ tone: "error", title: "Shield stopped", detail: safeFailure(error, stage) });
+    } finally {
+      setRunning(false);
+    }
+  };
+
   const connected = snapshot.session.accountAddress !== null;
   const onSepolia = snapshot.session.environment === "SN_SEPOLIA" || snapshot.session.network.chainId === "SN_SEPOLIA";
 
@@ -78,6 +112,9 @@ export default function PrivateTransferTestPanel() {
       <label className={styles.amountLabel} htmlFor="private-transfer-amount">STRK amount</label>
       <div className={styles.controls}>
         <input id="private-transfer-amount" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} />
+        <button disabled={running || !connected || !onSepolia} onClick={() => void runDeposit()} type="button">
+          {running ? "Running shield…" : "Shield / deposit first"}
+        </button>
         <button disabled={running || !connected || !onSepolia} onClick={() => void runTest()} type="button">
           {running ? "Running private transfer…" : "Run self-transfer"}
         </button>
