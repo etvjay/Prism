@@ -65,9 +65,26 @@ environments:
       network: SN_MAIN
       chain_id: SN_MAIN
       canonical_pool: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a"
+      # Every value below is intentionally null until independently verified.
+      # Null/placeholder values are not runnable configuration.
+      registry:
+        address: null
+        class_hash: null
+        deployment_block: null
+        constructor_parameters: null
+        abi_version: null
+        schema_version: null
     base:
       network: Base Mainnet
       chain_id: 8453
+      registry: { address: null, class_hash: null, deployment_block: null, constructor_parameters: null, abi_version: null, schema_version: null }
+      helper: { address: null, class_hash: null, deployment_block: null, constructor_parameters: null, abi_version: null, schema_version: null }
+      oapp: { address: null, class_hash: null, deployment_block: null, constructor_parameters: null, abi_version: null, schema_version: null }
+    abi_version: null
+    schema_version: null
+    immutable_contract_set: []
+    network_identity: SN_MAIN+BASE_MAINNET
+    independently_validated: false
     warnings:
       - "Mainnet evidence uses real value; generate preparatory hashes on testnet first."
       - "Mainnet envelope promotion requires X maturity independent re-read (see evidence envelope)."

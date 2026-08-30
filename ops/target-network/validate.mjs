@@ -58,6 +58,9 @@ const checks = [
   { needle: "SN_MAIN", passMsg: "mainnet SN_MAIN present (release-gated)", failMsg: "mainnet SN_MAIN missing" },
   { needle: "chain_id: 8453", passMsg: "mainnet Base chain_id 8453 present", failMsg: "mainnet Base chain_id 8453 missing" },
   { needle: "RELEASE_GATED_PROPOSED", passMsg: "mainnet status is RELEASE_GATED_PROPOSED", failMsg: "mainnet status is not RELEASE_GATED_PROPOSED" },
+  { needle: "network_identity: SN_MAIN+BASE_MAINNET", passMsg: "mainnet network identity is explicit", failMsg: "mainnet network identity missing" },
+  { needle: "immutable_contract_set: []", passMsg: "mainnet immutable contract set is explicitly unfilled", failMsg: "mainnet immutable contract set missing" },
+  { needle: "independently_validated: false", passMsg: "mainnet independent-validation gate is closed", failMsg: "mainnet independent-validation gate missing" },
 ];
 
 let ok = true;
