@@ -29,6 +29,11 @@ describe("M4 Wallet Capability — X2 pure detection via supportedWalletApi/supp
     expect(r.environment).toBe("SN_MAIN");
   });
 
+  it("classifies known hex-encoded wallet network identifiers", () => {
+    expect(classifyWalletEnvironment("0x534e5f5345504f4c4941", { mainnet: "SN_MAIN", sepolia: "SN_SEPOLIA" })).toBe("SN_SEPOLIA");
+    expect(classifyWalletEnvironment("0x534e5f4d41494e", { mainnet: "SN_MAIN", sepolia: "SN_SEPOLIA" })).toBe("SN_MAIN");
+  });
+
   it("classifies UNKNOWN on unrecognized chain", () => {
     const env = classifyWalletEnvironment("0x123", { mainnet: "0x534E5f4d41494e", sepolia: "0x534e5f5345504f4c4941" });
     expect(env).toBe("UNKNOWN");
