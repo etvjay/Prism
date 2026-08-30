@@ -39,11 +39,25 @@ single-lookup parsing artifact.
 
 ## SN -> Base observation
 
-The same official testnet Scan endpoints returned HTTP 404 for the supplied
-source tx and GUID. Therefore no current Scan lifecycle record, DVN status,
-committer/sealer status, destination status, or official execution envelope
-is available for this direction. The prior corrected-packet evidence remains
-source/config evidence only and is not promoted to delivery evidence.
+The direct official testnet Scan lookups returned HTTP 404 for the supplied
+source tx and GUID. A read-only fallback through the documented OApp and
+pathway endpoints did find a related indexed record, but it is not the same
+literal packet identity: the API record uses source tx
+`0x4037219fe841d333f3b2093c136b0a3ca3fc40efca84739b8e3f6c605420405` (63 hex
+digits after `0x`, versus the supplied 64-digit value) and GUID
+`0x320b2ae7a6cfcdd2f27df21f38457583a8fcc87cfe9b586fe5dad521adf933e3`, not
+the supplied GUID. Per identifier-preservation rules these values are not
+silently normalized or substituted for the supplied identity.
+
+The fallback record is nevertheless useful diagnostic evidence: it reports
+`source=WAITING`, required DVN `WAITING`, `verification.sealer=WAITING`,
+`destination=WAITING`, overall `BLOCKED`, and message `Destination OApp not
+found`. Its pathway is `40500 -> 40245`, and its config is flagged `error=true`.
+Thus the official read-only API exposes a configuration/registration blocker
+for the indexed record, but does not establish lifecycle or execution for the
+supplied packet identity. No official execution envelope is exposed. The
+prior corrected-packet evidence remains source/config evidence only and is not
+promoted to delivery evidence.
 
 ## Official infrastructure and route support
 
@@ -121,6 +135,43 @@ and destination is `WAITING`. Since every X3 field is not observed in either
 direction, the exact fail-closed verdict remains:
 
 `LZ_BILATERAL_BLOCKED_EXACTLY`
+
+## Official alternative and support-path determination
+
+A fresh read of the official testnet Scan API at `2026-08-30T11:52:12Z`
+reproduced the same independent lookup results: SN -> Base returned HTTP 404
+for both identifiers; Base -> SN returned HTTP 200 with one record for both
+the transaction-hash and GUID paths. The Base -> SN record reported
+`created=2026-08-30T08:29:00.000Z` and `updated=2026-08-30T09:05:38.000Z`,
+with `source=SUCCEEDED`, DVN `SUCCEEDED`, sealer `WAITING`, destination
+`WAITING`, and overall `INFLIGHT` / `Ready for committer to commit
+verification`. No destination transaction or execution envelope was present.
+
+The official API documentation defines `INFLIGHT` as waiting for source
+confirmation, verification, or destination execution; `verification.sealer`
+`WAITING` as waiting for verifications to be committed; and destination
+`WAITING` as waiting for execution. The official debugging guide says that a
+Committer submits the verification-commit transaction, and documents manual
+`lzReceive`/Scan execution only for the later pending-execution stage. That is
+a state-changing execution alternative and is expressly outside this lane; it
+is not currently exposed as an executable envelope for this packet anyway.
+No `PAYLOAD_STORED`, `FAILED`, failed transaction, retry parameters, or
+Scan execute action was returned for Base -> SN. The testnet OpenAPI document
+was also read directly at `/v1/openapi`: it exposes GET-only message lookup
+routes (`latest`, `pathway`, `tx`, `status`, `month`, `oapp`, `guid`, and
+`wallet`) and no execute, commit, sealer, or envelope-submission route. The
+same read-only probe found that the direct SN -> Base `tx` and `guid` routes
+return HTTP 404, while the OApp/pathway fallback returns the distinct blocked
+record described above.
+
+The official community support page provides a valid escalation route through
+LayerZero Discord for debugging/troubleshooting and GitHub issues for
+in-depth considerations. No authenticated support ticket, committer control
+surface, or public permissionless API that causes the missing commit was
+found. The docs therefore support escalation, not read-only closure. The
+support handoff should include only the public tx hashes, GUIDs, EIDs,
+OApp addresses, exact statuses/timestamps, and the two HTTP 404 results above.
+No resend or manual execution was attempted.
 
 ## Support handoff request
 
