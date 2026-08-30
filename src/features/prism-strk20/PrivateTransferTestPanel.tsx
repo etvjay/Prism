@@ -7,10 +7,10 @@ import styles from "./PrivacyInvokeTestPanel.module.css";
 
 type Status = { tone: "blocked" | "ready" | "observed" | "error"; title: string; detail: string };
 
-function safeFailure(error: unknown): string {
+function safeFailure(error: unknown, stage: "fee observation" | "wallet submission"): string {
   const code = (error as { code?: unknown } | null)?.code;
-  if (typeof code === "string" && /^STRK20[-_A-Z0-9]+$/.test(code)) return `Provider stopped at ${code}. No receipt is claimed.`;
-  return "The wallet/provider did not complete the private transfer. No receipt is claimed.";
+  if (typeof code === "string" && /^STRK20[-_A-Z0-9]+$/.test(code)) return `Provider stopped during ${stage} at ${code}. No receipt is claimed.`;
+  return `The wallet/provider stopped during ${stage}. No transaction hash or receipt is claimed.`;
 }
 
 export default function PrivateTransferTestPanel() {
@@ -32,11 +32,13 @@ export default function PrivateTransferTestPanel() {
     }
 
     setRunning(true);
+    let stage: "fee observation" | "wallet submission" = "fee observation";
     try {
       const provider = getM5Provider();
       if (!provider) throw new Error("wallet_provider_unavailable");
       const recipient = await provider.getAddress();
       await provider.getFeeAmount();
+      stage = "wallet submission";
       const result = await provider.strk20InvokeTransaction([{
         type: "transfer",
         token: STRK_SEPOLIA,
@@ -47,7 +49,7 @@ export default function PrivateTransferTestPanel() {
       if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]+$/.test(txHash)) throw new Error("malformed_transaction_hash");
       setStatus({ tone: "ready", title: "Submitted by Ready X", detail: `Transaction ${txHash.slice(0, 14)}… returned. Receipt readback is pending; no completion is claimed.` });
     } catch (error) {
-      setStatus({ tone: "error", title: "Private transfer stopped", detail: safeFailure(error) });
+      setStatus({ tone: "error", title: "Private transfer stopped", detail: safeFailure(error, stage) });
     } finally {
       setRunning(false);
     }
