@@ -1,9 +1,10 @@
 import { createStore, type Store } from "@starknet-io/get-starknet-discovery";
 import type { WalletWithStarknetFeatures } from "@starknet-io/get-starknet-wallet-standard/features";
-import { constants, WalletAccountV6, walletV6 } from "starknet";
+import { constants, RpcProvider, WalletAccountV6, walletV6 } from "starknet";
 import type { ExpectedWalletEnvironment } from "../../prism-strk20/domain/wallet-capability";
 import type { StarknetWalletSessionProvider } from "./starknet-wallet-adapter";
 import { WalletV6M5Adapter, type WalletAccountV6Like } from "../../prism-strk20/m5/wallet-adapter";
+import { PRIVACY_POOL_SEPOLIA } from "../../prism-strk20/m5/constants";
 import type { M5Provider } from "../../prism-strk20/m5/ports";
 
 export interface DiscoveredStarknetWallet {
@@ -126,6 +127,30 @@ export function createStarknetWalletBoundary(
             requestChainId: async () => walletV6.requestChainId(walletProvider),
           },
           walletFeatures: wallet,
+          // Fee observation is a public read and must not depend on an
+          // optional wallet-provider method. The wallet still owns all
+          // authorization, proving, notes, and transaction submission.
+          feeReader: rpcUrl
+            ? {
+                getFeeAmount: async () => {
+                  const rpc = new RpcProvider({ nodeUrl: rpcUrl });
+                  const result = await rpc.callContract({
+                    contractAddress: PRIVACY_POOL_SEPOLIA,
+                    entrypoint: "get_fee_amount",
+                    calldata: [],
+                  });
+                  if (!Array.isArray(result) || result.length < 1 || result.length > 2 || !result.every((value) => typeof value === "string")) {
+                    throw new Error("malformed_pool_fee_response");
+                  }
+                  const low = BigInt(result[0]);
+                  const high = result.length === 2 ? BigInt(result[1]) : 0n;
+                  if (low < 0n || high < 0n || low >= (1n << 128n) || high >= (1n << 128n)) {
+                    throw new Error("invalid_pool_fee_response");
+                  }
+                  return { fee: low + (high << 128n), blockNumber: null };
+                },
+              }
+            : undefined,
         })
       : null,
   };
