@@ -6,6 +6,9 @@ import type { M5Provider, Strk20Action, Strk20CallAndProof, M5TransactionObserva
 import type { Hex } from "../domain/receipt";
 import { assertNoViewingKey } from "../domain/privacy-guard";
 import { normalizeShadowAccountObservation, type ShadowAccountObservation } from "../domain/shadow-account";
+import { PRIVACY_POOL_SEPOLIA } from "./constants";
+
+const GET_FEE_AMOUNT_ENTRYPOINT = "get_fee_amount";
 
 // Minimal WalletAccountV6 shape we depend on — matches starknet 10.4.0 WalletAccountV6
 export interface WalletAccountV6Like {
@@ -87,8 +90,24 @@ export class WalletV6M5Adapter implements M5Provider {
   async getFeeAmount(): Promise<{ fee: bigint; blockNumber: number | null }> {
     if (this.deps.feeReader) return this.deps.feeReader.getFeeAmount();
     if (this.deps.wallet.getFeeAmount) return this.deps.wallet.getFeeAmount();
-    // Fallback: read from pool via RPC if available — pool get_fee_amount is view
-    // For now throw unavailable so runner surfaces FEE_UNAVAILABLE distinctly
+    const callContract = this.deps.wallet.provider.callContract;
+    if (callContract) {
+      const result = await callContract({
+        contractAddress: PRIVACY_POOL_SEPOLIA,
+        entrypoint: GET_FEE_AMOUNT_ENTRYPOINT,
+        calldata: [],
+      });
+      if (!Array.isArray(result) || result.length < 1 || result.length > 2 || !result.every((value) => typeof value === "string")) {
+        throw new Error("FEE_UNAVAILABLE: malformed pool fee response");
+      }
+      const low = BigInt(result[0]);
+      const high = result.length === 2 ? BigInt(result[1]) : 0n;
+      if (low < 0n || high < 0n || high >= (1n << 128n) || low >= (1n << 128n)) {
+        throw new Error("FEE_UNAVAILABLE: invalid pool fee response");
+      }
+      return { fee: low + (high << 128n), blockNumber: null };
+    }
+    // No wallet fee method or RPC call surface is available.
     throw new Error("FEE_UNAVAILABLE: no fee reader configured");
   }
   async strk20PrepareInvoke(actions: Strk20Action[], simulate: boolean): Promise<Strk20CallAndProof> {
