@@ -33,6 +33,15 @@ export function privacyInvokeStatus(result: unknown): Status {
   return { tone: "ready", title: "Runner ready, live closure not observed", detail: "The runner returned without an independently observed terminal receipt." };
 }
 
+function safeRunnerFailure(error: unknown): string {
+  if (!error || typeof error !== "object") return "The provider returned an unclassified failure.";
+  const value = error as { code?: unknown };
+  if (typeof value.code === "string" && /^M5-\d{3}$/.test(value.code)) {
+    return `Provider stopped at ${value.code}. No receipt is claimed; check the wallet/provider state before retrying.`;
+  }
+  return "The provider returned an unclassified failure. No receipt is claimed; check the wallet/provider state before retrying.";
+}
+
 export default function PrivacyInvokeTestPanel() {
   const { snapshot, getM5Provider } = useSession();
   const [amount, setAmount] = useState("1");
@@ -68,13 +77,13 @@ export default function PrivacyInvokeTestPanel() {
       const provider = getM5Provider();
       const result = await new M5VesuRunner({ inAmount, operationId: "privacy-invoke-ui-test" }).run(provider);
       setStatus(privacyInvokeStatus(result));
-    } catch {
+    } catch (error) {
       const persisted = loadM5Operation("privacy-invoke-ui-test");
       const fenced = Boolean(persisted?.submissionAttempted && !persisted.txHash);
       setSubmissionFenced(fenced);
       setStatus(fenced
         ? { tone: "error", title: "Submission fence active", detail: "The wallet response was ambiguous. Retry is disabled until the transaction is reconciled." }
-        : { tone: "error", title: "Runner stopped", detail: "The provider rejected or could not complete the bounded test. No receipt is claimed by this UI." });
+        : { tone: "error", title: "Runner stopped", detail: safeRunnerFailure(error) });
     } finally {
       setRunning(false);
     }
