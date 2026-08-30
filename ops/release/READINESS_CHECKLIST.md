@@ -175,10 +175,13 @@ independent review and the LayerZero bilateral blocker remains unchanged.
 
 This repository contains no mainnet figures or receipts. Remaining gates are
 owner acceptance of the mainnet release/manifest, frozen contract set and
-configuration, funded signer/wallet/prover evidence, SN_MAIN deployments and
+configuration, funded signer/wallet evidence, SN_MAIN deployments and
 independent reads, the three final submissions plus upstream validator
-readback, and the existing M5/LayerZero/provider gates. Testnet ledger rows and
-`evidence/lz-support-blocker-2026-08-30.md` are not modified by this tooling.
+readback, and the LayerZero/provider gates applicable to the selected release
+scope. The optional M5 Vesu lending experiment is not a prerequisite for
+Prism's core identity, private-transfer, or governed-request product path.
+Testnet ledger rows and `evidence/lz-support-blocker-2026-08-30.md` are not
+modified by this tooling.
 
 ---
 
@@ -192,7 +195,8 @@ readback, and the existing M5/LayerZero/provider gates. Testnet ledger rows and
 | Contract figures | exact address/class hash/block/calldata for every required contract | **OPEN (null in manifest)** | not promotable |
 | Deployment receipts | accepted receipt for every contract and final operation | **OPEN** | not promotable |
 | Independent reads | second provider/explorer read for every receipt and contract identity | **OPEN** | not promotable |
-| Privacy route | wallet authorization, prover proof, pool/helper action, note readback, conservation | **OPEN / external** | not promotable |
+| Core privacy route | wallet authorization, private transfer, consented private-state readback | **OPEN / external** | not promotable |
+| Optional M5 Vesu composition | only if private lending is included in the release scope: pool/helper action, note readback, conservation | **OPTIONAL / OPEN** | does not gate core Prism |
 | Final submissions | exactly three **distinct** SN_MAIN hashes; each `ok=true,pool=true,mine=true` | **OPEN** | not promotable |
 | Artifact safety | no deployment/broadcast, no secrets, no `strk20.json` mutation | **PASS** | — |
 | **Overall** | all rows above plus authorized deployment | **NOT MAINNET_READY** | X2 preparation |
@@ -209,9 +213,9 @@ packet may substitute only independently observed values.
 3. Operator freezes the contract set, ABI/schema/compiler versions, and exact mainnet figures.
 4. Authorized operator performs dry-run then live SN_MAIN/Base Mainnet deployment; no broadcast is authorized by this repository change.
 5. Independent providers re-read every deployment/operation receipt, address, class hash, block, and status.
-6. Wallet/prover provider completes the real privacy path, including accepted receipt and independent readback.
+6. Wallet/prover provider completes the selected core privacy route, including accepted private-transfer evidence and independent readback; optional M5 Vesu evidence is required only if private lending is part of the approved release scope.
 7. Three distinct final submissions pass current hub validation (`ok`, `pool`, `mine`) and are independently rechecked.
 8. Audit/owner review promotes only the matching evidence-ledger rows; `strk20.json` remains untouched until separately authorized.
-9. Existing M5, backend runtime, and LayerZero bilateral gates close independently; this packet does not waive them.
+9. Optional M5 Vesu and LayerZero gates close independently when those capabilities are included in the approved release scope; this packet does not waive them.
 
 *Governing principle: Research → Experiment → Build → Evidence. No ledger row moves without observed results.*
