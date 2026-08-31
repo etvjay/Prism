@@ -20,17 +20,24 @@ Band C — Full Prism vision after the first release
   social principals, claims, portfolio, continuity/delegation,
   and broader private financial capabilities
 
-Explicit scope for the current release:
+Current closeout scope:
 
 ```text
-PrismChannel is included in the testnet path as the minimal S4 relationship/
-payment-memo slice. It is not a full messenger and is not a mainnet blocker
-unless the mainnet release explicitly promises PrismChannel.
+Core v1 = Registry V2 + Prism identity lifecycle + Base binding/resolve/revoke
+          + pause/governance control boundary + durable backend operations.
+
+STRK20 is a separate hard-gated release train. It remains mandatory for a
+qualifying STRK20 Private Sprint submission but is not silently counted as
+Core v1 complete.
+
+Vesu lending, LayerZero delivery, PrismChannel beyond the minimal relationship
+slice, shadow accounts, and broader private financial capabilities are deferred.
 ```
 
-**Band B** is now the selected release contract: Prism Pause is part of the mainnet promise and all promised M0–M7 work, owner-led Phase 8 surfaces, and M8 testnet evidence must pass before M9.
-**Band A** is not the selected release rule.
-**Band C** remains deferred and is not a prerequisite for the selected mainnet release.
+`DEC-PRISM-M0-002` is the active Core v1 closeout scope. `DEC-PRISM-M0-001`
+remains historical Band B evidence and is superseded for this closeout only.
+Core v1 still requires its own live deployment, receipt, independent-read,
+security, operations, and owner release gates before any mainnet claim.
 
 ---
 

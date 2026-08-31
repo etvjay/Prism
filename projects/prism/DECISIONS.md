@@ -553,3 +553,45 @@ A SessionGrant is temporary bounded authority. It is not a Prism identity, root 
 **Decided at:** 2026-08-25
 
 STRK20 shadow accounts remain a separate future execution mechanism and are not an MVP dependency. They must not be conflated with SessionGrant, session keys, ordinary accounts, or Prism identity. Reopening this scope requires pinned wallet/account interface evidence and a new decision.
+
+---
+
+## DEC-PRISM-M0-002 — Core v1 release-train split
+
+**Layer:** Product/System/Delivery
+**Status:** Accepted for Core v1 closeout; does not authorize mainnet
+**Decision ID:** DEC-PRISM-M0-002
+**Decided by:** Jason
+**Decided at:** 2026-08-31
+
+**Decision**
+
+Prism is closed in separate release trains rather than requiring every planned feature to be mainnet-ready at once. The current Core v1 target is:
+
+```text
+Registry V2
++ Prism identity create/read
++ Base ownership proof and binding
++ resolve/revoke lifecycle
++ pause/governance control boundary
++ durable backend operation/reconciliation path
++ truthful Home and operation surfaces
+```
+
+**STRK20 remains a separate hard-gated release train.** It is not declared complete or mainnet-ready by Core v1. Its acceptance requires the real Wallet API/prover path, STRK20 pool action, privacy-state readback, receipt, conservation, and independent verification. It remains mandatory for any qualifying STRK20 Private Sprint submission.
+
+**Deferred from Core v1**
+
+```text
+Vesu lending composition
+LayerZero delivery
+PrismChannel beyond the minimal relationship slice
+shadow accounts
+broader private financial capabilities
+```
+
+`DEC-PRISM-M0-001` remains historical evidence of the prior Band B scope and is superseded for this Core v1 closeout only. This decision does not authorize deployment, broadcast, `strk20.json` mutation, or promotion of X2 implementation into live evidence.
+
+**Evidence boundary**
+
+Core v1 is still only locally implemented until each promised surface has accepted testnet or mainnet receipts, independent reads, operational recovery evidence, and the applicable owner/release gates. Deferred tracks retain their own evidence ledgers and may not be represented as complete through Core v1 acceptance.
