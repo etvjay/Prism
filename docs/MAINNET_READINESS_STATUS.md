@@ -1,18 +1,18 @@
 # Prism Mainnet Readiness Status
 
-**Status: CLOSE IN ENGINEERING, NOT YET MAINNET READY**
-**As of:** 2026-08-30
-**Candidate:** `701fae1`
+**Status: CORE V1 PREPARED, NOT YET MAINNET READY**
+**As of:** 2026-08-31
+**Candidate:** `core-v1-closeout` (freeze the exact HEAD with `git rev-parse HEAD` before any live action)
 
 ## Summary
 
-Prism's backend and release scaffolding are now substantially prepared for a controlled mainnet decision. Testnet remains the default operational environment, while mainnet is isolated behind an explicit fail-closed configuration and evidence gate.
+Prism Core v1 is locally closed as a bounded engineering candidate. The larger Prism direction remains in this repository, with STRK20 as the next first-class privacy expansion and Vesu, LayerZero, and Channel as later tracks. Testnet remains the default operational environment, while mainnet is isolated behind an explicit fail-closed configuration and evidence gate.
 
-The remaining blockers are live-network and release-evidence requirements, not an unbounded backend implementation gap.
+The remaining blockers are owner approval, protected credentials, live-network execution, and independent release evidence. They are not an authorization to broadcast.
 
 ## Verified engineering state
 
-- Full application suite: **1,327 passed, 40 skipped**.
+- Core v1 application suite: **1,394 passed, 1 skipped**.
 - TypeScript typecheck: **passed**.
 - Next.js production build: **passed**.
 - Local PostgreSQL integration: **39 passed, 1 skipped**.
@@ -21,6 +21,7 @@ The remaining blockers are live-network and release-evidence requirements, not a
 - Pause approval-scope, plan, policy-version, CAS, replay, and durability checks are implemented and tested.
 - Mainnet configuration is typed, figure-driven, and fail-closed.
 - `strk20.json` remains intentionally untouched and empty.
+- The proposed Core v1 mainnet contract set is explicit: `PrismIdentityRegistry` only. Deferred tracks must not be silently included.
 
 ## Mainnet preparation model
 
@@ -41,21 +42,20 @@ Mainnet cannot become runnable through missing values, placeholders, cross-netwo
 
 ## Remaining release gates
 
-1. Owner-approved mainnet release decision.
-2. Exact SN_MAIN and Base Mainnet Registry/helper/OApp addresses.
-3. Class hashes, deployment blocks, constructor parameters, ABI/schema versions, and immutable contract set.
+1. Owner-approved mainnet release decision naming the exact Core v1 scope and explicit required contract identities.
+2. Exact SN_MAIN and Base Mainnet Registry figures for the selected scope. Deferred helper/OApp addresses remain out of the Core v1 set.
+3. Class hash, deployment block, constructor parameters, ABI/schema versions, and immutable contract set for every required Core v1 contract.
 4. Approved signer, funding, fee-reserve, and dry-run evidence.
 5. Actual mainnet deployments with accepted receipts and independent RPC readbacks.
-6. Supported-wallet STRK20 pool readiness and fee observation.
-7. Complete Prism-owned privacy route, including Wallet API/prover authorization, pool/helper execution, private-note readback, maturity, conservation, and independent verification.
-8. Fresh Base Mainnet identity/binding proof, resolve, revoke, replay, expiry, and alteration evidence.
-9. Production auth integration, route review, telemetry export, retention, alerting, and schema parity validation.
-10. Three qualifying final submissions independently rechecked with `ok=true`, `pool=true`, and `mine=true` where applicable.
+6. Fresh Base Mainnet identity/binding proof, resolve, revoke, replay, expiry, and alteration evidence.
+7. Production auth integration, route review, telemetry export, retention, alerting, and schema parity validation.
+8. Separately, if submitting to the STRK20 sprint, a supported-wallet/prover privacy route, pool execution, private-state readback, conservation, and independent verification.
+9. Three qualifying final STRK20 submissions independently rechecked with `ok=true`, `pool=true`, and `mine=true` where applicable.
 
 ## Separate testnet blockers
 
-- Privacy remains `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER` until a real Wallet API/prover session is available.
-- Identity has selected live testnet observations, but fresh repeated/adversarial signing evidence remains open.
+- Privacy remains `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER` until a real Wallet API/prover session is available. This is a visible in-repository STRK20 gate, not a deleted product surface.
+- Core v1 local evidence is X2; fresh repeated/adversarial mainnet signing evidence remains open.
 - Live backend projection, reconciliation, restart/recovery, and settlement evidence remain open.
 - LayerZero remains `LZ_BILATERAL_BLOCKED_EXACTLY`: source/DVN evidence exists for one direction, but destination execution and independent destination readback are absent; the reverse packet is not indexed by the observed Scan path.
 
@@ -64,8 +64,8 @@ No packets were resent or manually executed.
 ## Honest readiness statement
 
 ```text
-Engineering preparation: substantially complete
-Testnet evidence: partial
+Core v1 engineering preparation: locally complete
+Testnet evidence: partial and X2-limited for this candidate
 Mainnet configuration: prepared, fail-closed
 Mainnet deployment: not performed
 Mainnet readiness: BLOCKED pending external evidence and approval

@@ -21,8 +21,10 @@
 #     BASE_RPC_URL=https://<BASE_MAINNET-RPC>
 #     BASE_CHAIN_ID=8453
 #
-# Signing names are likewise environment-neutral: STARKNET_DEPLOYER_PRIVATE_KEY
-# or STARKNET_KEYSTORE_PATH, plus BASE_SIGNER_PRIVATE_KEY. Values stay outside repo.
+# RPC names are environment-neutral and are selected by PRISM_TARGET_ENV:
+# STARKNET_RPC_URL and BASE_RPC_URL. Signer names may remain environment-specific,
+# for example STARKNET_MAINNET_KEYSTORE_PATH and BASE_MAINNET_SIGNER_PRIVATE_KEY.
+# Values stay outside repo.
 # Validation (secret-free, no RPC call required until you have a key):
 #
 #   node ops/starknet/validate.mjs                # checks templates + env contract

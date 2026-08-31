@@ -43,7 +43,7 @@
 
 # --- Example sncast provider profile: MAINNET (release-gated, not default) ---
 # [sncast.mainnet]
-# url_env_var = "STARKNET_MAINNET_RPC_URL"
+# url_env_var = "STARKNET_RPC_URL"          # PRISM_TARGET_ENV=mainnet selects SN_MAIN
 # account = "mainnet-deployer"
 # accounts-file = "~/.starknet-accounts/starknet-accounts.json"
 # keystore_env_var = "STARKNET_MAINNET_KEYSTORE_PATH"

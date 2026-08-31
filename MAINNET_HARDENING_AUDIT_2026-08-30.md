@@ -55,7 +55,7 @@ Open release findings:
 - Locations are documented in `ops/starknet/sncast.toml.example`, `ops/starknet/provider.example.toml`, `ops/starknet/accounts.json.example`, and `ops/starknet/VALIDATION.md`.
 - Templates reference env/keystore names and contain no secrets; no active `sncast.toml` is committed.
 - No mainnet deployer address, keystore, signer policy, funding amount, fee reserve, multisig/approval procedure, or funded-account readback exists in this worktree. `mainnet-deployer` is a placeholder only.
-- Mainnet provider names in the example are `STARKNET_MAINNET_RPC_URL`/`BASE_MAINNET_RPC_URL`, while application runtime configuration centers on `STARKNET_RPC_URL`/`BASE_RPC_URL`; this requires one explicit, reviewed environment contract before release.
+- Mainnet and testnet RPC configuration now use the explicit environment-selected names `STARKNET_RPC_URL`/`BASE_RPC_URL`; signer and keystore references remain environment-specific and protected. `PRISM_TARGET_ENV` selects the manifest environment.
 - No dry-run/live mainnet signer or funding preflight was run. No secrets were accessed.
 
 ## Validation results

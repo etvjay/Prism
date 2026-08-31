@@ -7,6 +7,7 @@ A blank or placeholder field is an open gate; never infer a funded or authorized
 ## Environment contract
 
 ```yaml
+release_track: core_v1
 environment: SN_MAIN
 base_network: Base Mainnet
 base_chain_id: 8453
@@ -16,6 +17,11 @@ signer_ref: null                 # protected path or secret-manager reference on
 wallet_provider: null
 prover_provider: null
 ```
+
+For the current Core v1 proposal, the required contract identity is
+`PrismIdentityRegistry`. STRK20 wallet/prover evidence belongs to the separate
+`strk20_submission` track in the same Prism repository and must not be silently
+substituted into or omitted from that track.
 
 ## Authorization and ownership
 

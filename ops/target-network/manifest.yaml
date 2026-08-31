@@ -56,6 +56,17 @@ environments:
   mainnet:
     label: release-gated production evidence environment (V8.6 / EVD X4/X5)
     status: RELEASE_GATED_PROPOSED
+    release_scope:
+      status: PROPOSED
+      current: core_v1
+      required_contract_identities:
+        - PrismIdentityRegistry
+      deferred_tracks:
+        - STRK20 privacy route
+        - Vesu lending composition
+        - LayerZero delivery
+        - PrismChannel expansion
+      note: "Core v1 is the current proposed mainnet scope; this declaration does not authorize deployment or broadcast."
     requires:
       - explicit_owner_approval: Jason
       - decision_record: DEC-PRISM-OPS-001 or DEC-PRISM-SYS-003 companion

@@ -110,9 +110,9 @@ remain separate gates.
 ## 6. Aggregate Verdict (this bundle)
 
 ```
-chainId decision (DEC-PRISM-SYS-003) ....... BLOCKED — owner decision required
-target-network decision (DEC-PRISM-OPS-001) BLOCKED — PROPOSED/UNDECIDED
-funded accounts ........................... BLOCKED — templates pass, no funded deployer shown
+chainId decision (DEC-PRISM-SYS-003) ....... ACCEPTED — testnet/mainnet binding recorded
+target-network decision (DEC-PRISM-OPS-001) ACCEPTED for testnet; mainnet release-gated
+funded accounts ........................... PARTIAL — testnet funding only; mainnet not provided
 independent reads ......................... BLOCKED — offline fixtures X2 only
 decisive-sequence harness ................. PASS — offline fixtures green at X2, 8+ cases exercised
 static validators ......................... PASS — target-network ✓, starknet templates ✓, evidence guards ✓
@@ -128,12 +128,12 @@ No frontend, contract behavior, `strk20.json`, Linear/Notion, credentials, or pu
 
 ## 7. How to close each gate (owner/operator steps)
 
-1. **Close chainId gate:** Jason creates `DEC-PRISM-SYS-003` in `DECISIONS.md` (template in `CHAINID_V2_DECISION_PACKET.md:§6`) — `ACCEPT` triggers WP-1 spec amendment + `e8886af` merge; `REJECT` records residual risk.
-2. **Close target-network gate:** Jason creates `DEC-PRISM-OPS-001` (template in `ops/target-network/PROPOSAL.md:§2`) then mirrors into `ops/target-network/manifest.yaml:owner_decision` (`ACCEPTED`, `selected_environment`, `disposition_chainId_v2`, `signature`).
-3. **Close funding gate:** Provision funded deployer outside repo (`STARKNET_RPC_URL`, `STARKNET_DEPLOYER_PRIVATE_KEY` or `STARKNET_KEYSTORE_PATH`) — verify via `node ops/starknet/validate.mjs` (still secret-free) + `sncast --profile sepolia account list` (requires env — not run in this bundle).
-4. **Close deployment gate:** Run live `sncast declare/deploy` with `--dry-run` first (validated by `ops/starknet/dry-run-check.mjs`), then live — capture network/address/class_hash/tx/block/status and write envelope under `ops/evidence/envelopes/` (never `strk20.json`).
-5. **Close independent-read gate:** Perform second RPC read + Voyager explorer URL per tx; re-run `node ops/evidence/validate.mjs <envelope.json> --require-independent-read`; copy validated fields into `EVIDENCE_LEDGER.md` yaml template at `X3` (testnet).
-6. **Close harness E2E gate:** Run `ops/testnet/decisive-sequence.harness.mjs --env testnet` with live wallets — procedure in `DECISIVE_SEQUENCE_PROCEDURE.md §2`; record every divergence case.
+1. **Confirm the accepted testnet decision remains mirrored:** `DEC-PRISM-SYS-003` and `DEC-PRISM-OPS-001` are already recorded and validated; no new decision is needed for this preparation step.
+2. **Select the exact mainnet scope:** obtain an append-only owner decision for `SN_MAIN + Base Mainnet`, explicitly naming Core v1 and its required contract identities. This remains open.
+3. **Close the funding gate:** provision funded mainnet signers outside the repo (`STARKNET_RPC_URL`, `BASE_RPC_URL`, and protected signer references), then independently read funding receipts. Never place secret values in the packet or repository.
+4. **Close the deployment gate:** run live `sncast declare/deploy` with `--dry-run` first, then only after explicit broadcast authorization. Capture network, address, class hash, transaction, block, status, and constructor data in the evidence envelope, never `strk20.json`.
+5. **Close the independent-read gate:** perform a second RPC/explorer read for every deployment and operation, then run `node ops/evidence/validate.mjs <envelope.json> --require-independent-read`.
+6. **Close the Core v1 operation gate:** run the live identity and Base bind/resolve/revoke sequence with real providers, receipts, recovery behavior, and independent reads. STRK20 remains a visible but separately gated future expansion.
 
 Each step re-runs `npm test && npm run typecheck && npm run build && node ops/*/validate.mjs` before any commit.
 
@@ -156,6 +156,11 @@ for all of the following:
 - `release_status: MAINNET_READY`, `environment: SN_MAIN`, Base chain ID `8453`,
   and an `owner_decision` with accepted status, decision ID, owner, timestamp,
   and signature/reference;
+- `release_track: core_v1` or `release_track: strk20_submission`, selected
+  explicitly rather than inferred from the presence of optional fields;
+- `required_contract_identities`, an explicit list matching the accepted release
+  scope. The current Core v1 proposal requires `PrismIdentityRegistry` only;
+  deferred Vesu, LayerZero, and Channel tracks must not be silently included;
 - `mainnet_figures`: SN_MAIN, Base `8453`, canonical pool address, pool-event
   transaction/block, exactly three final submission transaction hashes, and an
   independently observed `hub_validator` of `ok=true`, `pool=true`, `mine=true`;
