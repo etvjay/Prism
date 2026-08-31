@@ -10,7 +10,7 @@
 
 Core v1 covers Registry V2, Prism identity create/read, Base ownership proof and binding, resolve/revoke, pause/governance control, durable backend operations/reconciliation, and truthful Home/operation surfaces.
 
-STRK20 remains a separate hard-gated release train. Vesu lending, LayerZero delivery, PrismChannel beyond the minimal relationship slice, shadow accounts, and broader private financial capabilities remain deferred. No deferred track is represented as complete here.
+STRK20 remains an in-repository, first-class, hard-gated Prism product track. It is the next major product expansion represented in this repository, and it is not declared complete or mainnet-ready by Core v1. Vesu lending, LayerZero delivery, PrismChannel beyond the minimal relationship slice, shadow accounts, and broader private financial capabilities remain deferred. No deferred track is represented as complete here.
 
 ## Exact local gates
 

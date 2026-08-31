@@ -578,7 +578,7 @@ Registry V2
 + truthful Home and operation surfaces
 ```
 
-**STRK20 remains a separate hard-gated release train.** It is not declared complete or mainnet-ready by Core v1. Its acceptance requires the real Wallet API/prover path, STRK20 pool action, privacy-state readback, receipt, conservation, and independent verification. It remains mandatory for any qualifying STRK20 Private Sprint submission.
+**STRK20 remains an in-repository, first-class, hard-gated Prism product track.** It is not declared complete or mainnet-ready by Core v1. Its acceptance requires the real Wallet API/prover path, STRK20 pool action, privacy-state readback, receipt, conservation, and independent verification. It remains mandatory for any qualifying STRK20 Private Sprint submission and is the next major product expansion shown in this repository's roadmap.
 
 **Deferred from Core v1**
 

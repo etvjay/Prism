@@ -15,9 +15,11 @@
 6. Durable backend operation, event, checkpoint, and reconciliation path.
 7. Truthful Home and operation surfaces for the Core v1 states.
 
-## Separate hard-gated release train
+## STRK20 remains in the Prism repository and roadmap
 
-STRK20 remains a first-class product track and is not declared complete by Core v1. Its own release gate requires:
+STRK20 is a first-class Prism product track and the next major expansion of the system. Core v1 narrows the current release gate so identity and governed control can be closed without pretending the privacy route is finished. It does not remove STRK20 from the repository, product narrative, architecture, or roadmap.
+
+STRK20 remains hard-gated on:
 
 ```text
 Wallet API/prover authorization
@@ -27,6 +29,9 @@ Wallet API/prover authorization
 → conservation / failure-recovery evidence
 → independent verification
 ```
+
+Until those facts exist, the implementation and integration remain visible as in-repository work with an honest evidence status, not as an absent feature.
+
 
 A qualifying STRK20 Private Sprint submission additionally requires the official three successful mainnet STRK20-pool transactions and public demo/video requirements. `strk20.json` is populated only from independently observed facts.
 

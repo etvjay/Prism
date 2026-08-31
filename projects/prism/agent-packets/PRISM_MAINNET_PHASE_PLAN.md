@@ -26,9 +26,10 @@ Current closeout scope:
 Core v1 = Registry V2 + Prism identity lifecycle + Base binding/resolve/revoke
           + pause/governance control boundary + durable backend operations.
 
-STRK20 is a separate hard-gated release train. It remains mandatory for a
-qualifying STRK20 Private Sprint submission but is not silently counted as
-Core v1 complete.
+STRK20 remains an in-repository, first-class, hard-gated Prism product track. It
+is the next major product expansion represented in this repository and remains
+mandatory for a qualifying STRK20 Private Sprint submission, but it is not
+silently counted as Core v1 complete.
 
 Vesu lending, LayerZero delivery, PrismChannel beyond the minimal relationship
 slice, shadow accounts, and broader private financial capabilities are deferred.
