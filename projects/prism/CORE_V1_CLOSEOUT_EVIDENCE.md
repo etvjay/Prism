@@ -1,8 +1,8 @@
 # Prism Core v1 Local Closeout Evidence
 
-**Candidate:** `448c62ad332ac9902c89b9385b59ff4d61c48149`
+**Candidate:** `60460be3388c388472b83d7753d0c9d3d52970a3`
 **Branch:** `core-v1-closeout`
-**Verified at:** 2026-08-31
+**Verified at:** 2026-09-03
 **Scope decision:** `DEC-PRISM-M0-002`
 **Evidence ceiling:** X2 local implementation
 
@@ -17,16 +17,22 @@ STRK20 remains an in-repository, first-class, hard-gated Prism product track. It
 | Gate | Command/result |
 |---|---|
 | Focused production-factory hardening | `npm test -- src/application/__tests__/production-factory-hardening.test.ts` → `17 passed` |
-| Full application suite | `npm test` → `146 passed`, `1 skipped`; `1394 passed`, `1 skipped` |
+| Full application suite | `npm test` → `146 test files passed`, `1 skipped`; `1394 tests passed`, `1 skipped` |
 | TypeScript | `npm run typecheck` → pass |
 | Production build | `npm run build` → Next.js 16.3.1, TypeScript pass, `11/11` static pages generated |
+| PostgreSQL integration | **NOT RUN** → `40` gated integration tests skipped because `PRISM_POSTGRES_TEST_URL` is unset; `pg_isready` accepting is not test evidence |
 | Target network | `node ops/target-network/validate.mjs` → pass; testnet accepted, mainnet release-gated |
 | Starknet config/secrets | `node ops/starknet/validate.mjs` → pass; templates secret-free |
 | Evidence validator | `node ops/evidence/validate.mjs --self-test` → pass; X2 fixture promotion and `strk20.json` guard verified |
 | Mainnet validator | `node ops/release/validate-mainnet.mjs --self-test` → pass; missing figures and owner decision fail closed |
 | Diff hygiene | `git diff --check` → pass |
 
-## Contract gates on this candidate
+## Contract gates on this scope
+
+The Cairo contract counts below are carried-forward local fixture results from their
+scoped lane records; this reconciliation reran the repository root `cairo/`
+`scarb build` and `snforge test` (1 root workspace test passed), not each separate
+contract-directory suite. They remain X2 local records and are not live evidence.
 
 | Contract surface | Result |
 |---|---:|

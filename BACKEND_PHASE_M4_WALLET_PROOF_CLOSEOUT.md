@@ -3,6 +3,9 @@
 **Baseline:** `040b011761065e080816cff1ee1d1d7f0b7a1c00`
 **Scope:** local backend/runtime wallet action boundary, proof-shape validation, receipt-backed STRK20 flow transitions, and adversarial tests. No frontend, contract, deployment, broadcast, wallet secret, RPC credential, `strk20.json`, or remote mutation.
 
+**Snapshot note:** the lane totals below belong to this historical baseline; use
+`projects/prism/CORE_V1_CLOSEOUT_EVIDENCE.md` for the current repository-wide totals.
+
 ## Verdict
 
 `BLOCKED_BY_EXTERNAL_WALLET`

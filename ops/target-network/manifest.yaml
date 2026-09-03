@@ -54,7 +54,7 @@ environments:
       # Cross-network replay (Sepolia ↔ mainnet) fails under ERR-012/ERR-003 when enforced.
 
   mainnet:
-    label: release-gated production evidence environment (V8.6 / EVD X4/X5)
+    label: release-gated production evidence environment (future X4/X5 only after repeated independent evidence)
     status: RELEASE_GATED_PROPOSED
     release_scope:
       status: PROPOSED

@@ -77,13 +77,13 @@ remain separate gates.
 |---|---|---|---|
 | Envelope includes `deployment`: `network SN_SEPOLIA/SN_MAIN`, `address Hex`, `class_hash Hex`, `deploy_tx Hex`, `block_number finite>0`, `status SUCCEEDED` | `src/features/evidence/evidence-envelope.ts` builder | **ENFORCED — missing → blocker** | Promotion to X3+ |
 | Envelope includes `transactions[].block` present, `status SUCCEEDED` only, `hash Hex` | Same validator | **ENFORCED — null/UNKNOWN/REVERTED → blocker** | Indexing/reconciliation |
-| Envelope includes `independent_verification`: `explorer_url` OR `rpc_second_read {block,status,address_match}` + `verified_at` | `validateEvidenceEnvelope` | **ENFORCED — absent → blocker, downgrade to X2** | Ledger promotion (`EVD-PRISM-004..007` X0→X3) |
+| Envelope includes `independent_verification`: `explorer_url` OR `rpc_second_read {block,status,address_match}` + `verified_at` | `validateEvidenceEnvelope` | **ENFORCED — absent → blocker, downgrade to X2** | Remaining ledger promotion (`EVD-PRISM-005..007`) and independent recheck of existing facets |
 | Envelope includes `limitations: string[]` non-empty (what is NOT evidenced) | Same validator | **ENFORCED — empty → error+blocker, X0** | Audit truthfulness (`RESEARCH_BACKEND_GATE §7`) |
 | Envelope includes `build: {commit_sha, spec_versions:{scarb,snforge,starknet,…}}` | Same validator | **ENFORCED — missing → error** | Build traceability |
 | Deterministic `canonicalStringify` + `envelopeHash` stable | Same module | **ENFORCED (tests: deterministic)`** | Audit correlation |
 | No envelope path may be `strk20.json`; no procedure may contain `write strk20.json` without `do not write` wording | `assertNoStrk20JsonWrite` + validator | **ENFORCED (throws/blocks)** | `G8` / `INV-PRISM-016` / `G7` hub `ok=pool=mine` |
 | `node ops/evidence/validate.mjs --self-test` passes: valid fixture promotable, missing-field blocked, `strk20.json` write blocked | Offline validator | **PASS** | — |
-| Live independent re-read (second RPC + Voyager explorer URL) recorded per deploy/tx before `EVIDENCE_LEDGER.md` update | Procedure `DECISIVE_SEQUENCE_PROCEDURE.md §2` | **NOT_EVIDENCED (offline)** | Ledger rows `EVD-PRISM-004..007` remain `NOT_IMPLEMENTED / X0` |
+| Live independent re-read (second RPC + Voyager explorer URL) recorded per deploy/tx before `EVIDENCE_LEDGER.md` update | Procedure `DECISIVE_SEQUENCE_PROCEDURE.md §2` | **NOT_EVIDENCED (offline)** | Existing `EVD-PRISM-004/014` testnet facts are separate; `EVD-PRISM-005..007` remain `NOT_IMPLEMENTED / X0` |
 
 **Gate result:** `FAIL` — offline fixtures are `X2` with `NOT PROMOTABLE` (independent read absent by design); live read is provider-dependent.
 
@@ -103,7 +103,7 @@ remain separate gates.
 | `submitted ≠ completed` at every chain-touching step | `decisive-sequence-harness.ts` + `app-boundary.test.ts: INV-SYS-005` | `INV-SYS-005 / INV-PRISM-015`, `SM-PRISM-003` | SC-06 |
 | No `strk20.json` writes via harness | Builder guard + `envelope-and-gates.test.ts:cannot write strk20.json` | `G8`, `EVIDENCE_LEDGER Mainnet Receipt Rule` | SC-21 |
 
-**Offline result (this bundle):** `X2 — fixture, TEST DOUBLE, NOT PROMOTABLE` (missing `independent_verification`). Live variant (next packet, owner-approved V8.5) replaces InMemory ports with real `RpcProvider` + funded wallets, records per-step envelopes with `deployment+transactions+independent reads`, promotes to `X3` (testnet).
+**Offline result (this bundle):** `X2 — fixture, TEST DOUBLE, NOT PROMOTABLE` (missing `independent_verification`). The ledger separately records `EVD-PRISM-004` and `EVD-PRISM-014` as observed `SN_SEPOLIA` X3 facets; those facts were not produced by this offline checklist and do not promote the mainnet packet. A future owner-approved live variant may promote only the named gate after real receipts and independent reads.
 
 ---
 
@@ -116,12 +116,12 @@ funded accounts ........................... PARTIAL — testnet funding only; ma
 independent reads ......................... BLOCKED — offline fixtures X2 only
 decisive-sequence harness ................. PASS — offline fixtures green at X2, 8+ cases exercised
 static validators ......................... PASS — target-network ✓, starknet templates ✓, evidence guards ✓
-suite ..................................... PASS — npm test ~251 passed | 14 skipped; typecheck ✓; build ✓
+suite ..................................... PASS — current baseline `60460be3388c388472b83d7753d0c9d3d52970a3` (2026-09-03): npm test 146 files passed | 1 skipped; 1394 tests passed | 1 skipped; typecheck ✓; build ✓
 deployment ................................ NOT_EXECUTED — no RPC, no sncast broadcast, no strk20.json writes
 ```
 
 **Overall:** `PASS_WITH_LIMITATIONS — LOCAL BUILD EVIDENCE EARNED, RUNTIME/MAINNET EVIDENCE OPEN` (`AUDIT.md §18` verdict preserved).  
-`EVD-PRISM-004..007` remain `NOT_IMPLEMENTED / X0`; G0/G1/G2/G3 remain `NOT_IMPLEMENTED` until live `V7.5/V8.5` observes per ledger template.  
+`EVD-PRISM-005..007` remain `NOT_IMPLEMENTED / X0`; `EVD-PRISM-004` and `EVD-PRISM-014` are separately recorded testnet X3 facets. G0/G1/G2/G3 release promotion remains blocked until the applicable live evidence is independently rechecked.
 No frontend, contract behavior, `strk20.json`, Linear/Notion, credentials, or push was touched.
 
 ---

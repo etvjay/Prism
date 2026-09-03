@@ -1,8 +1,8 @@
 # Prism Mainnet Readiness Status
 
 **Status: CORE V1 PREPARED, NOT YET MAINNET READY**
-**As of:** 2026-08-31
-**Candidate:** `core-v1-closeout` (freeze the exact HEAD with `git rev-parse HEAD` before any live action)
+**As of:** 2026-09-03
+**Candidate:** `core-v1-closeout` @ `60460be3388c388472b83d7753d0c9d3d52970a3` (verified locally; freeze a clean exact HEAD with `git rev-parse HEAD` before any live action)
 
 ## Summary
 
@@ -15,13 +15,27 @@ The remaining blockers are owner approval, protected credentials, live-network e
 - Core v1 application suite: **1,394 passed, 1 skipped**.
 - TypeScript typecheck: **passed**.
 - Next.js production build: **passed**.
-- Local PostgreSQL integration: **39 passed, 1 skipped**.
+- PostgreSQL integration: **NOT RUN — 40 gated tests skipped** because `PRISM_POSTGRES_TEST_URL` is unset. A local `pg_isready` response is not PostgreSQL test evidence.
 - PostgreSQL testnet/mainnet profiles are isolated by explicit environment and schema.
-- API, SDK, and MCP boundaries enforce versioning, pause binding fields, rate-limit responses, and secret-input rejection.
-- Pause approval-scope, plan, policy-version, CAS, replay, and durability checks are implemented and tested.
-- Mainnet configuration is typed, figure-driven, and fail-closed.
+- API, SDK, and MCP boundaries enforce versioning, pause binding fields, redacted error/secret-input handling, and fail-closed guards; production HTTP rate limiting is not implemented or verified here.
+- Pause approval-scope, plan, policy-version, CAS, replay, and durability checks are implemented and tested locally at X2.
+- Mainnet release packet validation is typed, figure-driven, and fail-closed; mainnet runtime figures remain unobserved and unconfigured.
 - `strk20.json` remains intentionally untouched and empty.
 - The proposed Core v1 mainnet contract set is explicit: `PrismIdentityRegistry` only. Deferred tracks must not be silently included.
+
+## Local closeout map
+
+The current evidence is split by claim. These records are local or separately scoped
+testnet evidence; none promotes the mainnet release:
+
+| Surface | Local record | Honest ceiling/status |
+|---|---|---|
+| Core v1 implementation and release preparation | `projects/prism/CORE_V1_CLOSEOUT_EVIDENCE.md` | X2 overall; no mainnet readiness |
+| Observed identity/testnet facets | `projects/prism/M1_LIVE_IDENTITY_EVIDENCE.md`, `projects/prism/EVIDENCE_LEDGER.md` | X3 only for named SN_SEPOLIA facets (`EVD-PRISM-004`, `EVD-PRISM-014`) |
+| Wallet/proof boundary | `BACKEND_PHASE_M4_WALLET_PROOF_CLOSEOUT.md` | X2; `BLOCKED_BY_EXTERNAL_WALLET` |
+| STRK20/M5 privacy boundary | `PRIVACY_INVOKE_UI_BLOCKER.md`, `projects/prism/M5_LOCAL_BOUNDARY_CLOSEOUT.md`, `projects/prism/M5_E2E_RUNNER_EVIDENCE.md` | X2 plus a narrow helper→Vesu X3 leg; full route blocked |
+| Runtime/Pause/PostgreSQL/reconciliation | `docs/BACKEND_RUNTIME_PAUSE_IDENTITY_LANE_RESTART.md` | X2; gated PostgreSQL/repeated runtime evidence remains open |
+| Mainnet release gate | `ops/release/mainnet-release-packet.template.json`, `ops/release/READINESS_CHECKLIST.md` | `NOT_MAINNET_READY`; null/empty fields are intentional |
 
 ## Mainnet preparation model
 
@@ -55,8 +69,8 @@ Mainnet cannot become runnable through missing values, placeholders, cross-netwo
 ## Separate testnet blockers
 
 - Privacy remains `BLOCKED_BY_EXTERNAL_PRIVACY_PROVIDER` until a real Wallet API/prover session is available. This is a visible in-repository STRK20 gate, not a deleted product surface.
-- Core v1 local evidence is X2; fresh repeated/adversarial mainnet signing evidence remains open.
-- Live backend projection, reconciliation, restart/recovery, and settlement evidence remain open.
+- Core v1 overall preparation remains X2; separately recorded testnet identity/projection facets reach X3, while repeated/restart/reconciliation and mainnet signing evidence remain open.
+- One testnet factory→PostgreSQL projection observation exists in the ledger; repeated backend projection, reconciliation, restart/recovery, and settlement evidence remain open.
 - LayerZero remains `LZ_BILATERAL_BLOCKED_EXACTLY`: source/DVN evidence exists for one direction, but destination execution and independent destination readback are absent; the reverse packet is not indexed by the observed Scan path.
 
 No packets were resent or manually executed.
@@ -65,7 +79,7 @@ No packets were resent or manually executed.
 
 ```text
 Core v1 engineering preparation: locally complete
-Testnet evidence: partial and X2-limited for this candidate
+Testnet evidence: selected identity/projection facets X3; overall release preparation ceiling X2
 Mainnet configuration: prepared, fail-closed
 Mainnet deployment: not performed
 Mainnet readiness: BLOCKED pending external evidence and approval

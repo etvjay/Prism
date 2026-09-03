@@ -102,7 +102,8 @@
   },
   "wallet_prover": null,
   "limitations": [
-    "Preparation template only; no owner approval, credentials, deployment, broadcast, or independent mainnet readback exists.",
+    "Preparation template only; no owner approval, credentials, deployment, broadcast, or independent mainnet readback exists. Keep unobserved approval, signer, mainnet figure, contract receipt/readback, and funding fields null or false.",
+    "For release_track core_v1, pool/event/validator fields remain null, required_final_transaction_count remains 0, final_submission_hashes remains empty, and wallet_prover remains null until an explicitly selected STRK20 submission track has independently observed evidence.",
     "STRK20 privacy and three-transaction submission evidence are a separate in-repository release track."
   ]
 }

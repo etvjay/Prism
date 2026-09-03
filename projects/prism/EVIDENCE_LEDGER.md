@@ -14,6 +14,15 @@ X5 mainnet/production independently verifiable
 
 Only evidence matching the current implementation/spec version counts as current.
 
+## Reconciled baseline disposition
+
+The current Core v1 preparation ceiling is **X2 overall**. Two separately scoped
+testnet facets are recorded at X3: `EVD-PRISM-004` (identity create/read/event/scan)
+and `EVD-PRISM-014` (Registry V2 plus direct M3 bind/resolve/revoke facts). These
+rows do not promote the complete Core v1 release, repeated/reproduced evidence, or
+mainnet readiness. `EVD-PRISM-005..007` and all `EVD-STRK20-*` rows remain
+`X0` / `NOT_IMPLEMENTED`. The root `strk20.json` remains intentionally empty.
+
 ---
 
 | Evidence ID | Claim | Target | Current | Status | Evidence / receipt | Limitation |
