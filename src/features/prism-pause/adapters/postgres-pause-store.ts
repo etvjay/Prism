@@ -17,7 +17,7 @@ import type { ExecutionIntent } from "../domain/intent";
 import { sameIntentFingerprint } from "../domain/intent";
 import type { ExecutionPlan, Hex } from "../domain/execution-plan";
 import type { ExecutionPause, PauseState } from "../domain/pause";
-import { assertPauseState } from "../domain/pause";
+import { assertPauseState, computeApprovalScopeHash } from "../domain/pause";
 import type { CheckResult } from "../domain/checks";
 import { assertRiskLevel, assertTypedResults } from "../domain/checks";
 import type { PauseDecision, PauseStore, PauseStoreTransaction, CreatePauseRecordInput } from "../ports/pause-store";
@@ -453,6 +453,10 @@ export class PostgresPauseStore implements PauseStore {
       const pauseRow = pause.rows[0] as Record<string, unknown> | undefined;
       if (pauseRow?.plan_hash !== undefined && pauseRow.plan_hash !== decision.planHash) throw new PauseError(PAUSE_ERROR_CODE.PLAN_HASH_MISMATCH, "decision_plan_hash_mismatch");
       if (pauseRow?.policy_version !== undefined && pauseRow.policy_version !== decision.policyVersion) throw new PauseError(PAUSE_ERROR_CODE.POLICY_VERSION_MISMATCH, "decision_policy_version_mismatch");
+      if (["APPROVE", "CONFIRM", "RELEASE"].includes(decision.kind)) {
+        const expectedScope = computeApprovalScopeHash(decision.pauseId, decision.planHash, decision.policyVersion);
+        if (decision.approvalScopeHash !== expectedScope) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_SCOPE_MISMATCH, "decision_approval_scope_mismatch");
+      }
       const existing = await client.query(`SELECT decision_id FROM pause_decisions WHERE pause_id=$1 AND kind=$2 AND plan_hash=$3`,[decision.pauseId, decision.kind, decision.planHash]);
       if (existing.rowCount && existing.rowCount>0 && (decision.kind==="RELEASE"||decision.kind==="APPROVE"||decision.kind==="CONFIRM")) throw new PauseError(PAUSE_ERROR_CODE.APPROVAL_REPLAY, `${decision.kind} replay for plan ${decision.planHash}`);
       await client.query(

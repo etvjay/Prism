@@ -1,0 +1,65 @@
+surface: prism-workspace-overview
+status: implementation-contract
+primary_user: a connected or pre-connection Prism user
+primary_goal: understand what needs attention and act without confusing communication, authorization, execution, and evidence
+
+protected_truth:
+  - Starknet is the canonical Prism identity root
+  - messaging exists inside verified relationships
+  - an authorization request is not execution authority
+  - only reconciled receipts prove completion
+  - private state requires wallet consent
+  - notes and viewing keys remain wallet-owned
+  - preview state must not imply identity, funds, messages, requests, or receipts
+
+navigation:
+  primary:
+    - overview
+    - activity
+    - connections
+    - profile
+  forbidden:
+    - prism-home
+    - id
+    - explorer
+    - chat
+
+home:
+  primary_actions:
+    - send
+    - receive
+    - ask-for-approval
+    - connect
+  blocks:
+    - identity-and-session-context
+    - attention
+    - relationship-entry
+    - private-state
+    - recent-reconciled-activity
+  empty_state: explain the next useful action without fabricating state
+
+motion:
+  system: soft-fluid
+  rail: hover-or-focus expansion
+  panel_transition: opacity-and-translate only
+  feedback_deadline_ms: 100
+  reduced_motion: required
+  hidden_base_state: forbidden
+
+non_goals:
+  - redesigning the public landing or entry sequence
+  - building real relationship messaging in this pass
+  - mounting engineering/provider test panels in Home
+  - claiming live wallet, identity, balance, message, request, transaction, or receipt data
+
+acceptance_gates:
+  - no visible Prism Home, ID, or Explorer chrome
+  - landing hero and entry source unchanged except workspace anchor references
+  - all sidebar controls are keyboard accessible
+  - active sidebar state is programmatic
+  - mobile navigation remains understandable without hover
+  - typecheck passes
+  - tests pass
+  - production build passes
+  - desktop and mobile runtime screenshots pass visual inspection
+  - motion frame strip shows rail and view transitions

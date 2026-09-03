@@ -62,11 +62,25 @@ export function supportsStrk20(apiVersions: readonly string[], specs: readonly s
 export type WalletEnvironment = "SN_MAIN" | "SN_SEPOLIA" | "UNKNOWN";
 export type ExpectedWalletEnvironment = Exclude<WalletEnvironment, "UNKNOWN">;
 
+function normalizeKnownNetworkId(chainId: string): string {
+  const normalized = chainId.trim().toUpperCase();
+  if (/^0X[0-9A-F]+$/.test(normalized) && normalized.length % 2 === 0) {
+    try {
+      const bytes = normalized.slice(2).match(/.{2}/g) ?? [];
+      const decoded = String.fromCharCode(...bytes.map((byte) => Number.parseInt(byte, 16))).toUpperCase();
+      if (decoded === "SN_MAIN" || decoded === "SN_SEPOLIA") return decoded;
+    } catch {
+      // Fall through to UNKNOWN for malformed or unsupported encodings.
+    }
+  }
+  return normalized;
+}
+
 export function classifyWalletEnvironment(
   chainId: string,
   chainIds: { mainnet: string; sepolia: string },
 ): WalletEnvironment {
-  const n = chainId.trim().toUpperCase();
+  const n = normalizeKnownNetworkId(chainId);
   const mainIds = ["SN_MAIN", chainIds.mainnet.toUpperCase()];
   const sepoliaIds = ["SN_SEPOLIA", chainIds.sepolia.toUpperCase()];
   if (mainIds.includes(n)) return "SN_MAIN";

@@ -4,7 +4,7 @@ import { PauseService } from "../application/pause-service";
 import { evaluatePolicy } from "../domain/policy-engine";
 import { createIntent } from "../domain/intent";
 import { createExecutionPlan } from "../domain/execution-plan";
-import { createPause } from "../domain/pause";
+import { createPause, computeApprovalScopeHash } from "../domain/pause";
 import type { ExecutionPause } from "../domain/pause";
 import type { Policy, VerificationSources } from "../domain/policy-engine";
 import type { CreateOperationRecordInput, PersistedOperation } from "../../prism-operations/domain/operation-store";
@@ -108,6 +108,41 @@ class FailOnceReleasePauseUpdateStore extends InMemoryPauseStore {
 }
 
 describe("M7 local runtime gap regressions", () => {
+  it("rejects durable decisions whose approval scope is not bound to the pause", async () => {
+    const store = new InMemoryPauseStore();
+    const service = new PauseService(store, { store });
+    const intent = await service.createIntent(intentInput({ intentId: "intent_scope_store", clientIdempotencyKey: "idem_scope_store" }));
+    const plan = await service.createPlan({
+      chainId: "base", asset: "0xdead", recipient: "0xabc", calls: ["transfer"],
+      valueLimits: { maxValue: "100" }, policyVersion: "v1", intentId: intent.intentId, createdAt: 1_100,
+    });
+    const pause = await service.pause({ intentId: intent.intentId, planHash: plan.planHash, now: 1_200 });
+
+    await expect(store.appendDecision({
+      decisionId: "decision_bad_scope",
+      pauseId: pause.pauseId,
+      kind: "APPROVE",
+      actor: "controller",
+      policyVersion: pause.policyVersion,
+      planHash: pause.planHash,
+      approvalScopeHash: "0x" + "f".repeat(64) as `0x${string}`,
+      reasonCodes: ["PAUSE-AUTH-003"],
+      createdAt: 1_300,
+    })).rejects.toMatchObject({ code: PAUSE_ERROR_CODE.APPROVAL_SCOPE_MISMATCH });
+
+    const validScope = computeApprovalScopeHash(pause.pauseId, pause.planHash, pause.policyVersion);
+    await expect(store.appendDecision({
+      decisionId: "decision_valid_scope",
+      pauseId: pause.pauseId,
+      kind: "APPROVE",
+      actor: "controller",
+      policyVersion: pause.policyVersion,
+      planHash: pause.planHash,
+      approvalScopeHash: validScope,
+      reasonCodes: ["PAUSE-AUTH-003"],
+      createdAt: 1_300,
+    })).resolves.toBeDefined();
+  });
   it("fails closed when release authority is not explicitly configured", async () => {
     const { pauseStore, service, plan, verified } = await readyPause();
 

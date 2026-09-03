@@ -20,6 +20,21 @@ persistent identity / coordination rooted on Starknet
 
 STRK20 constrains Prism's private Starknet implementation; it does not redefine Prism's core identity primitive.
 
+## Prism core privacy scope
+
+Prism's core STRK20 use case is:
+
+```text
+Prism ID / native account continuity
+→ private transfers
+→ consent-gated private state
+→ governed action and request coordination
+```
+
+STRK20 itself provides the private wallet, note, transfer, and execution primitives. Lending, Vesu, swaps, or another DeFi protocol are **application-specific compositions**, not requirements of STRK20 and not prerequisites for Prism's core identity, private-transfer, or request flows.
+
+The Vesu `PrismVesuLendingHelper` route is retained as an optional M5 integration experiment and separate evidence lane. Its provider failure must not be treated as a blocker for the core Prism privacy product unless Prism explicitly chooses private lending as a release requirement.
+
 ## Current integration route
 
 For Prism's user-facing dapp flow:

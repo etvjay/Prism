@@ -19,7 +19,7 @@ node ops/starknet/validate.mjs
 # Checks performed:
 #   - contracts/prism_identity_registry/snfoundry.toml has only commented placeholder profiles
 #   - ops/starknet/sncast.toml.example + provider.example.toml + accounts.json.example contain no hex private key
-#   - env var names STARKNET_RPC_URL / STARKNET_SEPOLIA_RPC_URL etc. are referenced, not hard-coded URLs with keys
+#   - env var names STARKNET_RPC_URL / BASE_RPC_URL are referenced, not hard-coded URLs with keys
 #   - no mainnet profile is marked as default
 
 # Evidence envelope builder (no deployment)
@@ -49,10 +49,12 @@ strk20.json:         ✕ empty (correct — do not populate from testnet)
 
 ```bash
 # Contract toolchain (no RPC, no deployment)
-scarb build --manifest-path contracts/prism_identity_registry/Scarb.toml
-snforge test --manifest-path contracts/prism_identity_registry/Scarb.toml
-# Expected: scarb build ok, snforge 7+ tests pass (counter, auth, events)
-# Pins: scarb 2.20.0 / snforge 0.63.0 per STACK_DECISIONS SD-007 — run `scy --version` only for record
+# Do not use a manifest-path flag here: snforge 0.63.0 has no such option.
+# The verified project is the repo's cairo/ package; run both from that directory.
+(cd cairo && scarb build)
+(cd cairo && snforge test)
+# Expected: scarb build ok, snforge tests pass (counter, auth, events)
+# Verified pins: scarb 2.20.0 / Cairo 2.20.0 / snforge 0.63.0.
 ```
 
 ---
@@ -73,11 +75,16 @@ NEXT_PUBLIC_STARKNET_NETWORK=SN_SEPOLIA
 # values fail closed — there is no server-side network default.
 BASE_RPC_URL=https://<base-sepolia-rpc>
 BASE_CHAIN_ID=84532
-STARKNET_SEPOLIA_DEPLOYER_PRIVATE_KEY=<never commit>
-# or: STARKNET_SEPOLIA_KEYSTORE_PATH=~/.starknet-accounts/keystores/sepolia.json
+STARKNET_DEPLOYER_PRIVATE_KEY=<never commit>
+# or: STARKNET_KEYSTORE_PATH=~/.starknet-accounts/keystores/current.json
+# mainnet example (release-gated; same variable names, exact values supplied outside repo)
+# PRISM_TARGET_ENV=mainnet
+# STARKNET_CHAIN_ID=SN_MAIN
+# STARKNET_RPC_URL=https://<SN_MAIN-RPC>/v0_7
+# NEXT_PUBLIC_STARKNET_NETWORK=SN_MAIN
+# BASE_RPC_URL=https://<BASE_MAINNET-RPC>
+# BASE_CHAIN_ID=8453
 ```
-
-Validate presence without printing secrets:
 
 ```bash
 test -n "$STARKNET_RPC_URL" && echo "STARKNET_RPC_URL set (redacted)" || echo "MISSING — expected for live testnet"
@@ -102,7 +109,7 @@ node ops/starknet/dry-run-check.mjs
 sncast --profile sepolia declare --contract-name PrismIdentityRegistry --dry-run
 sncast --profile sepolia deploy --class-hash 0x... --constructor-calldata 0x... --dry-run
 # These commands parse calldata, compile, and simulate without broadcasting;
-# they are safe to run once STARKNET_SEPOLIA_RPC_URL is set, but still require owner gate.
+# they are safe to run once STARKNET_RPC_URL is set, but still require owner gate.
 # In Bundle 3T they are NOT executed — they are documented as the next dry-run gate after DEC-PRISM-OPS-001.
 ```
 

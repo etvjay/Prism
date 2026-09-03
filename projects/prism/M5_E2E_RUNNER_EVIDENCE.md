@@ -6,6 +6,10 @@
 **Helper source:** `contracts/prism_vesu_lending_helper/src/lib.cairo:1-187` (canon `privacy_invoke(in_token, out_token, in_amount:u128, note_id) -> Span<OpenNoteDeposit>` preserved 1:1)
 **Gate:** `M5_CLOSEOUT_PROTOCOL.md` + `BACKEND_PHASE_M5_E2E_REDTEAM.md` H1 fixed (u256 real-token surfaces, checked `u256→u128` via `try_into` never truncates)
 
+**Snapshot note:** this is historical lane evidence from the stated date/base;
+its local test totals are not current repository-wide totals. The full route remains
+blocked as documented below.
+
 ## Runner
 
 Provider-injected, no mock proof as evidence. Simulate `strk20PrepareInvoke(..., true)` returns empty `proof.data=""` and is never submitted.

@@ -4,6 +4,8 @@ import {
   markM5SubmissionStarted,
   markM5Submitted,
   recoverM5Operation,
+  loadM5Operation,
+  persistM5Operation,
   type M5ReceiptObservation,
 } from "../operation";
 import { PRIVACY_POOL_SEPOLIA } from "../constants";
@@ -57,6 +59,19 @@ describe("M5 operation/recovery contract", () => {
     const mismatch = recoverM5Operation(submitted, successReceipt({ transactionHash: "0x1" as `0x${string}` }), { now: 4, timeoutAt: 100 });
     expect(mismatch.operation.state).toBe("submitted");
     expect(mismatch.advanced).toBe(false);
+  });
+
+  it("persists an ambiguous submission fence and reloads it without a hash", () => {
+    const values = new Map<string, string>();
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) } });
+    const started = markM5SubmissionStarted(createM5Operation("persistent-op", 1), 2);
+    persistM5Operation(started);
+    expect(loadM5Operation("persistent-op")).toMatchObject({ submissionAttempted: true, txHash: null, state: "submitting" });
+    const timeout = recoverM5Operation(started, null, { now: 101, timeoutAt: 100 });
+    persistM5Operation(timeout.operation);
+    const reloaded = loadM5Operation("persistent-op");
+    expect(reloaded).toMatchObject({ submissionAttempted: true, state: "submitting", errorCode: null });
+    expect(() => markM5SubmissionStarted(reloaded!, 102)).toThrow(/submission_attempted/);
   });
 
   it("does not promote a successful receipt without a pinned pool event", () => {

@@ -1,0 +1,109 @@
+{
+  "release_status": "NOT_MAINNET_READY",
+  "release_track": "core_v1",
+  "environment": "SN_MAIN",
+  "network": {
+    "starknet": "SN_MAIN",
+    "base_network": "Base Mainnet",
+    "base_chain_id": 8453
+  },
+  "owner_decision": {
+    "status": "PROPOSED",
+    "decision_id": null,
+    "decided_by": null,
+    "decided_at": null,
+    "signature": null,
+    "selected_environment": null,
+    "approved_scope": null
+  },
+  "environment_contract": {
+    "profile": "mainnet",
+    "starknet_network": "SN_MAIN",
+    "starknet_chain_id": "SN_MAIN",
+    "base_network": "Base Mainnet",
+    "base_chain_id": 8453,
+    "deployment_mode": "AUTHORIZED_LIVE_ONLY",
+    "starknet_rpc_env": "STARKNET_RPC_URL",
+    "base_rpc_env": "BASE_RPC_URL",
+    "signer_ref": null
+  },
+  "required_contract_identities": [
+    "PrismIdentityRegistry"
+  ],
+  "mainnet_figures": {
+    "starknet_chain_id": "SN_MAIN",
+    "base_chain_id": 8453,
+    "pool_address": null,
+    "required_final_transaction_count": 0,
+    "final_submission_hashes": [],
+    "hub_validator": null,
+    "pool_event_tx_hash": null,
+    "pool_event_block": null,
+    "validator_source": null,
+    "verified_at": null
+  },
+  "contracts": [
+    {
+      "name": "PrismIdentityRegistry",
+      "address": null,
+      "class_hash": null,
+      "deployment_block": null,
+      "constructor_calldata": null,
+      "receipt": {
+        "tx_hash": null,
+        "block": null,
+        "status": null,
+        "provider": null
+      },
+      "independent_read": {
+        "provider": null,
+        "address_match": false,
+        "class_hash_match": false,
+        "verified_at": null
+      }
+    }
+  ],
+  "signer_funding_preflight": {
+    "status": "NOT_OBSERVED",
+    "environment": "SN_MAIN",
+    "base_network": "Base Mainnet",
+    "signer_ref": null,
+    "wallet_provider": null,
+    "prover_provider": null,
+    "verified_at": null,
+    "starknet": {
+      "deployer_address": null,
+      "funding_provider": null,
+      "funding_amount": null,
+      "funding_tx_hash": null,
+      "funding_receipt_status": null,
+      "funding_block": null,
+      "funding_independent_read": {
+        "provider": null,
+        "address_match": false,
+        "amount_match": false,
+        "verified_at": null
+      }
+    },
+    "base": {
+      "submitter_address": null,
+      "funding_provider": null,
+      "funding_amount": null,
+      "funding_tx_hash": null,
+      "funding_receipt_status": null,
+      "funding_block": null,
+      "funding_independent_read": {
+        "provider": null,
+        "address_match": false,
+        "amount_match": false,
+        "verified_at": null
+      }
+    }
+  },
+  "wallet_prover": null,
+  "limitations": [
+    "Preparation template only; no owner approval, credentials, deployment, broadcast, or independent mainnet readback exists. Keep unobserved approval, signer, mainnet figure, contract receipt/readback, and funding fields null or false.",
+    "For release_track core_v1, pool/event/validator fields remain null, required_final_transaction_count remains 0, final_submission_hashes remains empty, and wallet_prover remains null until an explicitly selected STRK20 submission track has independently observed evidence.",
+    "STRK20 privacy and three-transaction submission evidence are a separate in-repository release track."
+  ]
+}

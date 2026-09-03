@@ -174,13 +174,17 @@ If a declared contract, wallet integration, helper ABI, or privacy route materia
 ## Final release gate
 
 ```text
-[ ] ≥3 qualifying hashes
+[ ] owner decision accepted and mirrored for the exact mainnet scope
+[ ] exact SN_MAIN/Base Mainnet environment contract selected (no implicit defaults)
+[ ] protected signer/funding preflight complete with independent receipt reads
+[ ] ≥3 distinct qualifying hashes
 [ ] all hashes SN_MAIN
 [ ] all succeeded
 [ ] all contain STRK20 pool event
 [ ] if contracts are declared, every hash involves ≥1 declared Prism contract
+[ ] wallet and prover evidence includes accepted receipt + independent read
 [ ] all selected hashes independently rechecked against current hub logic
-[ ] hashes included in strk20.json
+[ ] hashes included in strk20.json only after separate authorization
 [ ] every deployed/required project address accurately listed in contracts
 [ ] demo video maps claims to real evidence
 [ ] public demo works

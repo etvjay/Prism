@@ -14,6 +14,15 @@ X5 mainnet/production independently verifiable
 
 Only evidence matching the current implementation/spec version counts as current.
 
+## Reconciled baseline disposition
+
+The current Core v1 preparation ceiling is **X2 overall**. Two separately scoped
+testnet facets are recorded at X3: `EVD-PRISM-004` (identity create/read/event/scan)
+and `EVD-PRISM-014` (Registry V2 plus direct M3 bind/resolve/revoke facts). These
+rows do not promote the complete Core v1 release, repeated/reproduced evidence, or
+mainnet readiness. `EVD-PRISM-005..007` and all `EVD-STRK20-*` rows remain
+`X0` / `NOT_IMPLEMENTED`. The root `strk20.json` remains intentionally empty.
+
 ---
 
 | Evidence ID | Claim | Target | Current | Status | Evidence / receipt | Limitation |
@@ -119,7 +128,7 @@ For every final STRK20 submission transaction record:
 
 ```text
 network = SN_MAIN
-transaction hash
+transaction hash (exact 32-byte value; distinct from the other two)
 success status
 block
 STRK20 pool event
@@ -127,11 +136,13 @@ Prism contract involvement if contracts are declared
 build commit
 user/demo flow
 privacy property actually evidenced
-strk20.json inclusion
+independent provider/explorer read
+strk20.json inclusion only after separate authorization
 ```
 
-If `strk20.json.contracts` is non-empty, a final candidate does **not** pass until current hub-equivalent checks produce:
-
+The release packet must carry exactly three distinct final submission hashes. A repeated
+hash is one observation, not three submissions, even if the hub validator returns the same
+result. Record receipt and independent-read evidence before any ledger promotion.
 ```text
 ok   = true
 pool = true

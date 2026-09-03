@@ -28,6 +28,26 @@ export interface M5RecoveryResult {
   readonly reason: string;
 }
 
+const STORAGE_PREFIX = "prism:m5-submission-fence:";
+
+/** Persist only public operation metadata; an ambiguous submission is never cleared. */
+export function loadM5Operation(id: string): M5Operation | null {
+  try {
+    if (typeof globalThis.localStorage === "undefined") return null;
+    const raw = globalThis.localStorage.getItem(STORAGE_PREFIX + id);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as M5Operation;
+    if (value?.id !== id || typeof value.submissionAttempted !== "boolean" || !["ready", "submitting", "submitted", "received", "succeeded", "reverted", "requires_attention"].includes(value.state)) return null;
+    return value;
+  } catch { return null; }
+}
+
+export function persistM5Operation(operation: M5Operation): void {
+  try {
+    if (typeof globalThis.localStorage !== "undefined") globalThis.localStorage.setItem(STORAGE_PREFIX + operation.id, JSON.stringify(operation));
+  } catch { /* unavailable storage must not weaken the in-memory fence */ }
+}
+
 function hasPoolEventEvidence(receipt: M5ReceiptObservation, requiredPoolAddress?: string): boolean {
   if (receipt.poolEventFound !== true || !Array.isArray(receipt.events) || receipt.events.length === 0) return false;
   const poolAddress = requiredPoolAddress ?? PRIVACY_POOL_SEPOLIA;

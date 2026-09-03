@@ -74,6 +74,7 @@ export function parseSession(req: Request, bodySession?: unknown): AppSession | 
 export function toHttpResponse<T>(appRes: AppResponse<T>, parsed: ParsedHeaders): Response {
   const headers = new Headers();
   headers.set("content-type", "application/json");
+  headers.set("x-prism-api-version", "1.0.0");
   if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
   if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
   if (appRes.ok && (appRes as { watermark?: number | null }).watermark !== undefined && (appRes as { watermark?: number | null }).watermark !== null) {
@@ -117,6 +118,7 @@ export function toHttpResponse<T>(appRes: AppResponse<T>, parsed: ParsedHeaders)
 
 export function jsonError(requestId: string | null, code: string, httpStatus: number, detail?: string): Response {
   const headers = new Headers({ "content-type": "application/json" });
+  headers.set("x-prism-api-version", "1.0.0");
   if (requestId) headers.set("x-request-id", requestId);
   headers.set("x-error-code", code);
   const safeDetail = sanitizeExternalDetail(code, detail);
@@ -141,6 +143,7 @@ export interface ExternalHttpErrorShape {
 /** Serialize a domain error at the HTTP boundary with the same redaction as AppResponse errors. */
 export function toHttpErrorResponse(error: ExternalHttpErrorShape, parsed: ParsedHeaders, status = error.httpStatusHint): Response {
   const headers = new Headers({ "content-type": "application/json", "x-error-code": error.code });
+  headers.set("x-prism-api-version", "1.0.0");
   if (parsed.requestId) headers.set("x-request-id", parsed.requestId);
   if (parsed.correlationId) headers.set("x-correlation-id", parsed.correlationId);
   const detail = sanitizeExternalDetail(error.code, error.detail);
@@ -168,6 +171,14 @@ export async function readJson(req: Request): Promise<Record<string, unknown> | 
 
 // Helper to build AppSession fallback for unauthenticated tests (requires explicit session in real flow)
 export function requireSession(req: Request, body: Record<string, unknown> | null): AppSession | { error: Response } {
+  // Legacy callers must not silently accept caller-asserted headers/body in a
+  // deployed process. Production writes use requireAuthenticatedSession; this
+  // compatibility helper is fixture-only and fail-closed by default.
+  const testMode = process.env.PRISM_RUNTIME_MODE === "test" || (process.env.PRISM_RUNTIME_MODE === undefined && process.env.NODE_ENV === "test");
+  if (!testMode || process.env.PRISM_TEST_ONLY_ALLOW_SESSION_FIXTURES !== "1") {
+    const parsedHeaders = parseHeaders(req);
+    return { error: jsonError(parsedHeaders.requestId, "ERR-023", 503, "session_verifier_unavailable") };
+  }
   const fromBody = (body?.session ?? body?.appSession ?? null) as unknown as AppSession | null;
   const parsed = parseSession(req, fromBody);
   if (parsed) return parsed;

@@ -46,6 +46,7 @@ import {
 } from "./starknet-wallet-adapter";
 import { SESSION_STRINGS } from "./strings";
 import type { PrivacyWalletSession, StarknetWalletSession } from "./types";
+import type { M5Provider } from "../../prism-strk20/m5/ports";
 
 export interface SessionProviderProps {
   readonly children: ReactNode;
@@ -67,6 +68,7 @@ export interface SessionContextValue {
   readonly connectWallet: (walletId: string) => void;
   readonly disconnect: () => void;
   readonly switchNetwork: () => void;
+  readonly getM5Provider: () => M5Provider | null;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -275,6 +277,8 @@ export function SessionProvider({
     });
   }, [refreshFromBoundary]);
 
+  const getM5Provider = useCallback(() => activeBoundaryRef.current?.getM5Provider() ?? null, []);
+
   const snapshot = useMemo(() => selectSessionSnapshot(state), [state]);
   const notice = state.notice ?? walletErrorNotice(state.session);
   const value = useMemo<SessionContextValue>(() => ({
@@ -289,7 +293,8 @@ export function SessionProvider({
     connectWallet,
     disconnect,
     switchNetwork,
-  }), [connectWallet, disconnect, notice, snapshot, startDiscovery, state, switchNetwork]);
+    getM5Provider,
+  }), [connectWallet, disconnect, getM5Provider, notice, snapshot, startDiscovery, state, switchNetwork]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -62,10 +62,15 @@ import type { StarknetIdLookupPort } from "../integrations/starknet-id/types";
 import type { IdentityAliasAssociationPort, IdentityAliasProvider } from "../integrations/identity-alias/types";
 import type { RegistryReadPort, StarknetSubmitPort } from "./ports";
 import { isConcreteStarknetSubmitAdapter } from "./ports";
+import type { SmartWalletSignatureChecker } from "../features/prism-identity/domain/ports";
+import type { PauseMetrics } from "../features/prism-pause/ports/metrics";
+
 import type { PauseAuthorityResolver } from "../features/prism-pause/ports/authority";
 import type { VerificationSourceProvider } from "../features/prism-pause/domain/policy-engine";
 import type { LedgerStatusPort, EventIndexerPort } from "../features/prism-operations/domain/ports";
+import { Pool } from "pg";
 import { RpcProvider } from "starknet";
+import { getRuntimeProfileConfig, postgresPoolOptions, type RuntimeProfileConfig } from "./runtime-profile";
 
 export type SubmitPortMode = "TEST_DOUBLE_X2" | "STARKNET_INJECTED";
 export type FactoryRuntimeMode = "test" | "development" | "production";
@@ -158,6 +163,10 @@ export interface FactoryStarknetOverrides {
   bindingOwnerAuthorization?: BindingOwnerAuthorizationPort | null;
   /** Real provider only; the default is an explicit blocked adapter, never fake encryption. */
   privateBindingProtection?: PrivateBindingProtectionPort | null;
+  /** Concrete (non-test) EIP-1271 semantics checker; required in production/rehearsal, optional test override. */
+  erc1271SemanticsChecker?: SmartWalletSignatureChecker;
+  /** Explicit Pause metrics sink; required in production/rehearsal. */
+  pauseMetrics?: PauseMetrics;
   /** Provider-neutral alias providers keyed by normalized namespace. */
   aliasProviders?: ReadonlyMap<string, IdentityAliasProvider> | Readonly<Record<string, IdentityAliasProvider>>;
   /** Convenience injection for one provider in focused tests. */
@@ -234,7 +243,34 @@ export interface AppFactory {
   isPostgres: boolean;
   isStarknetConfigured: boolean;
   /** Graceful shutdown: stop worker, close stores/events. */
+  /** Resolved EIP-1271 semantics checker; fail-closed in production/rehearsal. */
+  erc1271SemanticsChecker: SmartWalletSignatureChecker;
+  /** Resolved Pause metrics sink; fail-closed in production/rehearsal. */
+  pauseMetrics: PauseMetrics;
+  /** Explicit lifecycle: begin background reconciliation at most once. */
+  startReconciliation(): Promise<void>;
   shutdown(): Promise<void>;
+}
+
+type FactoryLifecycleTarget = Pick<AppFactory, "runtimeMode" | "startReconciliation" | "shutdown">;
+
+/**
+ * Start production background reconciliation as part of factory readiness.
+ * Test/development factories remain explicit X2 fixtures and do not start a
+ * daemon. Startup failure is fatal and cleanup is attempted before rethrowing.
+ */
+export async function startFactoryLifecycle(factory: FactoryLifecycleTarget): Promise<void> {
+  if (factory.runtimeMode !== "production") return;
+  try {
+    await factory.startReconciliation();
+  } catch (cause) {
+    try {
+      await factory.shutdown();
+    } catch {
+      // Preserve the original startup failure as the readiness error.
+    }
+    throw cause;
+  }
 }
 
 export function isStarknetSubmitConfiguredForFactory(factory: AppFactory): boolean {
@@ -263,9 +299,76 @@ export function assertChainTouchingConfiguredForFactory(
 // ---------------------------------------------------------------------------
 
 export function getPostgresUrl(): string | null {
-  const raw = (process.env.PRISM_POSTGRES_TEST_URL ?? process.env.PRISM_POSTGRES_URL ?? "").trim();
-  if (!raw) return null;
-  return raw;
+  try {
+    return getRuntimeProfileConfig().databaseUrl;
+  } catch (error) {
+    // Preserve the legacy predicate's contract (invalid URL => false) while
+    // startup/factory paths still receive the fail-closed typed error.
+    if ((error as { code?: string }).code === "database_url_invalid") {
+      return (process.env.PRISM_POSTGRES_TESTNET_URL ?? process.env.PRISM_POSTGRES_TEST_URL ?? process.env.PRISM_POSTGRES_URL ?? "").trim() || null;
+    }
+    if ((error as { code?: string }).code === "profile_required") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** Exposed for startup probes and tests; contains no credential redaction risk. */
+export function getPostgresRuntimeConfig(): RuntimeProfileConfig {
+  return getRuntimeProfileConfig();
+}
+
+function getFactoryRuntimeConfig(): RuntimeProfileConfig {
+  try {
+    return getRuntimeProfileConfig();
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    const detail = code === "database_url_invalid" ? "invalid_postgres_url_format" : code === "profile_required" || code === "database_url_missing" ? "postgres_url_missing_in_production" : "invalid_runtime_profile_config";
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, detail);
+  }
+}
+
+/**
+ * Fail-closed EIP-1271 checker boundary: the local fixture remains the default
+ * only in test/development; production and rehearsal (which share the
+ * production runtime) require an explicitly injected concrete checker.
+ */
+export function resolveErc1271SemanticsChecker(
+  injected: SmartWalletSignatureChecker | null | undefined,
+  runtimeMode: FactoryRuntimeMode,
+): SmartWalletSignatureChecker {
+  if (runtimeMode === "production" && injected instanceof LocalErc1271SemanticsChecker) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "erc1271_test_double_forbidden_in_production");
+  }
+  if (injected) return injected;
+  if (runtimeMode === "test" || runtimeMode === "development") return new LocalErc1271SemanticsChecker();
+  throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "erc1271_semantics_checker_missing_in_production");
+}
+
+/**
+ * Fail-closed Pause metrics boundary with the same test/development vs
+ * production/rehearsal split as the EIP-1271 checker boundary above.
+ */
+export function resolvePauseMetrics(
+  injected: PauseMetrics | null | undefined,
+  runtimeMode: FactoryRuntimeMode,
+): PauseMetrics {
+  if (runtimeMode === "production" && injected instanceof InMemoryPauseMetrics) {
+    throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "pause_metrics_test_double_forbidden_in_production");
+  }
+  if (injected) return injected;
+  if (runtimeMode === "test" || runtimeMode === "development") return new InMemoryPauseMetrics();
+  throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "pause_metrics_missing_in_production");
+}
+
+/**
+ * Base L2 chain id bound into issued ownership challenges, derived from the
+ * already-validated runtime profile: TESTNET is Base Sepolia (84532), MAINNET
+ * is Base (8453). There is deliberately no implicit cross-profile fallback.
+ */
+export function defaultChainIdForProfile(profile: RuntimeProfileConfig["profile"]): 8453 | 84532 {
+  return profile === "MAINNET" ? 8453 : 84532;
 }
 
 export function isPostgresUrlValid(url: string): boolean {
@@ -461,8 +564,18 @@ function createSharedRpcProvider(rpcUrl: string): FactoryStarknetOverrides["star
   return new RpcProvider({ nodeUrl: rpcUrl }) as unknown as FactoryStarknetOverrides["starknetReadProvider"];
 }
 
-export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
-  const cfg = assertStarknetEnvOrThrow();
+export function createStarknetReadPorts(overrides?: FactoryStarknetOverrides, options?: { ignoreIncompleteEnvironment?: boolean }): { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null {
+  // Isolated test factories must not inherit a partially configured shell
+  // environment (for example an RPC URL without a registry address). A
+  // complete explicit configuration still takes the real read path; a
+  // partial ambient configuration is ignored only when the caller opts in.
+  let cfg: ReturnType<typeof assertStarknetEnvOrThrow>;
+  try {
+    cfg = assertStarknetEnvOrThrow();
+  } catch (error) {
+    if (options?.ignoreIncompleteEnvironment && (error as Error).message.includes("starknet_read_config_incomplete")) return null;
+    throw error;
+  }
   if (!cfg) return null;
   // Share one read-only provider across callContract and getEvents — no dead shim.
   const provider = overrides?.starknetReadProvider ?? createSharedRpcProvider(cfg.rpcUrl);
@@ -587,6 +700,7 @@ function createMemoryFactory(
   clock = fixedClock(Math.floor(Date.now() / 1000)),
   overrides?: FactoryStarknetOverrides,
   runtimeMode: FactoryRuntimeMode = getRuntimeMode(),
+  profileConfig: RuntimeProfileConfig = getFactoryRuntimeConfig(),
 ): AppFactory {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
@@ -595,13 +709,13 @@ function createMemoryFactory(
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "pause_settlement_test_double_forbidden_in_runtime");
   }
   const ownershipStore = new InMemoryOwnershipProofStore();
-  const checker = new LocalErc1271SemanticsChecker();
+  const checker = resolveErc1271SemanticsChecker(overrides?.erc1271SemanticsChecker, runtimeMode);
   const challengeService = new PrismChallengeService({
     clock,
     crypto: viemChallengeCrypto,
     checker,
     store: ownershipStore,
-    policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: 84532 },
+    policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: defaultChainIdForProfile(profileConfig.profile) },
   });
   const operationStore = new InMemoryOperationStore();
   const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new InMemoryBindingDisclosureStore();
@@ -620,7 +734,7 @@ function createMemoryFactory(
   let starknetPorts: { reader: StarknetRegistryReader; ledger: StarknetLedgerStatusAdapter; indexer: StarknetEventIndexerAdapter; provider: FactoryStarknetOverrides["starknetReadProvider"]; network: StarknetNetwork; registryAddress: string; registryVersion: StarknetRegistryVersion; initialFromBlock: number; classHash: string | null } | null = null;
   let starknetError: Error | null = null;
   try {
-    starknetPorts = createStarknetReadPorts(overrides);
+    starknetPorts = createStarknetReadPorts(overrides, { ignoreIncompleteEnvironment: runtimeMode === "test" });
   } catch (e) {
     starknetError = e as Error;
   }
@@ -642,7 +756,7 @@ function createMemoryFactory(
   const assertChainTouchingConfigured = () => assertChainTouchingConfiguredForFactory({ runtimeMode, isStarknetConfigured, submitPortMode, isStarknetSubmitConfigured, submitPort });
   if (runtimeMode === "production") assertChainTouchingConfigured();
   const pauseStore = new InMemoryPauseStore();
-  const pauseMetrics = new InMemoryPauseMetrics();
+  const pauseMetrics = resolvePauseMetrics(overrides?.pauseMetrics, runtimeMode);
   const pauseAdapters = runtimeMode === "test"
     ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
     : undefined;
@@ -733,6 +847,16 @@ function createMemoryFactory(
     clock,
     config: { staleWatermarkK: 5, sweepLimit: 100 },
   });
+  // Explicit lifecycle: begin background reconciliation at most once (memoized, idempotent).
+  let reconciliationStart: Promise<void> | null = null;
+  const startReconciliation = (): Promise<void> => {
+    if (reconciliationStart) return reconciliationStart;
+    reconciliationStart = reconciliationWorker.start().catch((cause: unknown) => {
+      reconciliationStart = null;
+      throw cause;
+    });
+    return reconciliationStart;
+  };
   const shutdown = async () => {
     reconciliationWorker.stop();
     await Promise.allSettled([
@@ -778,10 +902,23 @@ function createMemoryFactory(
     starknetReadProvider,
     resolveService,
     reconciliationWorker,
+    startReconciliation,
+    erc1271SemanticsChecker: checker,
+    pauseMetrics,
     isPostgres: false,
     isStarknetConfigured,
     shutdown,
   };
+}
+
+async function ensurePostgresSchema(url: string, config: RuntimeProfileConfig): Promise<void> {
+  const bootstrap = new Pool({ connectionString: url });
+  try {
+    // schema is constrained to prism_testnet/prism_mainnet by the config parser.
+    await bootstrap.query(`CREATE SCHEMA IF NOT EXISTS "${config.schema}"`);
+  } finally {
+    await bootstrap.end().catch(() => undefined);
+  }
 }
 
 async function createPostgresFactory(
@@ -789,6 +926,7 @@ async function createPostgresFactory(
   clock = fixedClock(Math.floor(Date.now() / 1000)),
   overrides?: FactoryStarknetOverrides,
   runtimeMode: FactoryRuntimeMode = getRuntimeMode(),
+  profileConfig: RuntimeProfileConfig = getRuntimeProfileConfig(),
 ): Promise<AppFactory> {
   if (overrides?.submitPort && !overrides.submitPortRegistryVersion) {
     throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "submit_port_registry_version_required");
@@ -799,14 +937,23 @@ async function createPostgresFactory(
   // Validate format synchronously before attempting network
   assertPostgresUrlOrThrow(url);
 
-  // Create PG-backed stores. Each does migrate() fail-closed.
-  const ownershipStore = new PostgresOwnershipProofStore({ connectionString: url });
-  const operationStore = new PostgresOperationStore({ connectionString: url });
-  const pauseStore = new PostgresPauseStore({ connectionString: url });
-  const prismEventsStore = new PostgresPrismEventsStore({ connectionString: url });
-  const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore({ connectionString: url });
-  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore({ connectionString: url });
-  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new PostgresResolutionSnapshotStore({ connectionString: url });
+  // Validate non-test production dependencies before opening any PostgreSQL
+  // pool or running migrations, so fail-closed startup cannot leak resources.
+  const checker = resolveErc1271SemanticsChecker(overrides?.erc1271SemanticsChecker, runtimeMode);
+  const pauseMetrics = resolvePauseMetrics(overrides?.pauseMetrics, runtimeMode);
+
+  // Create the profile namespace before setting search_path. Every adapter then
+  // migrates and reads only inside this network's schema.
+  await ensurePostgresSchema(url, profileConfig);
+  const poolOptions = postgresPoolOptions(profileConfig);
+  const pgOptions = { connectionString: url, ...poolOptions };
+  const ownershipStore = new PostgresOwnershipProofStore(pgOptions);
+  const operationStore = new PostgresOperationStore(pgOptions);
+  const pauseStore = new PostgresPauseStore(pgOptions);
+  const prismEventsStore = new PostgresPrismEventsStore(pgOptions);
+  const projectionCheckpointStore = new PostgresEventProjectionCheckpointStore(pgOptions);
+  const bindingDisclosureStore = overrides?.bindingDisclosureStore ?? new PostgresBindingDisclosureStore(pgOptions);
+  const resolutionSnapshotStore = overrides?.resolutionSnapshotStore ?? new PostgresResolutionSnapshotStore(pgOptions);
   const privateBindingProtection = overrides?.privateBindingProtection ?? new UnconfiguredPrivateBindingProtection();
   const bindingOwnerAuthorization = overrides?.bindingOwnerAuthorization;
 
@@ -880,13 +1027,12 @@ async function createPostgresFactory(
     }
   }
 
-  const checker = new LocalErc1271SemanticsChecker();
   const challengeService = new PrismChallengeService({
     clock,
     crypto: viemChallengeCrypto,
     checker,
     store: ownershipStore,
-    policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: 84532 },
+    policy: { defaultTtlSeconds: 600, defaultDomain: process.env.PRISM_DOMAIN ?? "prism.example", defaultChainId: defaultChainIdForProfile(profileConfig.profile) },
   });
   let bindingN = 1;
   const bindingDisclosureService = new BindingDisclosureService({
@@ -896,7 +1042,6 @@ async function createPostgresFactory(
     clock,
     idGenerator: { generateBindingId: () => `binding-${bindingN++}` },
   });
-  const pauseMetrics = new InMemoryPauseMetrics();
   const pauseAdapters = runtimeMode === "test"
     ? overrides?.testOnlyPauseSettlementAdapters ?? overrides?.testOnlyPauseSettlementAdapterFactory?.(operationStore)
     : undefined;
@@ -984,6 +1129,17 @@ async function createPostgresFactory(
     clock,
     config: { staleWatermarkK: 5, sweepLimit: 100 },
   });
+
+  // Explicit lifecycle: begin background reconciliation at most once (memoized, idempotent).
+  let reconciliationStart: Promise<void> | null = null;
+  const startReconciliation = (): Promise<void> => {
+    if (reconciliationStart) return reconciliationStart;
+    reconciliationStart = reconciliationWorker.start().catch((cause: unknown) => {
+      reconciliationStart = null;
+      throw cause;
+    });
+    return reconciliationStart;
+  };
   const shutdown = async () => {
     reconciliationWorker.stop();
     await Promise.allSettled([
@@ -1031,6 +1187,9 @@ async function createPostgresFactory(
     starknetReadProvider,
     resolveService,
     reconciliationWorker,
+    startReconciliation,
+    erc1271SemanticsChecker: checker,
+    pauseMetrics,
     isPostgres: true,
     isStarknetConfigured,
     shutdown,
@@ -1046,7 +1205,8 @@ let singletonPromise: Promise<AppFactory> | null = null;
 let singletonError: Error | null = null;
 
 async function createSingletonFactory(): Promise<AppFactory> {
-  const url = getPostgresUrl();
+  const profileConfig = getFactoryRuntimeConfig();
+  const url = profileConfig.databaseUrl;
   const runtimeMode = getRuntimeMode();
 
   if (url !== null) {
@@ -1055,7 +1215,7 @@ async function createSingletonFactory(): Promise<AppFactory> {
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, "invalid_postgres_url_format");
     }
     try {
-      return await createPostgresFactory(url, fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode);
+      return await createPostgresFactory(url, fixedClock(Math.floor(Date.now() / 1000)), undefined, runtimeMode, profileConfig);
     } catch (e) {
       if (e instanceof AppError) throw e;
       throw new AppError(APP_ERROR_CODE.RPC_UNAVAILABLE, `postgres_init_failed:${(e as Error).message?.slice(0, 80) ?? "unknown"}`);
@@ -1076,7 +1236,8 @@ export async function getAppFactory(): Promise<AppFactory> {
   if (singletonError) throw singletonError;
   if (singletonPromise) return singletonPromise;
   singletonPromise = createSingletonFactory()
-    .then((f) => {
+    .then(async (f) => {
+      await startFactoryLifecycle(f);
       singleton = f;
       singletonPromise = null;
       return f;

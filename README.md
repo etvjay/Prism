@@ -22,9 +22,15 @@ Prism is not a bridge or solver network. Native chains remain native execution v
 
 Privacy claims are venue-specific: STRK20 provides the first real private financial environment for Prism; ordinary Base transactions remain public unless a separate privacy mechanism is integrated.
 
-## Build status
+## Roadmap
 
-Early architecture and integration work. Mainnet evidence and deployed contracts will be recorded in `strk20.json` as they become available.
+**Core v1 closeout:** Registry V2, persistent Prism identity, Base ownership proof and binding, resolve/revoke lifecycle, pause/governance controls, durable operation handling, and truthful Home/operation surfaces.
+
+**The larger Prism direction:** STRK20 remains a first-class product expansion in this repository. The planned privacy surface includes wallet-mediated private state, private Starknet actions, and meaningful pool-integrated product flows. It is intentionally visible here as the next major integration rather than being treated as a separate project.
+
+**Current status:** Core v1 is locally implemented with an X2 overall preparation ceiling; separately scoped testnet identity/projection facts are recorded at X3 in `projects/prism/EVIDENCE_LEDGER.md`. Mainnet preparation is documented in `projects/prism/MAINNET_PREPARATION_HANDOFF.md` and `docs/MAINNET_READINESS_STATUS.md`; it remains fail-closed pending owner approval, protected credentials, live receipts, and independent readback. STRK20 remains hard-gated on a real Wallet API/prover session, pool action, private-state readback, accepted receipt, conservation, and independent verification. Mainnet claims and `strk20.json` entries will be added only from observed evidence.
+
+Vesu lending, LayerZero delivery, PrismChannel beyond the minimal relationship slice, shadow accounts, and broader private financial capabilities remain future expansion tracks.
 
 ## Security
 
