@@ -20,8 +20,10 @@ The current Core v1 preparation ceiling is **X2 overall**. Two separately scoped
 testnet facets are recorded at X3: `EVD-PRISM-004` (identity create/read/event/scan)
 and `EVD-PRISM-014` (Registry V2 plus direct M3 bind/resolve/revoke facts). These
 rows do not promote the complete Core v1 release, repeated/reproduced evidence, or
-mainnet readiness. `EVD-PRISM-005..007` and all `EVD-STRK20-*` rows remain
-`X0` / `NOT_IMPLEMENTED`. The root `strk20.json` remains intentionally empty.
+mainnet readiness. `EVD-PRISM-005..007` and `EVD-STRK20-001..006` (mainnet rows) remain
+`X0` / `NOT_IMPLEMENTED`. Two Sepolia SDK-direct facets are recorded at X3 below
+(`EVD-STRK20-SEP-001/002`): they de-risk the pool/prover/fee path but are not wallet-mediated,
+not mainnet, and do not satisfy any mainnet row. The root `strk20.json` remains intentionally empty.
 
 ---
 
@@ -43,6 +45,8 @@ mainnet readiness. `EVD-PRISM-005..007` and all `EVD-STRK20-*` rows remain
 | EVD-STRK20-004 | Meaningful Prism-owned pool-integrated helper action succeeds on mainnet | X5 | X0 | NOT_IMPLEMENTED | — | strongest integration-depth candidate |
 | EVD-STRK20-005 | At least three final mainnet hashes satisfy pool + own-contract validation | X5 | X0 | NOT_IMPLEMENTED | `strk20.json` empty | required once Prism declares contracts |
 | EVD-STRK20-006 | Current hub validator logic independently rechecked against each selected final hash | X5 | X0 | NOT_IMPLEMENTED | upstream `scripts/build-projects.mjs` logic documented | runtime receipts not yet available |
+| EVD-STRK20-SEP-001 | Sepolia STRK20 pool shield succeeds via SDK-direct route with receipts | X3 | X3 | PASS | SN_SEPOLIA pool v2.0 `0x0254a6b2997ef52e9f830ce1f543f6b29768295e8d17e2267d672c552cfe0d91`; approve tx `0x456c64a8…f32f99` block `14514192`, register tx `0x1c4d52a4…bfae1` block `14514204`, approve#2 tx `0xa7806c40…761d9` block `14514305`, deposit 0.0005 STRK tx `0x2a773a23…5a501d` block `14514334`, all SUCCEEDED ACCEPTED_ON_L2; full record `projects/prism/M6_SEPOLIA_SHIELD_CANARY_EVIDENCE.md` | SDK held keys directly (not wallet-mediated); fee 2.0/action + ~1.3 gas/proof-tx observed; spend 9.304 vs 9 ceiling (0.30 over, disclosed) |
+| EVD-STRK20-SEP-002 | Sepolia shielded note is discoverable via viewing key with independent receipt re-read | X3 | X3 | PASS | `discoverNotes` → 1 note; `get_public_key` nonzero re-read; deposit receipt re-read SUCCEEDED via fresh RPC; Voyager links per hash above | single self-deposit only; no transfer/withdraw, no in-app consent/receipt UI |
 | EVD-PRISM-010 | Public product demo works end-to-end | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-011 | 3-minute demo video published | X5 | X0 | NOT_IMPLEMENTED | — | — |
 | EVD-PRISM-012 | Wallet capability phase is locally buildable without private-state access | X2 | X2 | PASS | commit `6f6a138`; local TypeScript check, production build, and diff check pass | Ready-wallet observation, reconnect observation, and G0 remain open |
