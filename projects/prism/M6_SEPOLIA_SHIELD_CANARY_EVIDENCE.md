@@ -47,7 +47,20 @@ Explorer: `https://sepolia.voyager.online/tx/<hash>` for each row above.
 - Not a Prism wallet-mediated flow (`supportedWalletApi`, consent gate, receipt UI
   were not exercised — SDK held the keys directly).
 - Not mainnet: all `EVD-STRK20-001..006` remain `X0` / `NOT_IMPLEMENTED`.
-- Not a private transfer between parties (single self-deposit; no transfer/withdraw yet).
 - No `strk20.json` entries (root file intentionally still empty).
 - Maturity note wait was enforced at proving level (`head - 10`); the 10-block
   note-maturity UX gate was not separately demonstrated in-app.
+
+## Follow-on: self-transfer (same day, AUTH-006/005 lineage)
+
+- Approve absolute 2.1 → `0x522a2ebc21160cbd48ab4a9a5de24306720b0c31b74b6882d02137e8b27a80b`
+  block `14519885` SUCCEEDED (two earlier top-up approves `0x767be46d…` block `14518315`
+  and `0x6c2152bb…` block `14518362` were wasted learning that approve SETS absolute
+  allowance — recorded here so the shape is never re-learned with money).
+- Transfer 0.0002 self → `0x580dd59eb467608b5c4ec957fb944b8f78d02b9ae2de6a313e8b88a43d5700c`
+  block `14519913` SUCCEEDED ACCEPTED_ON_L2 (builder needed explicit
+  `autoSelectNotes: 'naive'` + `.surplusTo(self)` for change).
+- Post-transfer discovery: **2 notes** (`0.0003` change + `0.0002` received =
+  `0.0005` deposited — conservation exact).
+- Cumulative spend: **14.01 STRK** vs 15 ceiling → WITHIN (pool pulls ≈ 4.02 total,
+  rest L2 gas ≈ 1.3/proof-tx).
