@@ -64,3 +64,16 @@ Explorer: `https://sepolia.voyager.online/tx/<hash>` for each row above.
   `0.0005` deposited — conservation exact).
 - Cumulative spend: **14.01 STRK** vs 15 ceiling → WITHIN (pool pulls ≈ 4.02 total,
   rest L2 gas ≈ 1.3/proof-tx).
+
+## Follow-on: withdraw / unshield (same day, AUTH-007/008 lineage)
+
+- Approve absolute 2.1 → `0x41ec0f075679fa908a57573ca103660efb460c68449915126435f42fb97183f`
+  block `14531591` SUCCEEDED (allowance 0.1 → exactly 2.1, absolute semantics confirmed).
+- Withdraw 0.0002 to self → `0x1e8574dbff71ee7ee39bf349371ac1ef0de09a5810d96a7f11d7855335519e`
+  block `14531619` SUCCEEDED ACCEPTED_ON_L2 (needed `.surplusTo(self)` for change, same as transfer).
+- Post-withdraw discovery: **2 notes** (`0.0001` change + `0.0002` transfer note) +
+  `0.0002` back in public = `0.0005` deposited — conservation exact across all four legs.
+- Withdraw pulled exactly 2.0 allowance (2.1 → 0.1), confirming the 2.0-per-action
+  pattern for register/transfer/withdraw (deposit was the outlier at ~0.02).
+- Cumulative spend: **18.66 STRK** vs 19 ceiling → WITHIN (pool pulls ≈ 6.02 total,
+  rest L2 gas ≈ 1.3–2.6/proof-tx).
