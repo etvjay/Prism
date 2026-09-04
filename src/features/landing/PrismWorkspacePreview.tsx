@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import RefractedCore from "./RefractedCore";
+import { PrivacyDemoSlot } from "../privacy-flow";
 import styles from "./PrismWorkspacePreview.module.css";
 
 type WorkspaceTab = "home" | "activity" | "connections" | "profile";
@@ -200,6 +201,9 @@ function HomeOverview({
           <Icon name="arrow" />
         </button>
       </section>
+
+      {/* Demo-only privacy wallet flow (?demo=privacy). Renders nothing by default. */}
+      <PrivacyDemoSlot />
 
       <section className={styles.actionSection} aria-labelledby="quick-actions-title">
         <div className={styles.sectionHeading}>

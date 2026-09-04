@@ -1,0 +1,338 @@
+/* Privacy wallet flow — demo only. Tokens: paper #f3f3f3 / ink #101010 / accent #526f95. */
+
+.flow {
+  background: #f3f3f3;
+  border: 1px solid #dfe0e5;
+  border-radius: 22px;
+  color: #101010;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px;
+}
+
+.flowHead h3 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 4px 0;
+}
+
+.eyebrow {
+  color: #73747a;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.lede {
+  color: #5d5c61;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.tile {
+  background: #ffffff;
+  border: 1px solid #dfe0e5;
+  border-radius: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.tileEyebrow {
+  color: #73747a;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.stateRow {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.glyph {
+  border: 1px solid #dfe0e5;
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 11px;
+  margin-right: 8px;
+  padding: 1px 7px;
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.status {
+  color: #252421;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.walletGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.walletOption {
+  background: #fbf8f2;
+  border: 1px solid #dfe0e5;
+  border-radius: 13px;
+  color: #101010;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 10px 12px;
+  text-align: left;
+  transition: border-color 180ms ease, transform 180ms ease;
+}
+
+.walletOption:hover {
+  border-color: #526f95;
+  transform: translateY(-1px);
+}
+
+.walletOption[data-active="true"] {
+  border-color: #4f8d69;
+}
+
+.ctaRow {
+  display: flex;
+  gap: 10px;
+}
+
+.primary {
+  background: #101010;
+  border: none;
+  border-radius: 999px;
+  color: #f3f3f3;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 22px;
+}
+
+.primary:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.primary:focus-visible,
+.ghost:focus-visible,
+.walletOption:focus-visible,
+.tone:focus-visible {
+  outline: 2px solid #526f95;
+  outline-offset: 3px;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid #c9cbd1;
+  border-radius: 999px;
+  color: #101010;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 10px 22px;
+}
+
+.blocked {
+  border-left: 3px solid #b5853f;
+  color: #5d5c61;
+  font-size: 13px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.capabilityList {
+  display: flex;
+  gap: 8px;
+}
+
+.capability,
+.capabilitySkeleton {
+  border: 1px solid #dfe0e5;
+  border-radius: 999px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+.capabilitySkeleton {
+  background: #f3f3f3;
+  color: transparent;
+  min-width: 120px;
+}
+
+.capability--supported {
+  border-color: #4f8d69;
+}
+
+.capability--unsupported {
+  border-color: #b5853f;
+}
+
+.meta {
+  color: #818187;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.formGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.field select,
+.field input {
+  border: 1px solid #dfe0e5;
+  border-radius: 13px;
+  color: #101010;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+.fieldError {
+  color: #9f6d28;
+  font-size: 13px;
+  margin: 0;
+}
+
+.hashSlots {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.hashSlot {
+  background: #f3f3f3;
+  border: 1px solid #dfe0e5;
+  border-radius: 13px;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.toneRow {
+  display: flex;
+  gap: 8px;
+}
+
+.tone {
+  background: transparent;
+  border: 1px solid #dfe0e5;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+.tone[data-active="true"] {
+  border-color: #526f95;
+}
+
+.activity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity li {
+  border: 1px solid #dfe0e5;
+  border-radius: 13px;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.activity--confirmed {
+  border-left: 3px solid #4f8d69;
+}
+
+.activity--pending {
+  border-left: 3px solid #8d8880;
+}
+
+.activity--reverted {
+  border-left: 3px solid #b5853f;
+}
+
+.interstitial {
+  align-items: center;
+  background: rgba(16, 16, 16, 0.4);
+  border-radius: 22px;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 50;
+}
+
+.interstitialCard {
+  background: #ffffff;
+  border: 1px solid #dfe0e5;
+  border-radius: 22px;
+  color: #101010;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 440px;
+  padding: 24px;
+}
+
+.interstitialCard ul {
+  font-size: 13px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 480px) {
+  .flow {
+    padding: 20px;
+  }
+
+  .formGrid,
+  .hashSlots {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow *,
+  .flow *::before,
+  .flow *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
