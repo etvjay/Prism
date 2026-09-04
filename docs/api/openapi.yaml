@@ -218,6 +218,7 @@ paths:
 
   /v1/identity/{prismId}:
     get:
+      operationId: getIdentity
       summary: Get identity (QRY-7-01, watermarked)
       parameters:
         - name: prismId
@@ -242,6 +243,7 @@ paths:
 
   /v1/identity/{prismId}/bindings:
     get:
+      operationId: listPublicBindings
       summary: List active public bindings (QRY-8-02, public audience only)
       description: |
         Returns only ACTIVE PUBLIC rows. PRIVATE rows and SELECTIVE domain
@@ -279,6 +281,7 @@ paths:
         '501': { description: SELECTIVE or non-persistent lifecycle is deferred, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
         '503': { description: Binding store unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
     post:
+      operationId: createBinding
       summary: Bind execution identity (OP-8-01, controller-only, digest single-use)
       parameters:
         - name: prismId
@@ -301,6 +304,7 @@ paths:
 
   /v1/identity/{prismId}/bindings/private:
     get:
+      operationId: getOwnerPrivateBinding
       summary: List owner-authorized private bindings (QRY-8-03)
       description: |
         Requires an app session and an independent owner-authorization decision.
@@ -333,6 +337,7 @@ paths:
 
   /v1/identity/{prismId}/bindings/{bindingId}/revoke:
     post:
+      operationId: revokeBinding
       summary: Revoke binding (OP-8-03, parent identity survives)
       parameters:
         - name: prismId
@@ -357,6 +362,7 @@ paths:
 
   /v1/resolve/{identifier}:
     get:
+      operationId: resolveIdentifier
       summary: Resolve (QRY-8-01, watermarked, canonical preference)
       parameters:
         - name: identifier
@@ -384,6 +390,7 @@ paths:
 
   /v1/operations/{operationId}:
     get:
+      operationId: getOperation
       summary: Get operation (durable, submitted != completed)
       parameters:
         - name: operationId
@@ -397,6 +404,7 @@ paths:
 
   /v1/receipts/{receiptId}:
     get:
+      operationId: getReceipt
       summary: Get receipt (operation-derived, observed result)
       parameters:
         - name: receiptId
@@ -409,6 +417,7 @@ paths:
 
   /v1/challenge/issue:
     post:
+      operationId: issueChallenge
       summary: Issue ownership challenge (CMD-B-01, fresh nonce per call)
       requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
       responses:
@@ -417,6 +426,7 @@ paths:
 
   /v1/challenge/verify:
     post:
+      operationId: verifyChallenge
       summary: Submit proof (CMD-B-02, ladder EOA/1271/6492, nonce single-use)
       requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
       responses:
@@ -427,6 +437,7 @@ paths:
 
   /v1/intents:
     post:
+      operationId: createIntent
       summary: Create intent (pre-Pause, plan_hash binding)
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -438,6 +449,7 @@ paths:
 
   /v1/intents/{intentId}/pause:
     post:
+      operationId: pauseIntent
       summary: Pause intent (creates ExecutionPause, injectable PauseService)
       parameters:
         - name: intentId
@@ -450,6 +462,7 @@ paths:
 
   /v1/pauses/{pauseId}:
     get:
+      operationId: inspectPause
       summary: Get pause
       parameters:
         - name: pauseId
@@ -462,6 +475,7 @@ paths:
 
   /v1/pauses/{pauseId}/verify:
     post:
+      operationId: verifyPause
       summary: Verify pause (policy checks)
       parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
       responses:
@@ -469,6 +483,7 @@ paths:
 
   /v1/pauses/{pauseId}/release:
     post:
+      operationId: releasePause
       summary: Release pause (requires RELEASE_READY + version guard, creates settlement operation)
       parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/ExpectedVersion' }]
       responses:
@@ -477,6 +492,7 @@ paths:
 
   /v1/pauses/{pauseId}/cancel:
     post:
+      operationId: cancelPause
       summary: Cancel pause
       parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/ExpectedVersion' }]
       responses:
@@ -484,6 +500,7 @@ paths:
 
   /v1/pauses/{pauseId}/escalate:
     post:
+      operationId: escalatePause
       summary: Escalate pause
       parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
       responses:
@@ -492,6 +509,212 @@ paths:
   /v1/pauses/{pauseId}/approve:
     post:
       summary: Approve escalated pause
+      operationId: approvePause
       parameters: [{ name: pauseId, in: path, required: true, schema: { type: string } }]
       responses:
         '200': { description: ReleaseReady after approval }
+
+  /v1/aliases/{provider}/{value}:
+    get:
+      summary: Provider-neutral alias evidence lookup
+      operationId: lookupAlias
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string } }
+        - { name: value, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Alias evidence or not-found }
+        '422': { description: Malformed alias path (ALIAS_INVALID_REQUEST)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: Store unavailable (ERR-021)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/identities/by-controller:
+    get:
+      summary: Discover identities by controller (read-only aggregate, UNKNOWN status only)
+      operationId: discoverIdentitiesByController
+      parameters:
+        - { name: controller, in: query, required: true, schema: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$" } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Candidate identities with UNKNOWN status }
+        '422': { description: Invalid controller address', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: Store unavailable (ERR-021)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/resolution/{identifier}/continuity:
+    get:
+      summary: Continuity-aware resolution with venue + purpose
+      operationId: resolveContinuity
+      parameters:
+        - { name: identifier, in: path, required: true, schema: { type: string } }
+        - { name: venue, in: query, required: false, schema: { type: string, default: BASE } }
+        - { name: purpose, in: query, required: false, schema: { type: string, default: default } }
+        - { name: provider, in: query, required: false, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Resolution with continuity watermark }
+        '422': { description: Malformed identifier or missing venue/purpose', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/portfolio/{prismId}:
+    get:
+      summary: Source/freshness-bearing portfolio projection (consent-gated STRK20 branch)
+      operationId: getPortfolio
+      parameters:
+        - { name: prismId, in: path, required: true, schema: { type: string, pattern: "^prism:[1-9][0-9]*$", example: "prism:1" } }
+        - { name: X-Privacy-Wallet-Consent, in: header, required: false, schema: { type: string, enum: [granted, denied, required] } }
+        - { name: X-Privacy-Wallet-Session-Ref, in: header, required: false, schema: { type: string, description: "Opaque session reference; never a key, note, or proof." } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Portfolio projection; STRK20 branch present only on granted consent }
+        '401': { description: Missing app session', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '422': { description: Invalid consent value', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/privacy/receipts/{receiptId}:
+    get:
+      summary: Policy-filtered privacy receipt projection (never raw provider material)
+      operationId: getPrivacyReceipt
+      parameters:
+        - { name: receiptId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { description: Filtered privacy receipt view }
+        '400': { description: Malformed receipt id (STRK20-011)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '401': { description: Missing app session', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/gifts:
+    post:
+      summary: Create gift claim (sender-authenticated, idempotent)
+      operationId: createGift
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sender: { type: string }
+                claimId: { type: string }
+                asset: { type: string }
+                amount: { type: string }
+                chainId: { type: integer }
+                expiresAt: { type: integer }
+                nullifierCommitment: { type: string }
+      responses:
+        '200': { description: Gift claim created }
+
+  /v1/gifts/{claimId}:
+    get:
+      summary: Read gift claim
+      operationId: getGift
+      parameters:
+        - { name: claimId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Gift claim state }
+    post:
+      summary: Gift lifecycle step (fund | mark_claimable | expire | refund | claim)
+      operationId: stepGift
+      parameters:
+        - { name: claimId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operation: { type: string, enum: [fund, mark_claimable, expire, refund, claim] }
+      responses:
+        '200': { description: Gift lifecycle transition applied }
+
+  /v1/payments/requests:
+    post:
+      summary: Create payment request (recipient-authenticated, idempotent)
+      operationId: createPaymentRequest
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                requestId: { type: string }
+                recipient: { type: string }
+                asset: { type: string }
+                amount: { type: string }
+                chainId: { type: integer }
+                expiresAt: { type: integer }
+      responses:
+        '200': { description: Payment request created }
+
+  /v1/payments/requests/{requestId}:
+    get:
+      summary: View payment request
+      operationId: viewPaymentRequest
+      parameters:
+        - { name: requestId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Payment request state }
+    post:
+      summary: Payment request step (view | approve | decline | cancel | settle)
+      operationId: stepPaymentRequest
+      parameters:
+        - { name: requestId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operation: { type: string }
+      responses:
+        '200': { description: Payment request transition applied }
+
+  /v1/strk20/actions:
+    post:
+      summary: Wallet-mediated STRK20 lifecycle step (Prism vocabulary only; no keys/notes/proofs)
+      operationId: stepStrk20Action
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actionId, kind]
+              properties:
+                actionId: { type: string, maxLength: 200 }
+                kind: { type: string, enum: [shield, private_transfer, application] }
+                execution: { type: string, enum: [prepared_proof, wallet_action, wallet_managed] }
+                operation: { type: string, enum: [create, prepare, submit, observe_receipt] }
+                requireConsent: { type: boolean }
+      responses:
+        '200': { description: Action step accepted }
+        '400': { description: Malformed payload or forbidden transport key (STRK20-011)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '401': { description: Missing app session', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
+  /v1/strk20/actions/{actionId}:
+    get:
+      summary: Read STRK20 action state
+      operationId: getStrk20Action
+      parameters:
+        - { name: actionId, in: path, required: true, schema: { type: string, maxLength: 200 } }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200': { description: Action state }
