@@ -267,9 +267,25 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
           ))}
         </div>
         {!mockActive && discoveryReady && wallets.length === 0 ? (
-          <p className={styles.blocked} role="status">
-            No Starknet wallet detected. Install Ready, Xverse, or AVNU, then reload this page.
-          </p>
+          <>
+            <p className={styles.blocked} role="status">
+              No Starknet wallet detected. Install Ready, Xverse, or AVNU, then retry discovery.
+            </p>
+            <div className={styles.ctaRow}>
+              <button
+                className={styles.primary}
+                onClick={() => {
+                  setDiscoveryReady(false);
+                  discovery.refresh();
+                  setWallets(discovery.getWallets());
+                  setDiscoveryReady(true);
+                }}
+                type="button"
+              >
+                Connect wallet / retry
+              </button>
+            </div>
+          </>
         ) : null}
         <div className={styles.ctaRow}>
           {connected ? (
