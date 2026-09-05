@@ -27,6 +27,7 @@ interface ApiLiveStateData {
   prismId?: unknown;
   registry?: unknown;
   owner?: unknown;
+  accountMatchesOwner?: unknown;
   baseBinding?: unknown;
   strkBalance?: { status?: unknown; display?: unknown } | null;
   baseEth?: { status?: unknown; display?: unknown } | null;
@@ -71,12 +72,17 @@ export function createApiLiveStateReader(options?: ApiLiveStateReaderOptions): L
 
       const owner = typeof data.owner === "string" ? data.owner : null;
       const registry = typeof data.registry === "string" ? data.registry : null;
-      const binding = typeof data.baseBinding === "string" ? data.baseBinding : null;
+      const accountMatchesOwner = data.accountMatchesOwner === true;
+      const binding = accountMatchesOwner && typeof data.baseBinding === "string" ? data.baseBinding : null;
       if (!owner) return blocked.readLiveState(input);
 
       const unavailable = LIVE_STATE_FALLBACK_COPY.blocked ?? "Unavailable.";
       const strkDisplay = data.strkBalance ? asDisplay(data.strkBalance.display) : null;
-      const ethDisplay = data.baseEth ? asDisplay(data.baseEth.display) : null;
+      const ethDisplay = accountMatchesOwner && data.baseEth ? asDisplay(data.baseEth.display) : null;
+
+      const bindingFallback = accountMatchesOwner
+        ? unavailable
+        : "Connected wallet is not the Prism ID owner; no Base binding is shown.";
 
       const snapshot: LiveStateSnapshot = {
         prismOwner: {
@@ -88,7 +94,7 @@ export function createApiLiveStateReader(options?: ApiLiveStateReaderOptions): L
         baseBinding:
           binding !== null
             ? { label: "BASE binding", status: "live", value: `Bound · ${binding} (Base Sepolia)`, fallback: "" }
-            : { label: "BASE binding", status: "blocked", value: null, fallback: unavailable },
+            : { label: "BASE binding", status: "blocked", value: null, fallback: bindingFallback },
         strkBalance:
           strkDisplay !== null
             ? { label: "STRK balance (connected account)", status: "live", value: strkDisplay, fallback: "" }

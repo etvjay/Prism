@@ -18,6 +18,7 @@ const LIVE_PAYLOAD = {
     prismId: "prism:8",
     registry: LIVE_STATE_IDS.registryV2,
     owner: LIVE_STATE_IDS.owner,
+    accountMatchesOwner: true,
     baseBinding: LIVE_STATE_IDS.boundBaseEoa,
     strkBalance: { account: LIVE_STATE_IDS.owner, status: "live", raw: "123", display: "1,119.00 STRK" },
     baseEth: { account: LIVE_STATE_IDS.boundBaseEoa, status: "live", rawWei: "0x1ed8dedfa70b0c", display: "0.002182 Base Sepolia ETH" },

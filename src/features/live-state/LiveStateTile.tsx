@@ -310,7 +310,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
           </div>
         ) : null}
         <p className={styles.meta}>
-          Registry V2 0x06f77b…530d · owner 0x47c0f8…131c · bound Base Sepolia EOA 0xCf3E…e23 (EVD-PRISM-005/006).
+          Registry V2 0x06f77b…530d · selected Prism ID prism:8. A Base binding is shown only when the connected wallet owns this Prism ID (EVD-PRISM-005/006).
           Reads are read-only; blocked states render fallback copy and claim no value.
         </p>
       </div>

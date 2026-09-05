@@ -429,6 +429,7 @@ paths:
                       prismId: { type: string, example: "prism:8" }
                       registry: { type: string, example: "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d" }
                       owner: { type: string, example: "0x47c0f8b01b9c7c75c669dc549bc305a0f2d796808117339a1c87730162b131c" }
+                      accountMatchesOwner: { type: boolean, description: Whether the connected wallet owns the selected Prism ID }
                       baseBinding: { type: string, nullable: true, example: "0xCf3E2aFA1E8E92Af56b02fD6799EcDd77018De23" }
                       strkBalance: { type: object, properties: { account: { type: string }, status: { type: string, enum: [live, unavailable] }, raw: { type: string, nullable: true }, display: { type: string, nullable: true } } }
                       baseEth: { type: object, properties: { account: { type: string, nullable: true }, status: { type: string, enum: [live, unavailable] }, rawWei: { type: string, nullable: true }, display: { type: string, nullable: true } } }

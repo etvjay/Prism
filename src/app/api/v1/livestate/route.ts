@@ -228,6 +228,7 @@ export async function GET(req: Request): Promise<Response> {
         prismId,
         registry: REGISTRY_V2,
         owner,
+        accountMatchesOwner: connectedAccount.toLowerCase() === owner.toLowerCase(),
         baseBinding,
         strkBalance: { account: connectedAccount, token: STRK_SEPOLIA, ...strk },
         baseEth: { account: baseBinding, ...baseEth },
