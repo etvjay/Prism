@@ -92,6 +92,9 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   const [selectedPrismId, setSelectedPrismId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<LiveStateSnapshot | null>(null);
   const [reading, setReading] = useState(false);
+  const [identityStatus, setIdentityStatus] = useState<"idle" | "requested" | "pending" | "succeeded" | "failed">("idle");
+  const [identityTxHash, setIdentityTxHash] = useState<string | null>(null);
+  const [identityError, setIdentityError] = useState<string | null>(null);
   const activeBoundary = useRef<ReturnType<typeof createStarknetWalletBoundary> | null>(null);
 
   const sessionSnapshot = useMemo(() => selectSessionSnapshot(state), [state]);
@@ -143,12 +146,64 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       .finally(() => setReading(false));
   }, [connected, ready, consentGranted, session.accountAddress, reader, selectedPrismId]);
 
+  // Receipt/event observation is read-only and starts only after a wallet
+  // submission has returned a transaction hash.
+  useEffect(() => {
+    if (!identityTxHash || mockActive) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/v1/livestate/identity?txHash=${encodeURIComponent(identityTxHash)}`, { cache: "no-store" });
+        const result = (await response.json()) as { ok?: boolean; status?: string; prismId?: string };
+        if (cancelled) return;
+        if (result.status === "failed") {
+          setIdentityStatus("failed");
+          setIdentityError("The wallet transaction failed. No Prism ID was selected.");
+          return;
+        }
+        if (result.status === "succeeded" && result.prismId) {
+          const prismId = result.prismId.replace(/^prism:/, "");
+          setIdentityStatus("succeeded");
+          setSelectedPrismId(prismId);
+          const params = new URLSearchParams(window.location.search);
+          params.set("prismId", prismId);
+          window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+          return;
+        }
+        setIdentityStatus("pending");
+      } catch {
+        if (!cancelled) setIdentityError("Receipt status is temporarily unavailable; retrying.");
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [identityTxHash, mockActive]);
+
+  const createPrismIdentity = () => {
+    if (!connected || !ready || selectedPrismId || mockActive || !activeBoundary.current) return;
+    setIdentityError(null);
+    setIdentityStatus("requested");
+    void activeBoundary.current.createPrismIdentity()
+      .then(({ txHash }) => {
+        setIdentityTxHash(txHash);
+        setIdentityStatus("pending");
+      })
+      .catch(() => {
+        setIdentityStatus("failed");
+        setIdentityError("The wallet rejected or failed the create request. No Prism ID was selected.");
+      });
+  };
+
   const connectReal = (wallet: DiscoveredStarknetWallet) => {
     setBusy(true);
     setActiveWalletId(wallet.id);
     setConsentScope(null);
     setConsentRecord(null);
     setSnapshot(null);
+    setIdentityStatus("idle");
+    setIdentityTxHash(null);
+    setIdentityError(null);
     dispatch({ type: "connection-started", walletId: wallet.id });
     const rpcUrl = (process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? "").trim() || null;
     const boundary = createStarknetWalletBoundary(wallet, rpcUrl, "SN_SEPOLIA");
@@ -299,6 +354,27 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
             </button>
           ) : null}
         </div>
+      </div>
+
+      <div className={styles.tile} data-tile="create-identity">
+        <p className={styles.tileEyebrow}>Prism identity · explicit wallet action</p>
+        {!connected || !ready ? (
+          <p className={styles.blocked}>Connect a SN_SEPOLIA wallet to create your Prism ID.</p>
+        ) : selectedPrismId ? (
+          <p className={styles.blocked}>Selected Prism ID: <strong>prism:{selectedPrismId}</strong></p>
+        ) : (
+          <>
+            <h4>Create your Prism ID</h4>
+            <p className={styles.lede}>Your connected SN_SEPOLIA wallet will prompt you to authorize <code>create_identity</code>.</p>
+            <button className={styles.primary} disabled={identityStatus === "requested" || identityStatus === "pending"} onClick={createPrismIdentity} type="button">
+              {identityStatus === "requested" ? "Waiting for wallet…" : identityStatus === "pending" ? "Creating Prism ID…" : "Create your Prism ID"}
+            </button>
+            {identityTxHash ? <p className={styles.meta}>Transaction {identityTxHash} · status: {identityStatus}</p> : null}
+            {identityStatus === "succeeded" ? <p className={styles.status}>PrismIdentityCreated observed. Your new Prism ID is now selected.</p> : null}
+            {identityError ? <p className={styles.blocked} role="status">{identityError}</p> : null}
+          </>
+        )}
+        <p className={styles.meta}>Next step: <strong>Connect Base wallet to prove control</strong>. No Base binding is performed here.</p>
       </div>
 
       <div className={styles.tile} data-tile="public-state">

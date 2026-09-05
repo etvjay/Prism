@@ -7,6 +7,8 @@ import { WalletV6M5Adapter, type WalletAccountV6Like } from "../../prism-strk20/
 import { PRIVACY_POOL_SEPOLIA } from "../../prism-strk20/m5/constants";
 import type { M5Provider } from "../../prism-strk20/m5/ports";
 
+const REGISTRY_V2 = "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d";
+
 export interface DiscoveredStarknetWallet {
   readonly id: string;
   readonly name: string;
@@ -25,6 +27,8 @@ export interface StarknetWalletBoundary {
   readonly provider: StarknetWalletSessionProvider;
   subscribe(listener: (change: unknown) => void): () => void;
   switchNetwork(): Promise<boolean>;
+  /** User-authorized mutation; only callable after an explicit UI action. */
+  createPrismIdentity(): Promise<{ readonly txHash: string }>;
   getM5Provider(): M5Provider | null;
 }
 
@@ -134,6 +138,20 @@ export function createStarknetWalletBoundary(
       walletProvider,
       expectedChainId(expectedEnvironment) as Parameters<typeof walletV6.switchStarknetChain>[1],
     ),
+    createPrismIdentity: async () => {
+      if (!account) throw new Error("starknet_account_unavailable");
+      // This is deliberately not invoked by connect/session effects. The caller
+      // reaches this boundary only from the explicit Create button, allowing the
+      // connected WalletAccountV6 to show its authorization prompt.
+      const result = await account.execute([{
+        contractAddress: REGISTRY_V2,
+        entrypoint: "create_identity",
+        calldata: [],
+      }]);
+      const rawHash = result.transaction_hash.trim().toLowerCase();
+      if (!/^0x[0-9a-f]{1,64}$/.test(rawHash)) throw new Error("malformed_tx_hash");
+      return { txHash: `0x${rawHash.slice(2).padStart(64, "0")}` };
+    },
     getM5Provider: () => account
       ? new WalletV6M5Adapter({
           wallet: account as unknown as WalletAccountV6Like,
