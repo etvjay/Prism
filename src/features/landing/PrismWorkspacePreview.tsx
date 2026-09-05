@@ -3,6 +3,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import RefractedCore from "./RefractedCore";
 import { PrivacyDemoSlot } from "../privacy-flow";
+import { LiveStateDemoSlot } from "../live-state";
 import styles from "./PrismWorkspacePreview.module.css";
 
 type WorkspaceTab = "home" | "activity" | "connections" | "profile";
@@ -204,6 +205,9 @@ function HomeOverview({
 
       {/* Demo-only privacy wallet flow (?demo=privacy). Renders nothing by default. */}
       <PrivacyDemoSlot />
+
+      {/* Demo-only read-only live state (?demo=livestate). Renders nothing by default. */}
+      <LiveStateDemoSlot />
 
       <section className={styles.actionSection} aria-labelledby="quick-actions-title">
         <div className={styles.sectionHeading}>
