@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
     "localhost",
     "sen-mold-designated-thus.trycloudflare.com",
     "assumes-strike-leave-bottom.trycloudflare.com",
+    "epa-live-finally-tent.trycloudflare.com",
   ],
 };
 
