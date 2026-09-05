@@ -156,9 +156,14 @@ function failClosed(status: number, detail: string): Response {
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const prismId = normalizePrismId(url.searchParams.get("prismId"));
+  const requestedAccount = url.searchParams.get("accountAddress");
   if (!prismId) {
     return failClosed(400, "malformed_prism_id:expected_8_or_prism:8");
   }
+  if (!requestedAccount || !/^0x[0-9a-fA-F]+$/.test(requestedAccount)) {
+    return failClosed(400, "malformed_account_address");
+  }
+  const connectedAccount = minimalHex(requestedAccount);
 
   const rpcUrl = await readStarknetRpcUrl();
   if (!rpcUrl) {
@@ -196,7 +201,7 @@ export async function GET(req: Request): Promise<Response> {
     display: null,
   };
   try {
-    const raw = await withTimeout(fetchBalanceViaRpc(rpcUrl, STRK_SEPOLIA, owner), RPC_TIMEOUT_MS, "strk_balance");
+    const raw = await withTimeout(fetchBalanceViaRpc(rpcUrl, STRK_SEPOLIA, connectedAccount), RPC_TIMEOUT_MS, "strk_balance");
     strk = { status: "live", raw: raw.toString(), display: `${formatToken2dp(raw)} STRK` };
   } catch {
     strk = { status: "unavailable", raw: null, display: null };
@@ -224,7 +229,7 @@ export async function GET(req: Request): Promise<Response> {
         registry: REGISTRY_V2,
         owner,
         baseBinding,
-        strkBalance: { account: owner, token: STRK_SEPOLIA, ...strk },
+        strkBalance: { account: connectedAccount, token: STRK_SEPOLIA, ...strk },
         baseEth: { account: baseBinding, ...baseEth },
       },
       requestId: null,

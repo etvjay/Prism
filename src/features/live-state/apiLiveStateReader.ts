@@ -55,7 +55,7 @@ export function createApiLiveStateReader(options?: ApiLiveStateReaderOptions): L
 
       let data: ApiLiveStateData | null = null;
       try {
-        const res = await fetchImpl(`${endpoint}?prismId=${encodeURIComponent(prismId)}`, {
+        const res = await fetchImpl(`${endpoint}?prismId=${encodeURIComponent(prismId)}&accountAddress=${encodeURIComponent(input.accountAddress)}`, {
           cache: "no-store",
         });
         if (!res.ok) return blocked.readLiveState(input);
