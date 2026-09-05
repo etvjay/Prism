@@ -388,6 +388,47 @@ paths:
                   data: { type: object, properties: { prismId: { type: string }, venue: { type: string }, executionAccount: { type: string, nullable: true }, exists: { type: boolean }, watermark: { type: integer, nullable: true } } }
         '404': { description: Identity not found (ERR-010)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
 
+  /v1/livestate:
+    get:
+      operationId: getLiveState
+      summary: Live chain state (read-only demo, prism owner + BASE binding + balances)
+      description: |
+        Server-side read-only facts for the `?demo=livestate` surface: prism
+        owner via `get_identity`, BASE binding via `resolve`, owner STRK
+        balance via `balance_of`, and bound-EOA Base Sepolia ETH via
+        `eth_getBalance`. No broadcast, no signing, no spending. Owner/binding
+        failures return 503 fail-closed; per-field balance failures mark that
+        field unavailable (claiming no value).
+      parameters:
+        - name: prismId
+          in: query
+          required: false
+          schema: { type: string, pattern: "^(prism:[1-9][0-9]*|[1-9][0-9]*)$", default: "8", example: "8" }
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Live chain facts
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      prismId: { type: string, example: "prism:8" }
+                      registry: { type: string, example: "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d" }
+                      owner: { type: string, example: "0x47c0f8b01b9c7c75c669dc549bc305a0f2d796808117339a1c87730162b131c" }
+                      baseBinding: { type: string, nullable: true, example: "0xCf3E2aFA1E8E92Af56b02fD6799EcDd77018De23" }
+                      strkBalance: { type: object, properties: { account: { type: string }, status: { type: string, enum: [live, unavailable] }, raw: { type: string, nullable: true }, display: { type: string, nullable: true } } }
+                      baseEth: { type: object, properties: { account: { type: string, nullable: true }, status: { type: string, enum: [live, unavailable] }, rawWei: { type: string, nullable: true }, display: { type: string, nullable: true } } }
+        '400': { description: Malformed prismId (ERR-023)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '404': { description: Identity not found (ERR-010)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+        '503': { description: RPC unavailable (ERR-021, fail-closed)', content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
+
   /v1/operations/{operationId}:
     get:
       operationId: getOperation

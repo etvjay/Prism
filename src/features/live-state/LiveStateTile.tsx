@@ -34,9 +34,9 @@ import { buildConsentScope, decideConsent, type ConsentRecord, type ConsentScope
 import { createMockStarknetProvider, MOCK_SCENARIOS, MOCK_WALLET_LABELS, type MockWalletScenario } from "../privacy-flow/mockPrivacyWallet";
 import {
   createBlockedLiveStateReader,
-  createMockLiveStateReader,
   type LiveStateReader,
 } from "./liveStateAdapter";
+import { createApiLiveStateReader } from "./apiLiveStateReader";
 import { LIVE_STATE_FALLBACK_COPY, type LiveField, type LiveStateSnapshot } from "./liveStateTypes";
 import styles from "./LiveStateTile.module.css";
 
@@ -101,8 +101,10 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       return;
     }
     setReading(true);
-    const active: LiveStateReader =
-      reader ?? createMockLiveStateReader();
+    // Default preview path reads real chain facts through the server-side
+    // route (client never sees RPC URLs). Pass a mock/blocked reader
+    // explicitly for deterministic tests or the all-blocked preview.
+    const active: LiveStateReader = reader ?? createApiLiveStateReader();
     void active
       .readLiveState({ accountAddress: session.accountAddress, consentGranted })
       .then(setSnapshot)
@@ -286,8 +288,9 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
 export function LiveStateDemoSlot({ reader }: { reader?: LiveStateReader }) {
   const active = useDemoActive();
   if (!active) return null;
-  // Default preview path uses declared mocks; pass `createBlockedLiveStateReader()`
-  // to preview the all-blocked fallback copy.
+  // Default preview path reads real chain facts through the server-side
+  // route; pass `createBlockedLiveStateReader()` (or the mock reader) to
+  // preview the all-blocked fallback copy or deterministic fixtures.
   void createBlockedLiveStateReader;
   return <LiveStateTile reader={reader} />;
 }
