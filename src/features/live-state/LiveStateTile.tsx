@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createSessionReducerState, sessionReducer } from "../wallet/session/reducer";
 import { selectSessionSnapshot } from "../wallet/session/selectors";
 import {
@@ -31,6 +31,7 @@ import { StarknetWalletSessionAdapter } from "../wallet/session/starknet-wallet-
 import { assertNoViewingKey } from "../prism-strk20/domain/privacy-guard";
 import { isLiveStateDemoEnabled } from "./demoFlag";
 import { buildConsentScope, decideConsent, type ConsentRecord, type ConsentScope } from "../privacy-flow/consent";
+import { createStarknetWalletBoundary, createStarknetWalletDiscovery, type DiscoveredStarknetWallet } from "../wallet/session/starknet-wallet-provider";
 import { createMockStarknetProvider, MOCK_SCENARIOS, MOCK_WALLET_LABELS, type MockWalletScenario } from "../privacy-flow/mockPrivacyWallet";
 import {
   createBlockedLiveStateReader,
@@ -44,6 +45,15 @@ function useDemoActive(): boolean {
   const [active, setActive] = useState(false);
   useEffect(() => {
     setActive(isLiveStateDemoEnabled(window.location.search));
+  }, []);
+  return active;
+}
+
+function useMockActive(): boolean {
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setActive(params.get("demo") === "livestate-mock" || params.get("mock") === "livestate");
   }, []);
   return active;
 }
@@ -73,18 +83,35 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   );
   const [state, dispatch] = useReducer(sessionReducer, initial);
   const [scenario, setScenario] = useState<MockWalletScenario>("supported-sepolia");
+  const [wallets, setWallets] = useState<readonly DiscoveredStarknetWallet[]>([]);
+  const [discoveryReady, setDiscoveryReady] = useState(false);
+  const [activeWalletId, setActiveWalletId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [consentScope, setConsentScope] = useState<ConsentScope | null>(null);
   const [consentRecord, setConsentRecord] = useState<ConsentRecord | null>(null);
   const [snapshot, setSnapshot] = useState<LiveStateSnapshot | null>(null);
   const [reading, setReading] = useState(false);
+  const activeBoundary = useRef<ReturnType<typeof createStarknetWalletBoundary> | null>(null);
 
   const sessionSnapshot = useMemo(() => selectSessionSnapshot(state), [state]);
   const { session, capabilities, state: uiState } = sessionSnapshot;
   const connected = session.accountAddress !== null;
   const consentGranted = session.consent.status === "granted";
-  const ready = uiState === "ready";
+  const discovery = useMemo(() => createStarknetWalletDiscovery(), []);
+  const mockActive = useMockActive();
 
+  useEffect(() => {
+    if (mockActive) return;
+    const sync = (next: readonly DiscoveredStarknetWallet[]) => {
+      setWallets(next);
+      setDiscoveryReady(true);
+    };
+    const unsubscribe = discovery.subscribe(sync);
+    discovery.refresh();
+    sync(discovery.getWallets());
+    return unsubscribe;
+  }, [discovery, mockActive]);
+  const ready = uiState === "ready";
   const status = statusLine(uiState, {
     environment: session.environment,
     chainId: session.network.chainId,
@@ -111,6 +138,23 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       .finally(() => setReading(false));
   }, [connected, ready, consentGranted, session.accountAddress, reader]);
 
+  const connectReal = (wallet: DiscoveredStarknetWallet) => {
+    setBusy(true);
+    setActiveWalletId(wallet.id);
+    setConsentScope(null);
+    setConsentRecord(null);
+    setSnapshot(null);
+    dispatch({ type: "connection-started", walletId: wallet.id });
+    const rpcUrl = (process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? "").trim() || null;
+    const boundary = createStarknetWalletBoundary(wallet, rpcUrl, "SN_SEPOLIA");
+    activeBoundary.current = boundary;
+    const adapter = new StarknetWalletSessionAdapter(boundary.provider, { expectedEnvironment: "SN_SEPOLIA" });
+    void adapter.connect(Date.now())
+      .then((observed) => dispatch({ type: "session-observed", session: observed, walletId: wallet.id }))
+      .catch(() => dispatch({ type: "notice", notice: "Wallet connection failed. Try again." }))
+      .finally(() => setBusy(false));
+  };
+
   const connectMock = (next: MockWalletScenario) => {
     setScenario(next);
     setBusy(true);
@@ -129,10 +173,12 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       .finally(() => setBusy(false));
   };
 
-  const disconnectMock = () => {
+  const disconnect = () => {
     setConsentScope(null);
     setConsentRecord(null);
     setSnapshot(null);
+    void activeBoundary.current?.provider.disconnect?.();
+    activeBoundary.current = null;
     dispatch({
       type: "session-disconnected",
       session: createStarknetWalletSession({ now: Date.now(), expectedEnvironment: "SN_SEPOLIA" }),
@@ -194,7 +240,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
         </div>
         <p aria-live="polite" className={styles.status}>{status}</p>
         <div className={styles.walletGrid} role="list">
-          {MOCK_SCENARIOS.map((option) => (
+          {mockActive ? MOCK_SCENARIOS.map((option) => (
             <button
               className={styles.walletOption}
               data-active={scenario === option && connected}
@@ -204,13 +250,30 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
               role="listitem"
               type="button"
             >
-              {MOCK_WALLET_LABELS[option]}
+              {MOCK_WALLET_LABELS[option]} (mock)
+            </button>
+          )) : wallets.map((wallet) => (
+            <button
+              className={styles.walletOption}
+              data-active={activeWalletId === wallet.id && connected}
+              disabled={busy}
+              key={wallet.id}
+              onClick={() => connectReal(wallet)}
+              role="listitem"
+              type="button"
+            >
+              Connect {wallet.name}
             </button>
           ))}
         </div>
+        {!mockActive && discoveryReady && wallets.length === 0 ? (
+          <p className={styles.blocked} role="status">
+            No Starknet wallet detected. Install Ready, Xverse, or AVNU, then reload this page.
+          </p>
+        ) : null}
         <div className={styles.ctaRow}>
           {connected ? (
-            <button className={styles.ghost} onClick={disconnectMock} type="button">
+            <button className={styles.ghost} onClick={disconnect} type="button">
               Disconnect
             </button>
           ) : null}

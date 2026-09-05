@@ -16,6 +16,8 @@ export interface DiscoveredStarknetWallet {
 export interface StarknetWalletDiscovery {
   getWallets(): readonly DiscoveredStarknetWallet[];
   subscribe(listener: (wallets: readonly DiscoveredStarknetWallet[]) => void): () => void;
+  /** Re-scan legacy injected globals after the page has hydrated. */
+  refresh(): void;
 }
 
 export interface StarknetWalletBoundary {
@@ -60,6 +62,7 @@ export function createStarknetWalletDiscovery(): StarknetWalletDiscovery {
   return {
     getWallets: current,
     subscribe: (listener) => store.subscribe((wallets) => listener(mapWallets(wallets))),
+    refresh: () => store._refreshInjectedWallets(),
   };
 }
 
@@ -76,17 +79,30 @@ export function createStarknetWalletBoundary(
   const walletProvider = asWalletV6Provider(wallet);
   const walletApiAvailable = hasWalletApiFeature(wallet);
   let account: WalletAccountV6 | null = null;
+  const standardConnect = wallet.features["standard:connect"].connect;
+
+  const connectFromStandard = async (): Promise<{ readonly address: string }> => {
+    const result = await standardConnect();
+    const standardAccount = result.accounts[0];
+    if (!standardAccount || typeof standardAccount.address !== "string" || standardAccount.address.length === 0) {
+      throw new Error("starknet_account_unavailable");
+    }
+    return { address: standardAccount.address };
+  };
 
   const provider: StarknetWalletSessionProvider = {
     name: discoveredWallet.name,
     connect: async () => {
-      if (!rpcUrl) throw new Error("starknet_rpc_unavailable");
+      if (!rpcUrl) return connectFromStandard();
       account = await WalletAccountV6.connect({ nodeUrl: rpcUrl }, walletProvider);
       if (!account.address) throw new Error("starknet_account_unavailable");
       return { address: account.address };
     },
     getSession: async () => {
-      if (!rpcUrl) throw new Error("starknet_rpc_unavailable");
+      if (!rpcUrl) {
+        const standardAccount = wallet.accounts[0];
+        return standardAccount?.address ? { address: standardAccount.address } : null;
+      }
       const silentAccount = await WalletAccountV6.connectSilent({ nodeUrl: rpcUrl }, walletProvider);
       account = silentAccount;
       return silentAccount.address ? { address: silentAccount.address } : null;

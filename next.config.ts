@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     "127.0.0.1",
     "localhost",
     "sen-mold-designated-thus.trycloudflare.com",
+    "assumes-strike-leave-bottom.trycloudflare.com",
   ],
 };
 

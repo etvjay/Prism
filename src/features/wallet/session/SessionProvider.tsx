@@ -179,22 +179,6 @@ export function SessionProvider({
     if (!discoveredWallet) return;
     dispatch({ type: "connection-started", walletId });
 
-    if (!rpcUrl) {
-      const failed = errorSession(
-        createStarknetWalletSession({
-          now: Date.now(),
-          expectedEnvironment,
-          walletName: discoveredWallet.name,
-        }),
-        WALLET_SESSION_ERROR_CODE.PROVIDER_FAILURE,
-        "starknet_rpc_unavailable",
-        Date.now(),
-      );
-      dispatch({ type: "session-observed", session: failed, walletId });
-      dispatch({ type: "notice", notice: SESSION_STRINGS.walletRpcUnavailable });
-      return;
-    }
-
     const boundary = createStarknetWalletBoundary(discoveredWallet, rpcUrl, expectedEnvironment);
     const adapter = new StarknetWalletSessionAdapter(boundary.provider, { expectedEnvironment });
     activeBoundaryRef.current = boundary;
@@ -227,6 +211,7 @@ export function SessionProvider({
     const discovery = discoveryRef.current ?? createStarknetWalletDiscovery();
     discoveryRef.current = discovery;
     discoveryUnsubscribeRef.current?.();
+    discovery.refresh();
 
     const syncWallets = (
       wallets: readonly DiscoveredStarknetWallet[],
