@@ -404,8 +404,8 @@ paths:
       parameters:
         - name: prismId
           in: query
-          required: false
-          schema: { type: string, pattern: "^(prism:[1-9][0-9]*|[1-9][0-9]*)$", default: "8", example: "8" }
+          required: true
+          schema: { type: string, pattern: "^(prism:[1-9][0-9]*|[1-9][0-9]*)$", example: "8", description: "Required explicit Prism ID selection; the server never supplies a default." }
         - name: accountAddress
           in: query
           required: true

@@ -4,7 +4,7 @@
  * Reuses the privacy-flow wallet session machine:
  * connect -> capability detect -> session (sessionReducer +
  * StarknetWalletSessionAdapter over the mock provider). Once connected,
- * public chain state for the connected account + prism:8 is read through
+ * public chain state for the connected account + an explicitly selected Prism ID is read through
  * the typed `LiveStateReader` port (read-only; no broadcast, no signing,
  * no spending). The private-balance slot stays consent-gated per the
  * existing consent design: blocked/fallback copy until a real consent
@@ -29,7 +29,7 @@ import {
 } from "../wallet/session/session-state";
 import { StarknetWalletSessionAdapter } from "../wallet/session/starknet-wallet-adapter";
 import { assertNoViewingKey } from "../prism-strk20/domain/privacy-guard";
-import { isLiveStateDemoEnabled } from "./demoFlag";
+import { isLiveStateDemoEnabled, selectedPrismIdFromSearch } from "./demoFlag";
 import { buildConsentScope, decideConsent, type ConsentRecord, type ConsentScope } from "../privacy-flow/consent";
 import { createStarknetWalletBoundary, createStarknetWalletDiscovery, type DiscoveredStarknetWallet } from "../wallet/session/starknet-wallet-provider";
 import { createMockStarknetProvider, MOCK_SCENARIOS, MOCK_WALLET_LABELS, type MockWalletScenario } from "../privacy-flow/mockPrivacyWallet";
@@ -89,6 +89,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   const [busy, setBusy] = useState(false);
   const [consentScope, setConsentScope] = useState<ConsentScope | null>(null);
   const [consentRecord, setConsentRecord] = useState<ConsentRecord | null>(null);
+  const [selectedPrismId, setSelectedPrismId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<LiveStateSnapshot | null>(null);
   const [reading, setReading] = useState(false);
   const activeBoundary = useRef<ReturnType<typeof createStarknetWalletBoundary> | null>(null);
@@ -99,6 +100,10 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   const consentGranted = session.consent.status === "granted";
   const discovery = useMemo(() => createStarknetWalletDiscovery(), []);
   const mockActive = useMockActive();
+
+  useEffect(() => {
+    setSelectedPrismId(selectedPrismIdFromSearch(window.location.search));
+  }, []);
 
   useEffect(() => {
     if (mockActive) return;
@@ -131,12 +136,12 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
     // Default preview path reads real chain facts through the server-side
     // route (client never sees RPC URLs). Pass a mock/blocked reader
     // explicitly for deterministic tests or the all-blocked preview.
-    const active: LiveStateReader = reader ?? createApiLiveStateReader();
+    const active: LiveStateReader = reader ?? createApiLiveStateReader({ prismId: selectedPrismId });
     void active
       .readLiveState({ accountAddress: session.accountAddress, consentGranted })
       .then(setSnapshot)
       .finally(() => setReading(false));
-  }, [connected, ready, consentGranted, session.accountAddress, reader]);
+  }, [connected, ready, consentGranted, session.accountAddress, reader, selectedPrismId]);
 
   const connectReal = (wallet: DiscoveredStarknetWallet) => {
     setBusy(true);
@@ -224,8 +229,8 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
         <h3 id="livestate-heading">Live chain state (read-only)</h3>
         <p className={styles.lede}>
           Same session machine as the privacy flow (connect → capability detect → session).
-          Public state for the connected account and prism:8 reads through a typed adapter —
-          read-only RPC/API only. Private balance stays consent-gated.
+          Public state for the connected account and an explicitly selected Prism ID reads through a typed adapter —
+          read-only RPC/API only. Without a selected Prism ID, linked identity state stays blocked. Private balance stays consent-gated.
         </p>
       </div>
 
@@ -297,7 +302,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       </div>
 
       <div className={styles.tile} data-tile="public-state">
-        <p className={styles.tileEyebrow}>Public chain state · prism:8 + connected account</p>
+        <p className={styles.tileEyebrow}>Public chain state · {selectedPrismId ? `prism:${selectedPrismId}` : "no Prism ID selected"} + connected account</p>
         {!connected || !ready ? (
           <p className={styles.blocked} role="status">{LIVE_STATE_FALLBACK_COPY["not-connected"]}</p>
         ) : reading && !snapshot ? (
@@ -310,7 +315,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
           </div>
         ) : null}
         <p className={styles.meta}>
-          Registry V2 0x06f77b…530d · selected Prism ID prism:8. A Base binding is shown only when the connected wallet owns this Prism ID (EVD-PRISM-005/006).
+          Registry V2 0x06f77b…530d · {selectedPrismId ? `selected Prism ID prism:${selectedPrismId}` : "No Prism ID selected; no linked identity is read."}. A Base binding is shown only when the connected wallet owns the selected Prism ID (EVD-PRISM-005/006).
           Reads are read-only; blocked states render fallback copy and claim no value.
         </p>
       </div>

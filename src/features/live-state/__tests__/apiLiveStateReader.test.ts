@@ -27,7 +27,7 @@ const LIVE_PAYLOAD = {
 
 describe("api live-state reader (server-route backed)", () => {
   it("maps route facts onto the snapshot port with real owner + binding", async () => {
-    const reader = createApiLiveStateReader({ fetchImpl: stubFetch(LIVE_PAYLOAD) });
+    const reader = createApiLiveStateReader({ prismId: "8", fetchImpl: stubFetch(LIVE_PAYLOAD) });
     expect(reader.kind).toBe("api");
     const snap = await reader.readLiveState({ accountAddress: ACCOUNT, consentGranted: false });
     expect(snap.prismOwner.status).toBe("live");
@@ -42,8 +42,24 @@ describe("api live-state reader (server-route backed)", () => {
     expect(snap.privateBalance.fallback).toBe(LIVE_STATE_FALLBACK_COPY["consent-required"]);
   });
 
+  it("does not fetch or select an identity when no Prism ID is selected", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return { ok: true, json: () => Promise.resolve(LIVE_PAYLOAD) } as Response;
+    }) as typeof fetch;
+    const reader = createApiLiveStateReader({ fetchImpl });
+    const snap = await reader.readLiveState({ accountAddress: ACCOUNT, consentGranted: false });
+    expect(called).toBe(false);
+    expect(snap.prismOwner.status).toBe("blocked");
+    expect(snap.prismOwner.value).toBe(null);
+    expect(snap.prismOwner.label).toBe("Prism ID owner (no Prism ID selected)");
+    expect(JSON.stringify(snap)).not.toContain("prism:8");
+  });
+
+
   it("fails closed to blocked fallback copy on HTTP error", async () => {
-    const reader = createApiLiveStateReader({ fetchImpl: stubFetch({ ok: false }, false) });
+    const reader = createApiLiveStateReader({ prismId: "8", fetchImpl: stubFetch({ ok: false }, false) });
     const snap = await reader.readLiveState({ accountAddress: ACCOUNT, consentGranted: false });
     expect(snap.prismOwner.status).toBe("blocked");
     expect(snap.prismOwner.value).toBe(null);
@@ -52,7 +68,7 @@ describe("api live-state reader (server-route backed)", () => {
 
   it("fails closed to blocked fallback copy on fetch rejection", async () => {
     const failing = (() => Promise.reject(new Error("down"))) as unknown as typeof fetch;
-    const reader = createApiLiveStateReader({ fetchImpl: failing });
+    const reader = createApiLiveStateReader({ prismId: "8", fetchImpl: failing });
     const snap = await reader.readLiveState({ accountAddress: ACCOUNT, consentGranted: true });
     expect(snap.baseEth.status).toBe("blocked");
     expect(snap.baseEth.value).toBe(null);
@@ -83,7 +99,7 @@ describe("api live-state reader (server-route backed)", () => {
         baseEth: { status: "unavailable", rawWei: null, display: null },
       },
     };
-    const reader = createApiLiveStateReader({ fetchImpl: stubFetch(payload) });
+    const reader = createApiLiveStateReader({ prismId: "8", fetchImpl: stubFetch(payload) });
     const snap = await reader.readLiveState({ accountAddress: ACCOUNT, consentGranted: false });
     expect(snap.prismOwner.status).toBe("live");
     expect(snap.strkBalance.status).toBe("unavailable");

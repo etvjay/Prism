@@ -3,6 +3,9 @@
  * server-side `GET /api/v1/livestate` route and maps them onto the
  * `LiveStateSnapshot` port.
  *
+ * An explicit `prismId` is required; omitted selection returns
+ * blocked/no-linked-identity copy without fetching.
+ *
  * The client never sees RPC URLs — only the same-origin route. Any fetch,
  * HTTP, or shape failure falls back to the blocked reader (fail-closed
  * fallback copy, claiming no value). The private-balance slot stays
@@ -17,8 +20,8 @@ import { LIVE_STATE_FALLBACK_COPY, type LiveStateSnapshot } from "./liveStateTyp
 export interface ApiLiveStateReaderOptions {
   /** Same-origin endpoint. Defaults to `/api/v1/livestate`. */
   endpoint?: string;
-  /** Canonical prism id suffix. Defaults to `"8"`. */
-  prismId?: string;
+  /** Canonical prism id suffix. Required; omitted means no linked identity. */
+  prismId?: string | null;
   /** Injectable fetch for tests. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
 }
@@ -44,15 +47,17 @@ function shorten(hex: string): string {
 
 export function createApiLiveStateReader(options?: ApiLiveStateReaderOptions): LiveStateReader {
   const endpoint = options?.endpoint ?? "/api/v1/livestate";
-  const prismId = options?.prismId ?? "8";
+  const prismId = options?.prismId?.trim() || null;
   const fetchImpl = options?.fetchImpl ?? fetch;
-  const blocked = createBlockedLiveStateReader();
+  const blocked = createBlockedLiveStateReader(
+    "No Prism ID is selected for this wallet session. Select a Prism ID explicitly to load linked public state.",
+  );
 
   return {
     kind: "api",
     readLiveState: async (input) => {
       assertNoSecretMaterial(input, "live_state_read");
-      if (!input.accountAddress) return blocked.readLiveState(input);
+      if (!input.accountAddress || !prismId) return blocked.readLiveState(input);
 
       let data: ApiLiveStateData | null = null;
       try {
@@ -86,7 +91,7 @@ export function createApiLiveStateReader(options?: ApiLiveStateReaderOptions): L
 
       const snapshot: LiveStateSnapshot = {
         prismOwner: {
-          label: "Prism ID owner (prism:8)",
+          label: `Prism ID owner (prism:${prismId})`,
           status: "live",
           value: registry ? `${owner} · registry ${shorten(registry)}` : owner,
           fallback: "",

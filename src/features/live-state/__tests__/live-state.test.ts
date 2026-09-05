@@ -6,7 +6,8 @@ import { createStarknetWalletSession } from "../../wallet/session/session-state"
 import { StarknetWalletSessionAdapter } from "../../wallet/session/starknet-wallet-adapter";
 import { buildConsentScope, decideConsent } from "../../privacy-flow/consent";
 import { createMockStarknetProvider } from "../../privacy-flow/mockPrivacyWallet";
-import { isLiveStateDemoEnabled } from "../demoFlag";
+import { isLiveStateDemoEnabled, selectedPrismIdFromSearch } from "../demoFlag";
+
 import {
   createBlockedLiveStateReader,
   createMockLiveStateReader,
@@ -30,6 +31,13 @@ async function connectScenario(scenario: Parameters<typeof createMockStarknetPro
 }
 
 describe("livestate demo flag", () => {
+  it("reads the explicit Prism ID from the URL and rejects implicit selection", () => {
+    expect(selectedPrismIdFromSearch("?demo=livestate&prismId=8")).toBe("8");
+    expect(selectedPrismIdFromSearch("?prismId=prism%3A8")).toBe("8");
+    expect(selectedPrismIdFromSearch("?demo=livestate")).toBe(null);
+    expect(selectedPrismIdFromSearch("?prismId=0")).toBe(null);
+  });
+
   it("enables only on livestate values and leaves default renders unchanged", () => {
     expect(isLiveStateDemoEnabled("?demo=livestate")).toBe(true);
     expect(isLiveStateDemoEnabled("?demo=live-state")).toBe(true);

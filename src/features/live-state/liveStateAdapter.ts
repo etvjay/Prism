@@ -17,10 +17,10 @@ export interface LiveStateReader {
   readLiveState(input: { accountAddress: string | null; consentGranted: boolean }): Promise<LiveStateSnapshot>;
 }
 
-function blockedSnapshot(reason: string): LiveStateSnapshot {
+function blockedSnapshot(reason: string, prismLabel = "Prism ID owner (no Prism ID selected)"): LiveStateSnapshot {
   const field = (label: string) => ({ label, status: "blocked" as const, value: null, fallback: reason });
   return {
-    prismOwner: field("Prism ID owner (prism:8)"),
+    prismOwner: field(prismLabel),
     baseBinding: field("BASE binding"),
     strkBalance: field("STRK balance (connected account)"),
     baseEth: field("Base Sepolia ETH (bound EOA)"),

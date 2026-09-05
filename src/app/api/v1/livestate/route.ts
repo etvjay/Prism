@@ -104,7 +104,7 @@ async function readStarknetRpcUrl(): Promise<string | null> {
 }
 
 function normalizePrismId(raw: string | null): string | null {
-  const value = (raw ?? "8").trim();
+  const value = (raw ?? "").trim();
   if (/^[1-9][0-9]*$/.test(value)) return `prism:${value}`;
   if (/^prism:[1-9][0-9]*$/.test(value)) return value;
   return null;

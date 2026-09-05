@@ -1,5 +1,5 @@
 export { default as LiveStateTile, LiveStateDemoSlot } from "./LiveStateTile";
-export { isLiveStateDemoEnabled, LIVESTATE_DEMO_VALUES, liveStateDemoHref } from "./demoFlag";
+export { isLiveStateDemoEnabled, LIVESTATE_DEMO_VALUES, liveStateDemoHref, selectedPrismIdFromSearch } from "./demoFlag";
 export { createBlockedLiveStateReader, createMockLiveStateReader, LIVE_STATE_CONSTANTS } from "./liveStateAdapter";
 export type { LiveStateReader } from "./liveStateAdapter";
 export { createApiLiveStateReader } from "./apiLiveStateReader";
