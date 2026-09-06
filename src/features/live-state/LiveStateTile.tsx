@@ -40,6 +40,15 @@ import {
 import { createApiLiveStateReader } from "./apiLiveStateReader";
 import { LIVE_STATE_FALLBACK_COPY, type LiveField, type LiveStateSnapshot } from "./liveStateTypes";
 import styles from "./LiveStateTile.module.css";
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  BaseWalletAdapter,
+  createBaseWalletDiscovery,
+  type BaseWalletDescriptor,
+  type BaseWalletDiscovery,
+  type OwnershipChallengeForSigning,
+  type OwnershipProofMetadata,
+} from "../wallet/base/base-wallet-adapter";
 
 function useDemoActive(): boolean {
   const [active, setActive] = useState(false);
@@ -96,6 +105,14 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   const [identityTxHash, setIdentityTxHash] = useState<string | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const activeBoundary = useRef<ReturnType<typeof createStarknetWalletBoundary> | null>(null);
+  const [baseDiscovery, setBaseDiscovery] = useState<BaseWalletDiscovery | null>(null);
+  const [baseWallets, setBaseWallets] = useState<readonly BaseWalletDescriptor[]>([]);
+  const [baseAccount, setBaseAccount] = useState<string | null>(null);
+  const [baseAdapter, setBaseAdapter] = useState<BaseWalletAdapter | null>(null);
+  const [baseChallenge, setBaseChallenge] = useState<OwnershipChallengeForSigning | null>(null);
+  const [baseProof, setBaseProof] = useState<OwnershipProofMetadata | null>(null);
+  const [baseStatus, setBaseStatus] = useState<"idle" | "connecting" | "ready" | "signing" | "ready-to-submit" | "error">("idle");
+  const [baseError, setBaseError] = useState<string | null>(null);
 
   const sessionSnapshot = useMemo(() => selectSessionSnapshot(state), [state]);
   const { session, capabilities, state: uiState } = sessionSnapshot;
@@ -107,6 +124,15 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   useEffect(() => {
     setSelectedPrismId(selectedPrismIdFromSearch(window.location.search));
   }, []);
+
+  useEffect(() => {
+    if (!selectedPrismId) return;
+    const next = createBaseWalletDiscovery(window);
+    setBaseDiscovery(next);
+    setBaseWallets(next.getWallets());
+    next.refresh();
+    return next.subscribe(setBaseWallets);
+  }, [selectedPrismId]);
 
   useEffect(() => {
     if (mockActive) return;
@@ -273,6 +299,48 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
     dispatch({ type: "session-observed", session: next, walletId: `mock-${scenario}` });
   };
 
+  const connectBase = async (walletId: string) => {
+    if (!selectedPrismId || !baseDiscovery) return;
+    const provider = baseDiscovery.getProvider(walletId);
+    if (!provider) return;
+    setBaseStatus("connecting");
+    setBaseError(null);
+    try {
+      const adapter = new BaseWalletAdapter(provider);
+      const account = await adapter.connect();
+      const readyBase = await adapter.assertReady(account);
+      const response = await fetch("/api/v1/challenge/issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-request-id": `base-proof-${Date.now()}` },
+        body: JSON.stringify({ prismId: `prism:${selectedPrismId}`, venue: "BASE", executionAccount: account }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; data?: OwnershipChallengeForSigning; error?: { detail?: string } };
+      if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error?.detail ?? "challenge_unavailable");
+      if (readyBase.chainId !== BASE_SEPOLIA_CHAIN_ID) throw new Error("wrong_chain");
+      setBaseAdapter(adapter);
+      setBaseAccount(account);
+      setBaseChallenge(payload.data);
+      setBaseStatus("ready");
+    } catch (cause) {
+      setBaseStatus("error");
+      setBaseError(cause instanceof Error ? cause.message : "base_wallet_connection_failed");
+    }
+  };
+
+  const signBaseOwnershipProof = async () => {
+    if (!baseAdapter || !baseChallenge) return;
+    setBaseStatus("signing");
+    setBaseError(null);
+    try {
+      const metadata = await baseAdapter.signOwnershipProof(baseChallenge, Math.floor(Date.now() / 1000));
+      setBaseProof(metadata);
+      setBaseStatus("ready-to-submit");
+    } catch (cause) {
+      setBaseStatus("error");
+      setBaseError(cause instanceof Error ? cause.message : "base_signature_failed");
+    }
+  };
+
   const fields: readonly LiveField[] | null = snapshot
     ? [snapshot.prismOwner, snapshot.baseBinding, snapshot.strkBalance, snapshot.baseEth]
     : null;
@@ -376,6 +444,46 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
         )}
         <p className={styles.meta}>Next step: <strong>Connect Base wallet to prove control</strong>. No Base binding is performed here.</p>
       </div>
+
+      {selectedPrismId ? (
+        <div className={styles.tile} data-tile="base-ownership-proof">
+          <p className={styles.tileEyebrow}>Base ownership proof · no transaction</p>
+          <h4>Prove control of the Base account</h4>
+          {!baseAccount ? (
+            <>
+              <p className={styles.lede}>Connect Base wallet after selecting a user-owned Prism ID. Base Sepolia (chain 84532) is required.</p>
+              <div className={styles.walletGrid} role="list">
+                {baseWallets.map((wallet) => (
+                  <button className={styles.walletOption} key={wallet.id} onClick={() => void connectBase(wallet.id)} disabled={baseStatus === "connecting"} type="button">
+                    Connect Base wallet{wallet.name === "Browser wallet" ? "" : ` · ${wallet.name}`}
+                  </button>
+                ))}
+              </div>
+              {baseWallets.length === 0 ? <p className={styles.blocked}>No EIP-6963 or window.ethereum Base wallet detected.</p> : null}
+            </>
+          ) : baseChallenge ? (
+            <>
+              <p className={styles.meta}>Connected {baseAccount.slice(0, 10)}… · Base Sepolia chain {BASE_SEPOLIA_CHAIN_ID}</p>
+              <div className={styles.interstitialCard}>
+                <p><strong>Exact challenge summary</strong></p>
+                <ul>
+                  <li>Domain: {baseChallenge.domain}</li>
+                  <li>Chain ID: {baseChallenge.chainId}</li>
+                  <li>Prism ID: {baseChallenge.prismId}</li>
+                  <li>Execution account: {baseChallenge.executionAccount}</li>
+                  <li>Expires: {new Date(baseChallenge.expiresAt * 1000).toISOString()}</li>
+                </ul>
+              </div>
+              <button className={styles.primary} disabled={baseStatus === "signing" || baseStatus === "ready-to-submit"} onClick={() => void signBaseOwnershipProof()} type="button">
+                {baseStatus === "signing" ? "Waiting for wallet…" : "Sign ownership proof"}
+              </button>
+              {baseProof ? <p className={styles.status}>Ownership proof ready to submit · digest {baseProof.proofDigest.slice(0, 12)}… · no transaction sent.</p> : null}
+            </>
+          ) : null}
+          {baseError ? <p className={styles.blocked} role="status">{baseError}</p> : null}
+          {baseStatus === "ready-to-submit" ? <p className={styles.meta}>Ready to submit: Starknet bind is not sent in this flow.</p> : null}
+        </div>
+      ) : null}
 
       <div className={styles.tile} data-tile="public-state">
         <p className={styles.tileEyebrow}>Public chain state · {selectedPrismId ? `prism:${selectedPrismId}` : "no Prism ID selected"} + connected account</p>
