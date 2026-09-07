@@ -86,6 +86,7 @@ export function createStarknetWalletBoundary(
   const wallet = discoveredWallet.wallet;
   const walletProvider = asWalletV6Provider(wallet);
   const walletApiAvailable = hasWalletApiFeature(wallet);
+  const accountRpcUrl = rpcUrl ?? constants.RPC_DEFAULT_NODES.SN_SEPOLIA[0];
   let account: WalletAccountV6 | null = null;
   let bindingBroadcasted = false;
   const standardConnect = wallet.features["standard:connect"].connect;
@@ -101,20 +102,10 @@ export function createStarknetWalletBoundary(
 
   const provider: StarknetWalletSessionProvider = {
     name: discoveredWallet.name,
-    connect: async () => {
-      if (!rpcUrl) return connectFromStandard();
-      account = await WalletAccountV6.connect({ nodeUrl: rpcUrl }, walletProvider);
-      if (!account.address) throw new Error("starknet_account_unavailable");
-      return { address: account.address };
-    },
+    connect: async () => connectFromStandard(),
     getSession: async () => {
-      if (!rpcUrl) {
-        const standardAccount = wallet.accounts[0];
-        return standardAccount?.address ? { address: standardAccount.address } : null;
-      }
-      const silentAccount = await WalletAccountV6.connectSilent({ nodeUrl: rpcUrl }, walletProvider);
-      account = silentAccount;
-      return silentAccount.address ? { address: silentAccount.address } : null;
+      const standardAccount = wallet.accounts[0];
+      return standardAccount?.address ? { address: standardAccount.address } : null;
     },
     disconnect: async () => {
       await wallet.features["standard:disconnect"].disconnect();
@@ -144,6 +135,7 @@ export function createStarknetWalletBoundary(
       expectedChainId(expectedEnvironment) as Parameters<typeof walletV6.switchStarknetChain>[1],
     ),
     createPrismIdentity: async () => {
+      account ??= await WalletAccountV6.connect({ nodeUrl: accountRpcUrl }, walletProvider);
       if (!account) throw new Error("starknet_account_unavailable");
       // This is deliberately not invoked by connect/session effects. The caller
       // reaches this boundary only from the explicit Create button, allowing the
@@ -158,6 +150,7 @@ export function createStarknetWalletBoundary(
       return { txHash: `0x${rawHash.slice(2).padStart(64, "0")}` };
     },
     submitBaseBinding: async (input) => {
+      account ??= await WalletAccountV6.connect({ nodeUrl: accountRpcUrl }, walletProvider);
       if (!account) throw new Error("starknet_account_unavailable");
       if (bindingBroadcasted) throw new Error("third_broadcast_blocked");
       const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000);
