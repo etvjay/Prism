@@ -464,6 +464,43 @@ paths:
         '200': { description: Receipt, content: { application/json: { schema: { type: object } } } }
         '404': { description: Unknown receipt, content: { application/json: { schema: { $ref: '#/components/schemas/ApiErrorEnvelope' } } } }
 
+  /v1/livestate/identity:
+    get:
+      operationId: getLiveStateIdentityReceipt
+      summary: Poll an explicit create_identity transaction
+      parameters:
+        - { name: txHash, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Identity receipt projection }
+        '400': { description: Malformed transaction hash }
+        '503': { description: Receipt provider unavailable }
+
+  /v1/livestate/binding:
+    get:
+      operationId: getLiveStateBindingReceipt
+      summary: Poll an explicit Registry V2 Base binding
+      description: Receipt and event-backed readback for the binding button. The route never accepts proof payload or signature material and returns pending until an unambiguous matching event and resolved binding are observed.
+      parameters:
+        - { name: txHash, in: query, required: true, schema: { type: string, pattern: "^0x[0-9a-fA-F]{1,64}$" } }
+        - { name: prismId, in: query, required: true, schema: { type: string, pattern: "^prism:[1-9][0-9]*$" } }
+        - { name: executionAccount, in: query, required: true, schema: { type: string, pattern: "^0x[0-9a-fA-F]+$" } }
+      responses:
+        '200':
+          description: Binding receipt projection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, status, txHash]
+                properties:
+                  ok: { type: boolean }
+                  status: { type: string, enum: [pending, succeeded, failed] }
+                  txHash: { type: string }
+                  resolvedBinding: { type: string, nullable: true }
+                  error: { type: string, nullable: true }
+        '400': { description: Malformed query }
+        '503': { description: Receipt provider unavailable }
+
   /v1/challenge/issue:
     post:
       operationId: issueChallenge

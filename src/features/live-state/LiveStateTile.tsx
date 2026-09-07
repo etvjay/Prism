@@ -50,6 +50,8 @@ import {
   type OwnershipProofMetadata,
 } from "../wallet/base/base-wallet-adapter";
 
+type BaseChallengeSummary = Omit<OwnershipChallengeForSigning, "messageToSign">;
+
 function useDemoActive(): boolean {
   const [active, setActive] = useState(false);
   useEffect(() => {
@@ -109,10 +111,14 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   const [baseWallets, setBaseWallets] = useState<readonly BaseWalletDescriptor[]>([]);
   const [baseAccount, setBaseAccount] = useState<string | null>(null);
   const [baseAdapter, setBaseAdapter] = useState<BaseWalletAdapter | null>(null);
-  const [baseChallenge, setBaseChallenge] = useState<OwnershipChallengeForSigning | null>(null);
+  const [baseChallenge, setBaseChallenge] = useState<BaseChallengeSummary | null>(null);
+  const baseChallengeRef = useRef<OwnershipChallengeForSigning | null>(null);
   const [baseProof, setBaseProof] = useState<OwnershipProofMetadata | null>(null);
   const [baseStatus, setBaseStatus] = useState<"idle" | "connecting" | "ready" | "signing" | "ready-to-submit" | "error">("idle");
   const [baseError, setBaseError] = useState<string | null>(null);
+  const [bindingStatus, setBindingStatus] = useState<"idle" | "requested" | "pending" | "succeeded" | "failed">("idle");
+  const [bindingTxHash, setBindingTxHash] = useState<string | null>(null);
+  const [resolvedBinding, setResolvedBinding] = useState<string | null>(null);
 
   const sessionSnapshot = useMemo(() => selectSessionSnapshot(state), [state]);
   const { session, capabilities, state: uiState } = sessionSnapshot;
@@ -206,6 +212,24 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [identityTxHash, mockActive]);
 
+  useEffect(() => {
+    if (!bindingTxHash || mockActive || !selectedPrismId || !baseAccount) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/v1/livestate/binding?txHash=${encodeURIComponent(bindingTxHash)}&prismId=${encodeURIComponent(`prism:${selectedPrismId}`)}&executionAccount=${encodeURIComponent(baseAccount)}`, { cache: "no-store" });
+        const result = (await response.json()) as { status?: "pending" | "succeeded" | "failed"; resolvedBinding?: string; error?: string };
+        if (cancelled) return;
+        if (result.status === "succeeded" && result.resolvedBinding) { setResolvedBinding(result.resolvedBinding); setBindingStatus("succeeded"); }
+        else if (result.status === "failed") { setBindingStatus("failed"); setBaseError(result.error === "ambiguous_receipt" ? "Receipt was ambiguous. Binding remains unresolved." : "Binding failed or did not match the selected account."); }
+        else setBindingStatus("pending");
+      } catch { if (!cancelled) setBindingStatus("pending"); }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [bindingTxHash, mockActive, selectedPrismId, baseAccount]);
+
   const createPrismIdentity = () => {
     if (!connected || !ready || selectedPrismId || mockActive || !activeBoundary.current) return;
     setIdentityError(null);
@@ -263,6 +287,12 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
     setConsentScope(null);
     setConsentRecord(null);
     setSnapshot(null);
+    setBaseChallenge(null);
+    baseChallengeRef.current = null;
+    setBaseProof(null);
+    setBindingStatus("idle");
+    setBindingTxHash(null);
+    setResolvedBinding(null);
     void activeBoundary.current?.provider.disconnect?.();
     activeBoundary.current = null;
     dispatch({
@@ -305,6 +335,9 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
     if (!provider) return;
     setBaseStatus("connecting");
     setBaseError(null);
+    setBindingStatus("idle");
+    setBindingTxHash(null);
+    setResolvedBinding(null);
     try {
       const adapter = new BaseWalletAdapter(provider);
       const account = await adapter.connect();
@@ -319,7 +352,10 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
       if (readyBase.chainId !== BASE_SEPOLIA_CHAIN_ID) throw new Error("wrong_chain");
       setBaseAdapter(adapter);
       setBaseAccount(account);
-      setBaseChallenge(payload.data);
+      baseChallengeRef.current = payload.data;
+      const { messageToSign: _transientMessage, ...summary } = payload.data;
+      void _transientMessage;
+      setBaseChallenge(summary);
       setBaseStatus("ready");
     } catch (cause) {
       setBaseStatus("error");
@@ -328,16 +364,36 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   };
 
   const signBaseOwnershipProof = async () => {
-    if (!baseAdapter || !baseChallenge) return;
+    const challenge = baseChallengeRef.current;
+    if (!baseAdapter || !challenge) return;
     setBaseStatus("signing");
     setBaseError(null);
     try {
-      const metadata = await baseAdapter.signOwnershipProof(baseChallenge, Math.floor(Date.now() / 1000));
+      const metadata = await baseAdapter.signOwnershipProof(challenge, Math.floor(Date.now() / 1000));
       setBaseProof(metadata);
       setBaseStatus("ready-to-submit");
     } catch (cause) {
       setBaseStatus("error");
       setBaseError(cause instanceof Error ? cause.message : "base_signature_failed");
+    }
+  };
+
+  const submitBaseBinding = async () => {
+    if (!activeBoundary.current || !selectedPrismId || !baseAccount || !baseChallenge || !baseProof || bindingStatus !== "idle") return;
+    if (baseProof.challengeId !== baseChallenge.challengeId || baseProof.account !== baseAccount || baseProof.chainId !== BASE_SEPOLIA_CHAIN_ID || baseProof.signatureClass !== "EOA" || Math.floor(Date.now() / 1000) >= baseProof.expiresAt) {
+      setBindingStatus("failed");
+      setBaseError("Binding blocked: expired, mismatched, or malformed proof.");
+      return;
+    }
+    setBindingStatus("requested");
+    setBaseError(null);
+    try {
+      const { txHash } = await activeBoundary.current.submitBaseBinding({ prismId: `prism:${selectedPrismId}`, executionAccount: baseAccount, proofDigest: baseProof.proofDigest, expiresAt: baseProof.expiresAt });
+      setBindingTxHash(txHash);
+      setBindingStatus("pending");
+    } catch (cause) {
+      setBindingStatus("failed");
+      setBaseError(cause instanceof Error ? cause.message : "binding_submission_failed");
     }
   };
 
@@ -348,12 +404,11 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
   return (
     <section aria-labelledby="livestate-heading" className={styles.flow} data-testid="live-state-tile">
       <div className={styles.flowHead}>
-        <p className={styles.eyebrow}>Demo only · read-only · no broadcast</p>
-        <h3 id="livestate-heading">Live chain state (read-only)</h3>
+        <p className={styles.eyebrow}>Live state · explicit wallet actions only</p>
+        <h3 id="livestate-heading">Live chain state</h3>
         <p className={styles.lede}>
           Same session machine as the privacy flow (connect → capability detect → session).
-          Public state for the connected account and an explicitly selected Prism ID reads through a typed adapter —
-          read-only RPC/API only. Without a selected Prism ID, linked identity state stays blocked. Private balance stays consent-gated.
+          Public state reads through a typed adapter. Binding is never automatic: the connected Starknet wallet prompts only after you press Submit binding.
         </p>
       </div>
 
@@ -447,7 +502,7 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
 
       {selectedPrismId ? (
         <div className={styles.tile} data-tile="base-ownership-proof">
-          <p className={styles.tileEyebrow}>Base ownership proof · no transaction</p>
+          <p className={styles.tileEyebrow}>Base ownership proof · explicit binding</p>
           <h4>Prove control of the Base account</h4>
           {!baseAccount ? (
             <>
@@ -477,11 +532,27 @@ export default function LiveStateTile({ reader }: { reader?: LiveStateReader }) 
               <button className={styles.primary} disabled={baseStatus === "signing" || baseStatus === "ready-to-submit"} onClick={() => void signBaseOwnershipProof()} type="button">
                 {baseStatus === "signing" ? "Waiting for wallet…" : "Sign ownership proof"}
               </button>
-              {baseProof ? <p className={styles.status}>Ownership proof ready to submit · digest {baseProof.proofDigest.slice(0, 12)}… · no transaction sent.</p> : null}
+              {baseProof ? (
+                <div className={styles.interstitialCard}>
+                  <p><strong>Binding proof summary</strong></p>
+                  <ul>
+                    <li>Challenge: <code className={styles.mono}>{baseProof.challengeId}</code></li>
+                    <li>Proof digest: <code className={styles.mono}>{baseProof.proofDigest}</code></li>
+                    <li>Signer: <code className={styles.mono}>{baseProof.account}</code></li>
+                    <li>Signature class: {baseProof.signatureClass} · expires {new Date(baseProof.expiresAt * 1000).toISOString()}</li>
+                  </ul>
+                  <p className={styles.meta}>The signature itself is held only inside the wallet boundary and is not stored or logged.</p>
+                  <button className={styles.primary} disabled={bindingStatus !== "idle"} onClick={() => void submitBaseBinding()} type="button">
+                    {bindingStatus === "requested" ? "Waiting for wallet…" : bindingStatus === "pending" ? "Binding pending…" : "Submit binding"}
+                  </button>
+                  {bindingTxHash ? <p className={styles.meta}>Binding transaction {bindingTxHash} · status: {bindingStatus}</p> : null}
+                  {bindingStatus === "succeeded" && resolvedBinding ? <p className={styles.status}>Binding succeeded · resolved account {resolvedBinding}</p> : null}
+                </div>
+              ) : null}
             </>
           ) : null}
           {baseError ? <p className={styles.blocked} role="status">{baseError}</p> : null}
-          {baseStatus === "ready-to-submit" ? <p className={styles.meta}>Ready to submit: Starknet bind is not sent in this flow.</p> : null}
+          {baseStatus === "ready-to-submit" && !baseProof ? <p className={styles.meta}>Proof is ready, but binding is blocked until the proof summary is available.</p> : null}
         </div>
       ) : null}
 

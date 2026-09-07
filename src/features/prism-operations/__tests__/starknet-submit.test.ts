@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Hex } from "../domain/operation";
 import { StarknetSubmitAdapter, type StarknetAccountLike } from "../adapters/starknet-submit";
 import { normalizeStarknetContractAddress } from "../../prism-identity/domain/starknet-boundary";
+import { buildRegistryV2BindCalldata } from "../adapters/starknet-submit-v2";
 
 const REGISTRY = "0x1111111111111111111111111111111111111111";
 const CONTROLLER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -20,6 +21,12 @@ function fakeAccount(overrides: Partial<StarknetAccountLike> = {}): StarknetAcco
 }
 
 describe("StarknetSubmitAdapter — injected Account, no secret file reads", () => {
+  it("Registry V2 bind helper preserves canonical M3 five-field calldata", () => {
+    expect(buildRegistryV2BindCalldata({ prismId: "prism:1", venue: "BASE", executionAccount: EXEC_ACCOUNT, proofDigest: DIGEST })).toEqual([
+      "0x1", "BASE", EXEC_ACCOUNT_CANONICAL, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ]);
+  });
+
   it("submitCreateIdentity returns txHash via injected account, never reads files", async () => {
     let called = false;
     const account: StarknetAccountLike = {

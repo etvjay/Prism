@@ -5,6 +5,8 @@ import type { ExpectedWalletEnvironment } from "../../prism-strk20/domain/wallet
 import type { StarknetWalletSessionProvider } from "./starknet-wallet-adapter";
 import { WalletV6M5Adapter, type WalletAccountV6Like } from "../../prism-strk20/m5/wallet-adapter";
 import { PRIVACY_POOL_SEPOLIA } from "../../prism-strk20/m5/constants";
+import { buildRegistryV2BindCalldata } from "../../prism-operations/adapters/starknet-submit-v2";
+import type { Hex } from "../../prism-identity/domain/hex";
 import type { M5Provider } from "../../prism-strk20/m5/ports";
 
 const REGISTRY_V2 = "0x06f77be5c7bdfef252dd322481b4430a587b781df4f79d3b344808d125ec530d";
@@ -29,6 +31,8 @@ export interface StarknetWalletBoundary {
   switchNetwork(): Promise<boolean>;
   /** User-authorized mutation; only callable after an explicit UI action. */
   createPrismIdentity(): Promise<{ readonly txHash: string }>;
+  /** User-authorized bind; only callable from the explicit Submit binding handler. */
+  submitBaseBinding(input: { prismId: string; executionAccount: string; proofDigest: Hex; expiresAt: number; nowSeconds?: number }): Promise<{ readonly txHash: string }>;
   getM5Provider(): M5Provider | null;
 }
 
@@ -83,6 +87,7 @@ export function createStarknetWalletBoundary(
   const walletProvider = asWalletV6Provider(wallet);
   const walletApiAvailable = hasWalletApiFeature(wallet);
   let account: WalletAccountV6 | null = null;
+  let bindingBroadcasted = false;
   const standardConnect = wallet.features["standard:connect"].connect;
 
   const connectFromStandard = async (): Promise<{ readonly address: string }> => {
@@ -151,6 +156,29 @@ export function createStarknetWalletBoundary(
       const rawHash = result.transaction_hash.trim().toLowerCase();
       if (!/^0x[0-9a-f]{1,64}$/.test(rawHash)) throw new Error("malformed_tx_hash");
       return { txHash: `0x${rawHash.slice(2).padStart(64, "0")}` };
+    },
+    submitBaseBinding: async (input) => {
+      if (!account) throw new Error("starknet_account_unavailable");
+      if (bindingBroadcasted) throw new Error("third_broadcast_blocked");
+      const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000);
+      if (!Number.isFinite(nowSeconds) || nowSeconds >= input.expiresAt) throw new Error("challenge_expired");
+      const chainId = await account.provider.getChainId();
+      if (chainId !== constants.StarknetChainId.SN_SEPOLIA) throw new Error("wrong_chain");
+      if (account.address.toLowerCase() !== input.executionAccount.trim().toLowerCase()) throw new Error("account_mismatch");
+      const calldata = buildRegistryV2BindCalldata({ ...input, venue: "BASE" });
+      bindingBroadcasted = true;
+      try {
+        const result = await account.execute([{
+          contractAddress: REGISTRY_V2,
+          entrypoint: "bind_execution_identity",
+          calldata: [...calldata],
+        }]);
+        const rawHash = result.transaction_hash.trim().toLowerCase();
+        if (!/^0x[0-9a-f]{1,64}$/.test(rawHash)) throw new Error("ambiguous_receipt");
+        return { txHash: `0x${rawHash.slice(2).padStart(64, "0")}` };
+      } catch (cause) {
+        throw new Error(cause instanceof Error ? cause.message : "binding_submission_failed");
+      }
     },
     getM5Provider: () => account
       ? new WalletV6M5Adapter({

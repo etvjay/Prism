@@ -19,6 +19,26 @@ import {
   StarknetContractAddressError,
 } from "../../prism-identity/domain/starknet-boundary";
 
+/** Canonical Registry V2 bind entrypoint and calldata, shared by live UI and M3. */
+export function buildRegistryV2BindCalldata(input: {
+  prismId: string;
+  venue: string;
+  executionAccount: string;
+  proofDigest: Hex;
+}): readonly [string, string, string, Hex, Hex] {
+  const venue = input.venue.trim().toUpperCase();
+  if (venue !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
+  const executionAccount = address(input.executionAccount, "executionAccount");
+  const prismIdFelt = registryId(input.prismId);
+  let digestLimbs: readonly [Hex, Hex];
+  try {
+    digestLimbs = toU256Calldata(input.proofDigest);
+  } catch (cause) {
+    throw new StarknetSubmitError("ERR-023", `malformed_proof_digest:${input.proofDigest}`, cause);
+  }
+  return [prismIdFelt, venue, executionAccount, digestLimbs[0], digestLimbs[1]];
+}
+
 function address(value: unknown, label = "address"): string {
   try {
     return normalizeStarknetContractAddress(value, label);
@@ -105,22 +125,12 @@ export class StarknetSubmitAdapterV2 implements StarknetSubmitPort {
 
   async submitBind(input: { operationId: string; prismId: string; venue: string; executionAccount: string; proofDigest: Hex; controllerAddress: string }): Promise<{ txHash: Hex }> {
     assertController(this.account, input.controllerAddress);
-    const executionAccount = address(input.executionAccount, "executionAccount");
-    const venue = input.venue.trim().toUpperCase();
-    if (venue !== "BASE") throw new StarknetSubmitError("ERR-001", `invalid_venue:${input.venue}`);
-    let digestLimbs: readonly [Hex, Hex];
-    try {
-      digestLimbs = toU256Calldata(input.proofDigest);
-    } catch (cause) {
-      throw new StarknetSubmitError("ERR-023", `malformed_proof_digest:${input.proofDigest}`, cause);
-    }
-    const [digestLow, digestHigh] = digestLimbs;
-    const prismIdFelt = registryId(input.prismId);
+    const calldata = buildRegistryV2BindCalldata(input);
     try {
       const result = await this.account.execute([{
         contractAddress: this.registryAddress,
         entrypoint: "bind_execution_identity",
-        calldata: [prismIdFelt, venue, executionAccount, digestLow, digestHigh],
+        calldata: [...calldata],
       }]);
       return { txHash: txHash(result.transaction_hash) };
     } catch (cause) {
